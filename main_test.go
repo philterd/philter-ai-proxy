@@ -480,3 +480,20 @@ func TestProxy_ServeHTTP_DefaultEndpoint(t *testing.T) {
 
 	// Let's just rely on the fact that we updated the code and TestGetEnv covers the logic.
 }
+
+func TestProxy_ServeHTTP_Health(t *testing.T) {
+	proxy := &Proxy{}
+	req := httptest.NewRequest("GET", "/health", nil)
+	w := httptest.NewRecorder()
+
+	proxy.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("Expected status 200, got %d", w.Code)
+	}
+
+	body, _ := ioutil.ReadAll(w.Body)
+	if string(body) != "ok" {
+		t.Errorf("Expected body 'ok', got '%s'", string(body))
+	}
+}

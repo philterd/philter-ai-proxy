@@ -117,6 +117,12 @@ func Filter(endpoint string, input string, context string, documentId string, po
 
 func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
+	if r.URL.Path == "/health" {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("ok"))
+		return
+	}
+
 	philter_endpoint := getEnv("PHILTER_ENDPOINT", "https://localhost:8080")
 	philter_context := getEnv("PHILTER_CONTEXT", "none")
 	philter_document_id := os.Getenv("PHILTER_DOCUMENT_ID")

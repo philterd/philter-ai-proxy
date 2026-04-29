@@ -1,6 +1,6 @@
 # Usage
 
-To use this proxy, you can send a request to it like you would to OpenAI or Claude, but change the hostname to your proxy's address.
+To use this proxy, you can send a request to it like you would to OpenAI, Claude, or Gemini, but change the hostname to your proxy's address.
 
 ## OpenAI
 
@@ -40,3 +40,13 @@ curl "https://localhost:8080/v1beta/models/gemini-1.5-flash:generateContent?key=
       }]
     }'
 ```
+
+## Health Check
+
+To check the health of the proxy, send a GET request to the `/health` endpoint:
+
+```bash
+curl -k https://localhost:8080/health
+```
+
+The proxy will return an HTTP 200 OK status and the body `ok`.
