@@ -1,8 +1,8 @@
 # Philter AI Proxy
 
-This project is a proxy for OpenAI, Claude, and Gemini that uses [Philter](https://philterd.ai/philter/) to remove PII, PHI, and other sensitive information from a [chat completion](https://platform.openai.com/docs/api-reference/chat), [messages](https://docs.anthropic.com/claude/reference/messages_post), or [Gemini](https://ai.google.dev/api/rest/v1beta/models/generateContent) request before sending the request to the respective API. If you don't have a running instance of Philter, you can launch one in your cloud at https://philterd.ai/philter/.
+This project is a proxy for OpenAI, Claude, Gemini, and Ollama that uses [Philter](https://philterd.ai/philter/) to remove PII, PHI, and other sensitive information from a [chat completion](https://platform.openai.com/docs/api-reference/chat), [messages](https://docs.anthropic.com/claude/reference/messages_post), [Gemini](https://ai.google.dev/api/rest/v1beta/models/generateContent), or [Ollama](https://docs.ollama.com/api/generate) request before sending the request to the respective API. If you don't have a running instance of Philter, you can launch one in your cloud at https://philterd.ai/philter/.
 
-The proxy works by sending requests destined for OpenAI, Claude, or Gemini first to Philter where the sensitive information is redacted per Philter's configuration. The redacted text is then sent to the API. For example, if you send the following text `How old is John Smith?`, the proxy and Philter will remove the text `John Smith` from the request. The redacted request sent to the API will be `How old is REDACTED?`
+The proxy works by sending requests destined for OpenAI, Claude, Gemini, or Ollama first to Philter where the sensitive information is redacted per Philter's configuration. The redacted text is then sent to the API. For example, if you send the following text `How old is John Smith?`, the proxy and Philter will remove the text `John Smith` from the request. The redacted request sent to the API will be `How old is REDACTED?`
 
 View the [documentation](http://philterd.github.io/philter-ai-proxy).
 
@@ -21,6 +21,7 @@ To run the proxy manually:
 export PHILTER_ENDPOINT=https://your-philter-ip:8080
 export PHILTER_CONTEXT=none
 export PHILTER_POLICY_NAME=default
+export OLLAMA_HOST=http://localhost:11434
 ./philter-ai-proxy
 ```
 
@@ -65,6 +66,18 @@ curl "https://localhost:8080/v1beta/models/gemini-1.5-flash:generateContent?key=
         "parts":[{"text": "Whose social security number is 123-45-6789"}]
       }]
     }'
+```
+
+### Ollama
+
+```
+curl https://localhost:8080/api/generate \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "llama3",
+    "prompt": "Whose social security number is 123-45-6789",
+    "stream": false
+  }'
 ```
 
 ## License

@@ -9,3 +9,6 @@ cert:
 
 docker-build:
 	docker build -t philter-ai-proxy .
+
+test:
+	go test -v ./...

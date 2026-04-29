@@ -497,3 +497,98 @@ func TestProxy_ServeHTTP_Health(t *testing.T) {
 		t.Errorf("Expected body 'ok', got '%s'", string(body))
 	}
 }
+
+func TestProxy_ServeHTTP_OllamaGenerate(t *testing.T) {
+	// Mock Philter
+	philterServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := ioutil.ReadAll(r.Body)
+		if string(body) == "John Smith" {
+			w.Write([]byte("REDACTED"))
+		} else {
+			w.Write(body)
+		}
+	}))
+	defer philterServer.Close()
+	os.Setenv("PHILTER_ENDPOINT", philterServer.URL)
+	defer os.Unsetenv("PHILTER_ENDPOINT")
+
+	// Mock Ollama
+	ollamaServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req OllamaGenerateRequest
+		body, _ := ioutil.ReadAll(r.Body)
+		json.Unmarshal(body, &req)
+
+		if req.Prompt != "REDACTED" {
+			t.Errorf("Expected prompt 'REDACTED', got '%s'", req.Prompt)
+		}
+		if req.System != "REDACTED" {
+			t.Errorf("Expected system 'REDACTED', got '%s'", req.System)
+		}
+
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"model": "llama3", "response": "Hello!"}`))
+	}))
+	defer ollamaServer.Close()
+
+	ollamaURL, _ := url.Parse(ollamaServer.URL)
+	proxy := &Proxy{
+		ollamaTarget: ollamaURL,
+		ollamaProxy:  httputil.NewSingleHostReverseProxy(ollamaURL),
+	}
+
+	reqBody := `{"model": "llama3", "prompt": "John Smith", "system": "John Smith"}`
+	req := httptest.NewRequest("POST", "/api/generate", strings.NewReader(reqBody))
+	w := httptest.NewRecorder()
+
+	proxy.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("Expected status 200, got %d", w.Code)
+	}
+}
+
+func TestProxy_ServeHTTP_OllamaChat(t *testing.T) {
+	// Mock Philter
+	philterServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := ioutil.ReadAll(r.Body)
+		if string(body) == "John Smith" {
+			w.Write([]byte("REDACTED"))
+		} else {
+			w.Write(body)
+		}
+	}))
+	defer philterServer.Close()
+	os.Setenv("PHILTER_ENDPOINT", philterServer.URL)
+	defer os.Unsetenv("PHILTER_ENDPOINT")
+
+	// Mock Ollama
+	ollamaServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req OllamaChatRequest
+		body, _ := ioutil.ReadAll(r.Body)
+		json.Unmarshal(body, &req)
+
+		if req.Messages[0].Content != "REDACTED" {
+			t.Errorf("Expected message content 'REDACTED', got '%s'", req.Messages[0].Content)
+		}
+
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"model": "llama3", "message": {"role": "assistant", "content": "Hello!"}}`))
+	}))
+	defer ollamaServer.Close()
+
+	ollamaURL, _ := url.Parse(ollamaServer.URL)
+	proxy := &Proxy{
+		ollamaTarget: ollamaURL,
+		ollamaProxy:  httputil.NewSingleHostReverseProxy(ollamaURL),
+	}
+
+	reqBody := `{"model": "llama3", "messages": [{"role": "user", "content": "John Smith"}]}`
+	req := httptest.NewRequest("POST", "/api/chat", strings.NewReader(reqBody))
+	w := httptest.NewRecorder()
+
+	proxy.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("Expected status 200, got %d", w.Code)
+	}
+}

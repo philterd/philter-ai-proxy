@@ -55,13 +55,26 @@ type GeminiRequest struct {
 	Contents []GeminiContent `json:"contents"`
 }
 
+type OllamaGenerateRequest struct {
+	Model  string `json:"model"`
+	Prompt string `json:"prompt"`
+	System string `json:"system,omitempty"`
+}
+
+type OllamaChatRequest struct {
+	Model    string    `json:"model"`
+	Messages []Message `json:"messages"`
+}
+
 type Proxy struct {
 	openaiTarget    *url.URL
 	anthropicTarget *url.URL
 	geminiTarget    *url.URL
+	ollamaTarget    *url.URL
 	openaiProxy     *httputil.ReverseProxy
 	anthropicProxy  *httputil.ReverseProxy
 	geminiProxy     *httputil.ReverseProxy
+	ollamaProxy     *httputil.ReverseProxy
 }
 
 type FilterResponse struct {
@@ -136,9 +149,74 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		p.handleAnthropic(w, r, philter_endpoint, philter_context, philter_document_id, philter_policy_name)
 	} else if strings.Contains(r.URL.Path, ":generateContent") {
 		p.handleGeminiNative(w, r, philter_endpoint, philter_context, philter_document_id, philter_policy_name)
+	} else if r.URL.Path == "/api/generate" {
+		p.handleOllamaGenerate(w, r, philter_endpoint, philter_context, philter_document_id, philter_policy_name)
+	} else if r.URL.Path == "/api/chat" {
+		p.handleOllamaChat(w, r, philter_endpoint, philter_context, philter_document_id, philter_policy_name)
 	} else {
 		p.handleOpenAI(w, r, philter_endpoint, philter_context, philter_document_id, philter_policy_name)
 	}
+}
+
+func (p *Proxy) handleOllamaGenerate(w http.ResponseWriter, r *http.Request, philter_endpoint string, context string, documentId string, policyName string) {
+	var o OllamaGenerateRequest
+	bodyBytes, err := ioutil.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	err = json.Unmarshal(bodyBytes, &o)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	if o.Prompt != "" {
+		filterResponse := Filter(philter_endpoint, o.Prompt, context, documentId, policyName)
+		o.Prompt = filterResponse.FilteredText
+	}
+
+	if o.System != "" {
+		filterResponse := Filter(philter_endpoint, o.System, context, documentId, policyName)
+		o.System = filterResponse.FilteredText
+	}
+
+	j, err := json.Marshal(o)
+	new_body_content := string(j[:])
+
+	r.Body = ioutil.NopCloser(strings.NewReader(new_body_content))
+	r.ContentLength = int64(len(new_body_content))
+	r.Host = p.ollamaTarget.Host
+
+	p.ollamaProxy.ServeHTTP(w, r)
+}
+
+func (p *Proxy) handleOllamaChat(w http.ResponseWriter, r *http.Request, philter_endpoint string, context string, documentId string, policyName string) {
+	var o OllamaChatRequest
+	bodyBytes, err := ioutil.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	err = json.Unmarshal(bodyBytes, &o)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	for i := 0; i < len(o.Messages); i++ {
+		filterResponse := Filter(philter_endpoint, o.Messages[i].Content, context, documentId, policyName)
+		o.Messages[i].Content = filterResponse.FilteredText
+	}
+
+	j, err := json.Marshal(o)
+	new_body_content := string(j[:])
+
+	r.Body = ioutil.NopCloser(strings.NewReader(new_body_content))
+	r.ContentLength = int64(len(new_body_content))
+	r.Host = p.ollamaTarget.Host
+
+	p.ollamaProxy.ServeHTTP(w, r)
 }
 
 func (p *Proxy) handleGeminiNative(w http.ResponseWriter, r *http.Request, philter_endpoint string, context string, documentId string, policyName string) {
@@ -276,6 +354,11 @@ func main() {
 		panic(err)
 	}
 
+	ollamaTarget, err := url.Parse(getEnv("OLLAMA_HOST", "http://localhost:11434"))
+	if err != nil {
+		panic(err)
+	}
+
 	openaiProxy := httputil.NewSingleHostReverseProxy(openaiTarget)
 	openaiProxy.Transport = &http.Transport{
 		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
@@ -291,13 +374,20 @@ func main() {
 		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
 	}
 
+	ollamaProxy := httputil.NewSingleHostReverseProxy(ollamaTarget)
+	ollamaProxy.Transport = &http.Transport{
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+	}
+
 	p := &Proxy{
 		openaiTarget:    openaiTarget,
 		anthropicTarget: anthropicTarget,
 		geminiTarget:    geminiTarget,
+		ollamaTarget:    ollamaTarget,
 		openaiProxy:     openaiProxy,
 		anthropicProxy:  anthropicProxy,
 		geminiProxy:     geminiProxy,
+		ollamaProxy:     ollamaProxy,
 	}
 
 	port := getEnv("PHILTER_PROXY_PORT", "8080")

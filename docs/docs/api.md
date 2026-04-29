@@ -55,6 +55,38 @@ The Philter AI Proxy provides several endpoints to redact sensitive information 
       }'
   ```
 
+### Ollama Generate
+
+- **URL**: `/api/generate`
+- **Method**: `POST`
+- **Description**: Proxies requests to the Ollama Generate API.
+- **Example**:
+  ```bash
+  curl https://localhost:8080/api/generate \
+    -H "Content-Type: application/json" \
+    -d '{
+      "model": "llama3",
+      "prompt": "Whose social security number is 123-45-6789",
+      "stream": false
+    }'
+  ```
+
+### Ollama Chat
+
+- **URL**: `/api/chat`
+- **Method**: `POST`
+- **Description**: Proxies requests to the Ollama Chat API.
+- **Example**:
+  ```bash
+  curl https://localhost:8080/api/chat \
+    -H "Content-Type: application/json" \
+    -d '{
+      "model": "llama3",
+      "messages": [{"role": "user", "content": "Whose social security number is 123-45-6789"}],
+      "stream": false
+    }'
+  ```
+
 ### Health Check
 
 - **URL**: `/health`
