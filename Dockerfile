@@ -13,5 +13,5 @@ RUN openssl req -x509 -newkey rsa:4096 -keyout key.pem -out cert.pem -sha256 -da
 
 EXPOSE 8080
 WORKDIR /app
-COPY --from=builder /build/philter-openai-proxy /app/philter-openai-proxy
-ENTRYPOINT ["/app/philter-openai-proxy"]
+COPY --from=builder /build/philter-ai-proxy /app/philter-ai-proxy
+ENTRYPOINT ["/app/philter-ai-proxy"]

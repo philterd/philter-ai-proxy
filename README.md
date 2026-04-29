@@ -12,7 +12,7 @@ The proxy works by sending requests destined for OpenAI, Claude, or Gemini first
 export PHILTER_ENDPOINT=https://your-philter-ip:8080
 export PHILTER_CONTEXT=none
 export PHILTER_POLICY_NAME=default
-./philter-openai-proxy
+./philter-ai-proxy
 ```
 
 ## Usage

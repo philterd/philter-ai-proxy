@@ -298,7 +298,7 @@ func main() {
 	cert_file := getEnv("PHILTER_PROXY_CERT_FILE", "cert.pem")
 	key_file := getEnv("PHILTER_PROXY_KEY_FILE", "key.pem")
 
-	fmt.Println("Started philter-openai-proxy on port " + port)
+	fmt.Println("Started philter-ai-proxy on port " + port)
 	err = http.ListenAndServeTLS(":"+port, cert_file, key_file, p)
 
 	if err != nil {

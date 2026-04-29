@@ -1,6 +1,6 @@
 services:
 
-  philter-openai-proxy:
+  philter-ai-proxy:
     build:
       context: .
       dockerfile: Dockerfile

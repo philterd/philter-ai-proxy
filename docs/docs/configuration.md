@@ -17,5 +17,5 @@ The proxy is configured via environment variables.
 ```bash
 export PHILTER_ENDPOINT=https://your-philter-ip:8080
 export PHILTER_PROXY_PORT=8080
-./philter-openai-proxy
+./philter-ai-proxy
 ```

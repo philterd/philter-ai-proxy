@@ -13,7 +13,7 @@ To build the proxy from source:
 make build
 ```
 
-This will create an executable named `philter-openai-proxy`.
+This will create an executable named `philter-ai-proxy`.
 
 ## Docker
 

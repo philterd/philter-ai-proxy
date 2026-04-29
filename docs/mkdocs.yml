@@ -1,6 +1,6 @@
 site_name: Philter AI Proxy
-repo_url: https://github.com/philterd/philter-openai-proxy
-site_url: https://philterd.github.io/philter-openai-proxy/
+repo_url: https://github.com/philterd/philter-ai-proxy
+site_url: https://philterd.github.io/philter-ai-proxy/
 edit_uri: '?query=docs/docs/'
 copyright: Copyright 2023-2026 Philterd, LLC
 site_author: philterd

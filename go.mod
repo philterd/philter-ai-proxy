@@ -1,4 +1,4 @@
-module philter-openai-proxy
+module philter-ai-proxy
 
 go 1.18
 

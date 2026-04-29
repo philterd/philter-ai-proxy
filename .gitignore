@@ -6,7 +6,7 @@
 *.test
 *.out
 .idea
-philter-openai-proxy
+philter-ai-proxy
 test.sh
 cert.pem
 key.pem
