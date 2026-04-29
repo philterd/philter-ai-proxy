@@ -1,0 +1,19 @@
+services:
+
+  philter-openai-proxy:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8080:8080"
+    environment:
+      - PHILTER_ENDPOINT=https://your-philter-endpoint:8080
+      #- PHILTER_CONTEXT=context
+      #- PHILTER_DOCUMENT_ID=docid
+      #- PHILTER_POLICY_NAME=default
+      - PHILTER_PROXY_PORT=8080
+      - PHILTER_PROXY_CERT_FILE=cert.pem
+      - PHILTER_PROXY_KEY_FILE=key.pem
+      # - OPENAI_API_KEY=${OPENAI_API_KEY}
+      # - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      # - GEMINI_API_KEY=${GEMINI_API_KEY}

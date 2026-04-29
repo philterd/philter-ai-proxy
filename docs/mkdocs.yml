@@ -1,0 +1,17 @@
+site_name: Philter AI Proxy
+repo_url: https://github.com/philterd/philter-openai-proxy
+site_url: https://philterd.github.io/philter-openai-proxy/
+edit_uri: '?query=docs/docs/'
+copyright: Copyright 2023-2026 Philterd, LLC
+site_author: philterd
+site_description: User guide for Philter AI Proxy, a PII/PHI redaction proxy for OpenAI, Claude, and Gemini.
+theme:
+  name: material
+  locale: en
+  palette:
+    primary: red
+nav:
+  - Home: index.md
+  - Installation: installation.md
+  - Usage: usage.md
+  - Configuration: configuration.md
