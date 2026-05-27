@@ -3648,3 +3648,325 @@ func TestBedrock_OutboundScan_Redact(t *testing.T) {
 		t.Errorf("Expected outbound response content to be REDACTED, got %+v", resp.Output.Message.Content)
 	}
 }
+
+// ── Token usage tracking ──────────────────────────────────────────────────────
+
+func TestExtractTokenUsage_OpenAI(t *testing.T) {
+	body := []byte(`{"choices":[{"message":{"role":"assistant","content":"hello"}}],"usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}`)
+	p, c := extractTokenUsage("openai", body)
+	if p != 10 || c != 5 {
+		t.Errorf("Expected (10,5), got (%d,%d)", p, c)
+	}
+}
+
+func TestExtractTokenUsage_Anthropic(t *testing.T) {
+	body := []byte(`{"content":[{"type":"text","text":"hello"}],"usage":{"input_tokens":20,"output_tokens":8}}`)
+	p, c := extractTokenUsage("anthropic", body)
+	if p != 20 || c != 8 {
+		t.Errorf("Expected (20,8), got (%d,%d)", p, c)
+	}
+}
+
+func TestExtractTokenUsage_Gemini(t *testing.T) {
+	body := []byte(`{"candidates":[{"content":{"parts":[{"text":"hi"}]}}],"usageMetadata":{"promptTokenCount":15,"candidatesTokenCount":3,"totalTokenCount":18}}`)
+	p, c := extractTokenUsage("gemini", body)
+	if p != 15 || c != 3 {
+		t.Errorf("Expected (15,3), got (%d,%d)", p, c)
+	}
+}
+
+func TestExtractTokenUsage_Ollama(t *testing.T) {
+	body := []byte(`{"model":"llama3","response":"hi","prompt_eval_count":12,"eval_count":7}`)
+	p, c := extractTokenUsage("ollama", body)
+	if p != 12 || c != 7 {
+		t.Errorf("Expected (12,7), got (%d,%d)", p, c)
+	}
+}
+
+func TestExtractTokenUsage_Bedrock(t *testing.T) {
+	body := []byte(`{"output":{"message":{"role":"assistant","content":[{"text":"hi"}]}},"usage":{"inputTokens":9,"outputTokens":4,"totalTokens":13}}`)
+	p, c := extractTokenUsage("bedrock", body)
+	if p != 9 || c != 4 {
+		t.Errorf("Expected (9,4), got (%d,%d)", p, c)
+	}
+}
+
+func TestExtractTokenUsage_MissingUsage(t *testing.T) {
+	body := []byte(`{"choices":[{"message":{"role":"assistant","content":"hi"}}]}`)
+	p, c := extractTokenUsage("openai", body)
+	if p != 0 || c != 0 {
+		t.Errorf("Expected (0,0) for missing usage, got (%d,%d)", p, c)
+	}
+}
+
+func TestExtractTokenUsage_InvalidJSON(t *testing.T) {
+	p, c := extractTokenUsage("openai", []byte(`not json`))
+	if p != 0 || c != 0 {
+		t.Errorf("Expected (0,0) for invalid JSON, got (%d,%d)", p, c)
+	}
+}
+
+func TestTokenUsage_PopulatedInAudit_OpenAI(t *testing.T) {
+	philterSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write(explainJSON("hello", "doc-id", nil))
+	}))
+	defer philterSrv.Close()
+
+	providerSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"hello"}}],"usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}`))
+	}))
+	defer providerSrv.Close()
+
+	cfg := testConfig(philterSrv.URL)
+	provURL, _ := url.Parse(providerSrv.URL)
+	proxy := &Proxy{
+		config:        cfg,
+		philter:       testPhilterClient(philterSrv.URL),
+		openaiTarget:  provURL,
+		openaiClient:  http.DefaultClient,
+	}
+
+	var buf strings.Builder
+	proxy.auditLogger = slog.New(slog.NewJSONHandler(&buf, nil))
+
+	req := httptest.NewRequest("POST", "/v1/chat/completions",
+		strings.NewReader(`{"model":"gpt-4","messages":[{"role":"user","content":"hello"}]}`))
+	proxy.ServeHTTP(httptest.NewRecorder(), req)
+
+	log := buf.String()
+	if !strings.Contains(log, `"prompt_tokens":10`) {
+		t.Errorf("Expected prompt_tokens=10 in audit log, got: %s", log)
+	}
+	if !strings.Contains(log, `"completion_tokens":5`) {
+		t.Errorf("Expected completion_tokens=5 in audit log, got: %s", log)
+	}
+}
+
+func TestTokenUsage_PopulatedInAudit_Anthropic(t *testing.T) {
+	philterSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write(explainJSON("hello", "doc-id", nil))
+	}))
+	defer philterSrv.Close()
+
+	providerSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"content":[{"type":"text","text":"hello"}],"usage":{"input_tokens":20,"output_tokens":8}}`))
+	}))
+	defer providerSrv.Close()
+
+	cfg := testConfig(philterSrv.URL)
+	provURL, _ := url.Parse(providerSrv.URL)
+	proxy := &Proxy{
+		config:           cfg,
+		philter:          testPhilterClient(philterSrv.URL),
+		anthropicTarget:  provURL,
+		anthropicClient:  http.DefaultClient,
+	}
+
+	var buf strings.Builder
+	proxy.auditLogger = slog.New(slog.NewJSONHandler(&buf, nil))
+
+	req := httptest.NewRequest("POST", "/v1/messages",
+		strings.NewReader(`{"model":"claude-3","max_tokens":100,"messages":[{"role":"user","content":"hello"}]}`))
+	proxy.ServeHTTP(httptest.NewRecorder(), req)
+
+	log := buf.String()
+	if !strings.Contains(log, `"prompt_tokens":20`) {
+		t.Errorf("Expected prompt_tokens=20 in audit log, got: %s", log)
+	}
+	if !strings.Contains(log, `"completion_tokens":8`) {
+		t.Errorf("Expected completion_tokens=8 in audit log, got: %s", log)
+	}
+}
+
+func TestTokenUsage_PopulatedInAudit_Gemini(t *testing.T) {
+	philterSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write(explainJSON("hello", "doc-id", nil))
+	}))
+	defer philterSrv.Close()
+
+	providerSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"candidates":[{"content":{"parts":[{"text":"hello"}]}}],"usageMetadata":{"promptTokenCount":15,"candidatesTokenCount":3,"totalTokenCount":18}}`))
+	}))
+	defer providerSrv.Close()
+
+	cfg := testConfig(philterSrv.URL)
+	provURL, _ := url.Parse(providerSrv.URL)
+	proxy := &Proxy{
+		config:       cfg,
+		philter:      testPhilterClient(philterSrv.URL),
+		geminiTarget: provURL,
+		geminiClient: http.DefaultClient,
+	}
+
+	var buf strings.Builder
+	proxy.auditLogger = slog.New(slog.NewJSONHandler(&buf, nil))
+
+	req := httptest.NewRequest("POST", "/v1beta/models/gemini-2.0-flash:generateContent",
+		strings.NewReader(`{"contents":[{"parts":[{"text":"hello"}]}]}`))
+	proxy.ServeHTTP(httptest.NewRecorder(), req)
+
+	log := buf.String()
+	if !strings.Contains(log, `"prompt_tokens":15`) {
+		t.Errorf("Expected prompt_tokens=15 in audit log, got: %s", log)
+	}
+	if !strings.Contains(log, `"completion_tokens":3`) {
+		t.Errorf("Expected completion_tokens=3 in audit log, got: %s", log)
+	}
+}
+
+func TestTokenUsage_PopulatedInAudit_Ollama(t *testing.T) {
+	philterSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write(explainJSON("hello", "doc-id", nil))
+	}))
+	defer philterSrv.Close()
+
+	providerSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"model":"llama3","response":"hello","prompt_eval_count":12,"eval_count":7}`))
+	}))
+	defer providerSrv.Close()
+
+	cfg := testConfig(philterSrv.URL)
+	provURL, _ := url.Parse(providerSrv.URL)
+	proxy := &Proxy{
+		config:       cfg,
+		philter:      testPhilterClient(philterSrv.URL),
+		ollamaTarget: provURL,
+		ollamaClient: http.DefaultClient,
+	}
+
+	var buf strings.Builder
+	proxy.auditLogger = slog.New(slog.NewJSONHandler(&buf, nil))
+
+	req := httptest.NewRequest("POST", "/api/generate",
+		strings.NewReader(`{"model":"llama3","prompt":"hello","stream":false}`))
+	proxy.ServeHTTP(httptest.NewRecorder(), req)
+
+	log := buf.String()
+	if !strings.Contains(log, `"prompt_tokens":12`) {
+		t.Errorf("Expected prompt_tokens=12 in audit log, got: %s", log)
+	}
+	if !strings.Contains(log, `"completion_tokens":7`) {
+		t.Errorf("Expected completion_tokens=7 in audit log, got: %s", log)
+	}
+}
+
+func TestTokenUsage_PopulatedInAudit_Bedrock(t *testing.T) {
+	philterSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write(explainJSON("hello", "doc-id", nil))
+	}))
+	defer philterSrv.Close()
+
+	bedrockSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"output":{"message":{"role":"assistant","content":[{"text":"hello"}]}},"usage":{"inputTokens":9,"outputTokens":4,"totalTokens":13}}`))
+	}))
+	defer bedrockSrv.Close()
+
+	proxy := newBedrockProxy(philterSrv.URL, bedrockSrv.URL)
+
+	var buf strings.Builder
+	proxy.auditLogger = slog.New(slog.NewJSONHandler(&buf, nil))
+
+	req := httptest.NewRequest("POST", "/model/amazon.titan-text-v1/converse",
+		strings.NewReader(`{"messages":[{"role":"user","content":[{"text":"hello"}]}]}`))
+	proxy.ServeHTTP(httptest.NewRecorder(), req)
+
+	log := buf.String()
+	if !strings.Contains(log, `"prompt_tokens":9`) {
+		t.Errorf("Expected prompt_tokens=9 in audit log, got: %s", log)
+	}
+	if !strings.Contains(log, `"completion_tokens":4`) {
+		t.Errorf("Expected completion_tokens=4 in audit log, got: %s", log)
+	}
+}
+
+func TestTokenUsage_OutboundScanPath(t *testing.T) {
+	philterSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write(explainJSON("hello", "doc-id", nil))
+	}))
+	defer philterSrv.Close()
+
+	providerSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"hello"}}],"usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}`))
+	}))
+	defer providerSrv.Close()
+
+	proxy := newOutboundProxy(philterSrv.URL, providerSrv.URL, "openai", "redact")
+
+	var buf strings.Builder
+	proxy.auditLogger = slog.New(slog.NewJSONHandler(&buf, nil))
+
+	req := httptest.NewRequest("POST", "/v1/chat/completions",
+		strings.NewReader(`{"model":"gpt-4","messages":[{"role":"user","content":"hello"}]}`))
+	proxy.ServeHTTP(httptest.NewRecorder(), req)
+
+	// The inbound audit entry should carry the token counts.
+	log := buf.String()
+	if !strings.Contains(log, `"prompt_tokens":10`) {
+		t.Errorf("Expected prompt_tokens=10 in inbound audit log entry, got: %s", log)
+	}
+	if !strings.Contains(log, `"completion_tokens":5`) {
+		t.Errorf("Expected completion_tokens=5 in inbound audit log entry, got: %s", log)
+	}
+}
+
+func TestTokenUsage_OpenAICompatPath(t *testing.T) {
+	philterSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write(explainJSON("hello", "doc-id", nil))
+	}))
+	defer philterSrv.Close()
+
+	providerSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"hello"}}],"usage":{"prompt_tokens":8,"completion_tokens":3,"total_tokens":11}}`))
+	}))
+	defer providerSrv.Close()
+
+	proxy := newOpenAICompatProxy(philterSrv.URL, providerSrv.URL, "mistral")
+
+	var buf strings.Builder
+	proxy.auditLogger = slog.New(slog.NewJSONHandler(&buf, nil))
+
+	req := httptest.NewRequest("POST", "/mistral/v1/chat/completions",
+		strings.NewReader(`{"model":"mistral-large","messages":[{"role":"user","content":"hello"}]}`))
+	proxy.ServeHTTP(httptest.NewRecorder(), req)
+
+	log := buf.String()
+	if !strings.Contains(log, `"prompt_tokens":8`) {
+		t.Errorf("Expected prompt_tokens=8 in audit log, got: %s", log)
+	}
+	if !strings.Contains(log, `"completion_tokens":3`) {
+		t.Errorf("Expected completion_tokens=3 in audit log, got: %s", log)
+	}
+}
+
+func TestTokenUsage_PrometheusMetrics(t *testing.T) {
+	philterSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write(explainJSON("hello", "doc-id", nil))
+	}))
+	defer philterSrv.Close()
+
+	providerSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"hello"}}],"usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}`))
+	}))
+	defer providerSrv.Close()
+
+	proxy, metrics := newTestProxy(philterSrv.URL, providerSrv.URL, "openai")
+
+	req := httptest.NewRequest("POST", "/v1/chat/completions",
+		strings.NewReader(`{"model":"gpt-4","messages":[{"role":"user","content":"hello"}]}`))
+	proxy.ServeHTTP(httptest.NewRecorder(), req)
+
+	if got := counterVecValue(metrics.promptTokensTotal, "openai", "gpt-4"); got != 10 {
+		t.Errorf("Expected promptTokensTotal=10, got %g", got)
+	}
+	if got := counterVecValue(metrics.completionTokensTotal, "openai", "gpt-4"); got != 5 {
+		t.Errorf("Expected completionTokensTotal=5, got %g", got)
+	}
+}

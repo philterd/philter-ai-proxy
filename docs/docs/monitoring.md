@@ -36,13 +36,17 @@ scrape_configs:
 | `philter_proxy_request_duration_seconds` | Histogram | `provider` | End-to-end request latency |
 | `philter_proxy_redaction_duration_seconds` | Histogram | `provider`, `policy` | Time spent on Philter redaction calls |
 | `philter_proxy_entities_redacted_total` | Counter | `entity_type`, `provider` | Total entities redacted |
+| `philter_proxy_prompt_tokens_total` | Counter | `provider`, `model` | Total prompt (input) tokens reported by providers |
+| `philter_proxy_completion_tokens_total` | Counter | `provider`, `model` | Total completion (output) tokens reported by providers |
 | `philter_proxy_philter_errors_total` | Counter | — | Failed calls to the Philter backend |
 | `philter_proxy_upstream_errors_total` | Counter | `provider`, `status_code` | Failed calls to LLM providers |
 | `philter_proxy_active_requests` | Gauge | — | Currently in-flight requests |
 
+Token counters are populated from each provider's native usage response field. They are not incremented for streaming responses, since token counts are not reliably available mid-stream.
+
 ### Label values
 
-**`provider`**: `openai`, `anthropic`, `gemini`, `ollama`
+**`provider`**: `openai`, `anthropic`, `gemini`, `ollama`, `bedrock`, or the name of any configured OpenAI-compatible provider
 
 **`entity_type`**: Philter entity type string, e.g. `NER_ENTITY`, `SSN`, `PHONE_NUMBER`, `EMAIL_ADDRESS`. The full list depends on your Philter policy configuration.
 
@@ -93,6 +97,22 @@ histogram_quantile(0.95, sum by (policy, le) (rate(philter_proxy_redaction_durat
 **Entities redacted per minute by type**:
 ```promql
 sum by (entity_type) (rate(philter_proxy_entities_redacted_total[1m])) * 60
+```
+
+**Token throughput by provider** (tokens per minute):
+```promql
+sum by (provider) (rate(philter_proxy_prompt_tokens_total[5m]) + rate(philter_proxy_completion_tokens_total[5m])) * 60
+```
+
+**Prompt vs. completion token split by model**:
+```promql
+sum by (model) (rate(philter_proxy_prompt_tokens_total[5m]))
+sum by (model) (rate(philter_proxy_completion_tokens_total[5m]))
+```
+
+**Cumulative tokens by provider** (useful for cost attribution dashboards):
+```promql
+sum by (provider) (philter_proxy_prompt_tokens_total + philter_proxy_completion_tokens_total)
 ```
 
 **Philter backend error rate**:

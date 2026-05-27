@@ -169,6 +169,8 @@ type AuditEntry struct {
 	RedactLatency    time.Duration  `json:"redact_latency_ms"`
 	ClientIP         string         `json:"client_ip"`
 	HTTPStatus       int            `json:"http_status"`
+	PromptTokens     int            `json:"prompt_tokens,omitempty"`
+	CompletionTokens int            `json:"completion_tokens,omitempty"`
 	EntityTypeCounts map[string]int `json:"-"`
 }
 
@@ -256,7 +258,40 @@ func (p *Proxy) handleHealth(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte(`{"status":"degraded","philter":"unreachable"}`))
 }
 
-func (p *Proxy) forwardToProvider(w http.ResponseWriter, origReq *http.Request, target *url.URL, client *http.Client, body []byte, provider string) {
+// extractTokenUsage parses prompt and completion token counts from a non-streaming
+// provider response body. Returns (0, 0) when the body cannot be parsed or does
+// not contain usage data (e.g. streaming responses, errors).
+func extractTokenUsage(provider string, body []byte) (promptTokens, completionTokens int) {
+	var raw map[string]interface{}
+	if err := json.Unmarshal(body, &raw); err != nil {
+		return
+	}
+	fi := func(m map[string]interface{}, key string) int {
+		if m == nil {
+			return 0
+		}
+		v, _ := m[key].(float64)
+		return int(v)
+	}
+	switch provider {
+	case "anthropic":
+		usage, _ := raw["usage"].(map[string]interface{})
+		return fi(usage, "input_tokens"), fi(usage, "output_tokens")
+	case "gemini":
+		meta, _ := raw["usageMetadata"].(map[string]interface{})
+		return fi(meta, "promptTokenCount"), fi(meta, "candidatesTokenCount")
+	case "ollama":
+		return fi(raw, "prompt_eval_count"), fi(raw, "eval_count")
+	case "bedrock":
+		usage, _ := raw["usage"].(map[string]interface{})
+		return fi(usage, "inputTokens"), fi(usage, "outputTokens")
+	default: // openai, openai-compatible
+		usage, _ := raw["usage"].(map[string]interface{})
+		return fi(usage, "prompt_tokens"), fi(usage, "completion_tokens")
+	}
+}
+
+func (p *Proxy) forwardToProvider(w http.ResponseWriter, origReq *http.Request, target *url.URL, client *http.Client, body []byte, provider string, audit *AuditEntry) {
 	targetURL := *target
 	targetURL.Path = origReq.URL.Path
 	targetURL.RawQuery = origReq.URL.RawQuery
@@ -306,8 +341,23 @@ func (p *Proxy) forwardToProvider(w http.ResponseWriter, origReq *http.Request, 
 			w.Header().Add(key, v)
 		}
 	}
-	w.WriteHeader(resp.StatusCode)
 
+	if !isStreamingResponse(resp.Header) {
+		respBody, err := io.ReadAll(resp.Body)
+		if err != nil {
+			slog.Error("Failed to read provider response", "error", err)
+			http.Error(w, "failed to read provider response", http.StatusBadGateway)
+			return
+		}
+		if audit != nil && resp.StatusCode >= 200 && resp.StatusCode < 300 {
+			audit.PromptTokens, audit.CompletionTokens = extractTokenUsage(provider, respBody)
+		}
+		w.WriteHeader(resp.StatusCode)
+		w.Write(respBody)
+		return
+	}
+
+	w.WriteHeader(resp.StatusCode)
 	flusher, canFlush := w.(http.Flusher)
 	buf := make([]byte, 4096)
 	for {
@@ -341,6 +391,8 @@ func emitAuditLog(logger *slog.Logger, entry AuditEntry) {
 		"redact_latency_ms", entry.RedactLatency.Milliseconds(),
 		"client_ip", entry.ClientIP,
 		"http_status", entry.HTTPStatus,
+		"prompt_tokens", entry.PromptTokens,
+		"completion_tokens", entry.CompletionTokens,
 	)
 }
 
@@ -571,6 +623,10 @@ func (p *Proxy) forwardWithOutboundScan(
 	if err != nil {
 		http.Error(w, "provider request failed", http.StatusBadGateway)
 		return
+	}
+
+	if audit != nil && statusCode >= 200 && statusCode < 300 {
+		audit.PromptTokens, audit.CompletionTokens = extractTokenUsage(provider, respBody)
 	}
 
 	outboundAudit := &AuditEntry{
@@ -892,6 +948,16 @@ func (p *Proxy) forwardToBedrockProvider(w http.ResponseWriter, origReq *http.Re
 		p.metrics.upstreamErrors.WithLabelValues("bedrock", strconv.Itoa(resp.StatusCode)).Inc()
 	}
 
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		slog.Error("Failed to read Bedrock response", "error", err)
+		http.Error(w, "failed to read provider response", http.StatusBadGateway)
+		return
+	}
+	if audit != nil && resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		audit.PromptTokens, audit.CompletionTokens = extractTokenUsage("bedrock", respBody)
+	}
+
 	for key, values := range resp.Header {
 		if hopByHopHeaders[key] {
 			continue
@@ -901,21 +967,7 @@ func (p *Proxy) forwardToBedrockProvider(w http.ResponseWriter, origReq *http.Re
 		}
 	}
 	w.WriteHeader(resp.StatusCode)
-
-	flusher, canFlush := w.(http.Flusher)
-	buf := make([]byte, 4096)
-	for {
-		n, readErr := resp.Body.Read(buf)
-		if n > 0 {
-			w.Write(buf[:n])
-			if canFlush {
-				flusher.Flush()
-			}
-		}
-		if readErr != nil {
-			break
-		}
-	}
+	w.Write(respBody)
 }
 
 func (p *Proxy) captureFromBedrockProvider(origReq *http.Request, body []byte) (int, http.Header, []byte, error) {
@@ -961,6 +1013,10 @@ func (p *Proxy) forwardBedrockWithOutboundScan(
 	if err != nil {
 		http.Error(w, "provider request failed", http.StatusBadGateway)
 		return
+	}
+
+	if statusCode >= 200 && statusCode < 300 {
+		audit.PromptTokens, audit.CompletionTokens = extractTokenUsage("bedrock", respBody)
 	}
 
 	outboundAudit := &AuditEntry{
@@ -1140,6 +1196,12 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		for entityType, count := range audit.EntityTypeCounts {
 			p.metrics.entitiesRedacted.WithLabelValues(entityType, audit.Provider).Add(float64(count))
 		}
+		if audit.PromptTokens > 0 {
+			p.metrics.promptTokensTotal.WithLabelValues(audit.Provider, audit.Model).Add(float64(audit.PromptTokens))
+		}
+		if audit.CompletionTokens > 0 {
+			p.metrics.completionTokensTotal.WithLabelValues(audit.Provider, audit.Model).Add(float64(audit.CompletionTokens))
+		}
 	}
 }
 
@@ -1183,7 +1245,7 @@ func (p *Proxy) handleOllamaGenerate(w http.ResponseWriter, r *http.Request, bod
 			context, documentId, policyName, outbound.Action, audit, p.scanOllamaGenerateResponse)
 		return
 	}
-	p.forwardToProvider(w, r, p.ollamaTarget, p.ollamaClient, j, "ollama")
+	p.forwardToProvider(w, r, p.ollamaTarget, p.ollamaClient, j, "ollama", audit)
 }
 
 func (p *Proxy) handleOllamaChat(w http.ResponseWriter, r *http.Request, bodyBytes []byte, context string, documentId string, policyName string, audit *AuditEntry, outbound OutboundConfig) {
@@ -1216,7 +1278,7 @@ func (p *Proxy) handleOllamaChat(w http.ResponseWriter, r *http.Request, bodyByt
 			context, documentId, policyName, outbound.Action, audit, p.scanOllamaChatResponse)
 		return
 	}
-	p.forwardToProvider(w, r, p.ollamaTarget, p.ollamaClient, j, "ollama")
+	p.forwardToProvider(w, r, p.ollamaTarget, p.ollamaClient, j, "ollama", audit)
 }
 
 func (p *Proxy) handleGeminiNative(w http.ResponseWriter, r *http.Request, bodyBytes []byte, context string, documentId string, policyName string, audit *AuditEntry, outbound OutboundConfig) {
@@ -1264,7 +1326,7 @@ loop:
 			context, documentId, policyName, outbound.Action, audit, p.scanGeminiResponse)
 		return
 	}
-	p.forwardToProvider(w, r, p.geminiTarget, p.geminiClient, j, "gemini")
+	p.forwardToProvider(w, r, p.geminiTarget, p.geminiClient, j, "gemini", audit)
 }
 
 func (p *Proxy) handleOpenAI(w http.ResponseWriter, r *http.Request, bodyBytes []byte, context string, documentId string, policyName string, audit *AuditEntry, outbound OutboundConfig) {
@@ -1320,7 +1382,7 @@ func (p *Proxy) handleOpenAICompatible(w http.ResponseWriter, r *http.Request, b
 			context, documentId, policyName, outbound.Action, audit, p.scanOpenAIResponse)
 		return
 	}
-	p.forwardToProvider(w, r, target, client, j, provider)
+	p.forwardToProvider(w, r, target, client, j, provider, audit)
 }
 
 func (p *Proxy) handleAnthropic(w http.ResponseWriter, r *http.Request, bodyBytes []byte, context string, documentId string, policyName string, audit *AuditEntry, outbound OutboundConfig) {
@@ -1420,7 +1482,7 @@ msgloop:
 			context, documentId, policyName, outbound.Action, audit, p.scanAnthropicResponse)
 		return
 	}
-	p.forwardToProvider(w, r, p.anthropicTarget, p.anthropicClient, j, "anthropic")
+	p.forwardToProvider(w, r, p.anthropicTarget, p.anthropicClient, j, "anthropic", audit)
 }
 
 func setupAuditLogger(enabled bool, filePath string) *slog.Logger {

@@ -3,13 +3,15 @@ package main
 import "github.com/prometheus/client_golang/prometheus"
 
 type ProxyMetrics struct {
-	requestsTotal     *prometheus.CounterVec
-	requestDuration   *prometheus.HistogramVec
-	redactionDuration *prometheus.HistogramVec
-	entitiesRedacted  *prometheus.CounterVec
-	philterErrors     prometheus.Counter
-	upstreamErrors    *prometheus.CounterVec
-	activeRequests    prometheus.Gauge
+	requestsTotal        *prometheus.CounterVec
+	requestDuration      *prometheus.HistogramVec
+	redactionDuration    *prometheus.HistogramVec
+	entitiesRedacted     *prometheus.CounterVec
+	promptTokensTotal    *prometheus.CounterVec
+	completionTokensTotal *prometheus.CounterVec
+	philterErrors        prometheus.Counter
+	upstreamErrors       *prometheus.CounterVec
+	activeRequests       prometheus.Gauge
 }
 
 func newMetrics(reg prometheus.Registerer) *ProxyMetrics {
@@ -36,6 +38,16 @@ func newMetrics(reg prometheus.Registerer) *ProxyMetrics {
 			Help: "Total entities redacted, labeled by entity type and provider.",
 		}, []string{"entity_type", "provider"}),
 
+		promptTokensTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "philter_proxy_prompt_tokens_total",
+			Help: "Total prompt (input) tokens reported by providers, labeled by provider and model.",
+		}, []string{"provider", "model"}),
+
+		completionTokensTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "philter_proxy_completion_tokens_total",
+			Help: "Total completion (output) tokens reported by providers, labeled by provider and model.",
+		}, []string{"provider", "model"}),
+
 		philterErrors: prometheus.NewCounter(prometheus.CounterOpts{
 			Name: "philter_proxy_philter_errors_total",
 			Help: "Total failed calls to the Philter backend.",
@@ -57,6 +69,8 @@ func newMetrics(reg prometheus.Registerer) *ProxyMetrics {
 		m.requestDuration,
 		m.redactionDuration,
 		m.entitiesRedacted,
+		m.promptTokensTotal,
+		m.completionTokensTotal,
 		m.philterErrors,
 		m.upstreamErrors,
 		m.activeRequests,

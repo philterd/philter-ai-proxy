@@ -291,20 +291,22 @@ Every proxy request produces a structured JSON log entry (JSONL) to stdout. All 
 | `redact_latency_ms` | int | Total time spent on Philter redaction calls (milliseconds) |
 | `client_ip` | string | Client IP address (supports `X-Forwarded-For`) |
 | `http_status` | int | HTTP status code of the upstream provider response |
+| `prompt_tokens` | int | Prompt (input) token count reported by the provider. Omitted for streaming responses and when the provider does not return usage data. |
+| `completion_tokens` | int | Completion (output) token count reported by the provider. Omitted under the same conditions as `prompt_tokens`. |
 
 ### Example Log Entries
 
 When outbound scanning is disabled (default), one entry is emitted per request:
 
 ```json
-{"time":"2026-01-15T10:30:00Z","level":"INFO","msg":"request","request_id":"a1b2c3d4","direction":"inbound","provider":"openai","model":"gpt-4","policy_name":"default","document_id":"doc-789","fields_redacted":2,"entity_count":3,"entity_types":["NER_ENTITY","SSN"],"redact_latency_ms":45,"client_ip":"10.0.0.1","http_status":200}
+{"time":"2026-01-15T10:30:00Z","level":"INFO","msg":"request","request_id":"a1b2c3d4","direction":"inbound","provider":"openai","model":"gpt-4","policy_name":"default","document_id":"doc-789","fields_redacted":2,"entity_count":3,"entity_types":["NER_ENTITY","SSN"],"redact_latency_ms":45,"client_ip":"10.0.0.1","http_status":200,"prompt_tokens":312,"completion_tokens":87}
 ```
 
-When outbound scanning is enabled, two entries are emitted per request — one for the inbound scan and one for the outbound scan. Both share the same `request_id` and `document_id` for correlation:
+When outbound scanning is enabled, two entries are emitted per request — one for the inbound scan and one for the outbound scan. Both share the same `request_id` and `document_id` for correlation. Token counts appear on the inbound entry only:
 
 ```json
 {"time":"2026-01-15T10:30:00Z","level":"INFO","msg":"request","request_id":"a1b2c3d4","direction":"outbound","provider":"openai","model":"gpt-4","policy_name":"default","document_id":"doc-789","fields_redacted":1,"entity_count":1,"entity_types":["NER_ENTITY"],"redact_latency_ms":12,"client_ip":"10.0.0.1","http_status":200}
-{"time":"2026-01-15T10:30:00Z","level":"INFO","msg":"request","request_id":"a1b2c3d4","direction":"inbound","provider":"openai","model":"gpt-4","policy_name":"default","document_id":"doc-789","fields_redacted":2,"entity_count":3,"entity_types":["NER_ENTITY","SSN"],"redact_latency_ms":45,"client_ip":"10.0.0.1","http_status":200}
+{"time":"2026-01-15T10:30:00Z","level":"INFO","msg":"request","request_id":"a1b2c3d4","direction":"inbound","provider":"openai","model":"gpt-4","policy_name":"default","document_id":"doc-789","fields_redacted":2,"entity_count":3,"entity_types":["NER_ENTITY","SSN"],"redact_latency_ms":45,"client_ip":"10.0.0.1","http_status":200,"prompt_tokens":312,"completion_tokens":87}
 ```
 
 ### SIEM Integration

@@ -75,6 +75,10 @@ For sustained Philter unavailability, enable the circuit breaker (`philter.circu
 
 See [Configuration](configuration.md#philterretrynew) for retry and circuit breaker settings.
 
+### Does the proxy track token usage?
+
+Yes. For non-streaming responses, the proxy reads the token usage reported by the provider and includes it in the audit log (`prompt_tokens`, `completion_tokens`) and as two Prometheus counters (`philter_proxy_prompt_tokens_total`, `philter_proxy_completion_tokens_total`), both labeled by `provider` and `model`. These counters can be used to build cost-attribution dashboards in Grafana. Token counts are not available for streaming responses and are omitted from the audit log in that case. See [Monitoring](monitoring.md) for PromQL examples.
+
 ### Is commercial support available?
 
 Yes, commercial support for the Philter AI Proxy and Philter is available from [Philterd](https://www.philterd.ai). Please [contact us](https://www.philterd.ai/contact/) for more information.
