@@ -271,6 +271,69 @@ defaults:
     enabled: false
 ```
 
+## Rate Limiting
+
+Rate limiting is **disabled by default**. When enabled, the proxy enforces per-client request rate limits using the token bucket algorithm. The client identifier is the **API key** (when auth is enabled) or the **client IP address** (when auth is disabled).
+
+### Configuration
+
+```yaml
+rateLimit:
+  enabled: true
+  requestsPerSecond: 10.0   # per-client sustained rate
+  burst: 20                 # maximum burst size above the sustained rate
+  global:                   # optional: hard cap across all clients combined
+    requestsPerSecond: 100.0
+    burst: 200
+```
+
+Per-key overrides are configured on the API key entry:
+
+```yaml
+auth:
+  apiKeys:
+    - key: standard-team-key
+    - key: high-volume-service-key
+      rateLimit:
+        requestsPerSecond: 50.0   # this key gets a higher limit
+        burst: 100
+```
+
+### `rateLimit` reference
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `enabled` | bool | `false` | Enable rate limiting. When false all other fields are ignored. |
+| `requestsPerSecond` | float | — (required when enabled) | Sustained per-client request rate (requests per second) |
+| `burst` | int | — (required when enabled) | Maximum number of requests a client may send in a burst above the sustained rate. Must be ≥ 1. |
+| `global.requestsPerSecond` | float | `0` (disabled) | Global sustained rate across all clients combined. `0` disables the global backstop. |
+| `global.burst` | int | `0` (disabled) | Global burst size. Must be set alongside `global.requestsPerSecond` to enable the global limit. |
+
+Per-key rate limit overrides (`auth.apiKeys[].rateLimit`) accept the same `requestsPerSecond` and `burst` fields and take precedence over the global defaults for that key.
+
+### Behaviour when the limit is exceeded
+
+When a client exceeds its limit the proxy returns `HTTP 429 Too Many Requests` with:
+
+- `Content-Type: application/json`
+- `Retry-After: <seconds>` header indicating when the client may retry
+- JSON body: `{"error":{"message":"rate limit exceeded","type":"rate_limit_error"}}`
+
+A structured warning is logged with the client identifier:
+
+```json
+{"time":"...","level":"WARN","msg":"Rate limit exceeded","client":"api-key-or-ip"}
+```
+
+### Client identification
+
+| Auth state | Client ID used |
+|-----------|----------------|
+| Auth enabled, valid key | The API key value |
+| Auth disabled | Client IP address (supports `X-Forwarded-For`) |
+
+The global backstop, when configured, is checked before the per-client limit and applies regardless of which client is making the request.
+
 ## Authentication
 
 Authentication is **disabled by default**. The proxy accepts requests from any client with no credentials required. This is appropriate for simple deployments where network-level controls (firewall, VPC, service mesh) are sufficient. Enable authentication for environments where multiple teams or services share a proxy instance, or where access needs to be scoped per client.

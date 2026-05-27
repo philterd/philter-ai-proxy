@@ -23,8 +23,10 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"math"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -4185,3 +4187,359 @@ func TestConfig_Auth_EmptyKey(t *testing.T) {
 		t.Error("Expected error for empty API key")
 	}
 }
+
+// ── Rate limiting ─────────────────────────────────────────────────────────────
+
+// newRateLimitedProxy builds a proxy with rate limiting configured.
+// rps/burst set the per-client default; globalRPS/globalBurst set the global
+// backstop (pass 0 to disable the global limit).
+func newRateLimitedProxy(philterURL, providerURL string, rps float64, burst int, globalRPS float64, globalBurst int) *Proxy {
+	cfg := testConfig(philterURL)
+	cfg.RateLimit = RateLimitConfig{
+		Enabled:           true,
+		RequestsPerSecond: rps,
+		Burst:             burst,
+		Global: RateLimitBucket{
+			RequestsPerSecond: globalRPS,
+			Burst:             globalBurst,
+		},
+	}
+	u, _ := url.Parse(providerURL)
+	return &Proxy{
+		config:       cfg,
+		philter:      testPhilterClient(philterURL),
+		openaiTarget: u,
+		openaiClient: http.DefaultClient,
+		rateLimiter:  newProxyRateLimiter(cfg.RateLimit, nil),
+	}
+}
+
+func openAIBody() string {
+	return `{"model":"gpt-4","messages":[{"role":"user","content":"hello"}]}`
+}
+
+func sendRequest(proxy *Proxy, path, body string, headers map[string]string) *httptest.ResponseRecorder {
+	req := httptest.NewRequest("POST", path, strings.NewReader(body))
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
+	w := httptest.NewRecorder()
+	proxy.ServeHTTP(w, req)
+	return w
+}
+
+func TestRateLimit_DisabledByDefault(t *testing.T) {
+	philterSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write(explainJSON("hello", "doc-id", nil))
+	}))
+	defer philterSrv.Close()
+	providerSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"hi"}}]}`))
+	}))
+	defer providerSrv.Close()
+
+	cfg := testConfig(philterSrv.URL)
+	u, _ := url.Parse(providerSrv.URL)
+	proxy := &Proxy{
+		config: cfg, philter: testPhilterClient(philterSrv.URL),
+		openaiTarget: u, openaiClient: http.DefaultClient,
+		// rateLimiter intentionally nil
+	}
+
+	for i := 0; i < 20; i++ {
+		w := sendRequest(proxy, "/v1/chat/completions", openAIBody(), nil)
+		if w.Code != http.StatusOK {
+			t.Fatalf("Expected 200 with rate limiting disabled, got %d on request %d", w.Code, i+1)
+		}
+	}
+}
+
+func TestRateLimit_AllowsUnderLimit(t *testing.T) {
+	philterSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write(explainJSON("hello", "doc-id", nil))
+	}))
+	defer philterSrv.Close()
+	providerSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"hi"}}]}`))
+	}))
+	defer providerSrv.Close()
+
+	// burst=5, so the first 5 requests should all pass immediately.
+	proxy := newRateLimitedProxy(philterSrv.URL, providerSrv.URL, 100, 5, 0, 0)
+
+	for i := 0; i < 5; i++ {
+		w := sendRequest(proxy, "/v1/chat/completions", openAIBody(), nil)
+		if w.Code != http.StatusOK {
+			t.Fatalf("Expected 200 for request %d within burst, got %d", i+1, w.Code)
+		}
+	}
+}
+
+func TestRateLimit_BlocksOverLimit(t *testing.T) {
+	philterSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write(explainJSON("hello", "doc-id", nil))
+	}))
+	defer philterSrv.Close()
+	providerSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"hi"}}]}`))
+	}))
+	defer providerSrv.Close()
+
+	// burst=3, rps very low so tokens don't refill between requests.
+	proxy := newRateLimitedProxy(philterSrv.URL, providerSrv.URL, 0.001, 3, 0, 0)
+
+	var got429 bool
+	for i := 0; i < 10; i++ {
+		w := sendRequest(proxy, "/v1/chat/completions", openAIBody(), nil)
+		if w.Code == http.StatusTooManyRequests {
+			got429 = true
+			break
+		}
+	}
+	if !got429 {
+		t.Error("Expected at least one 429 after exhausting burst")
+	}
+}
+
+func TestRateLimit_RetryAfterHeader(t *testing.T) {
+	proxy := newRateLimitedProxy("http://127.0.0.1:1", "http://127.0.0.1:1", 0.001, 1, 0, 0)
+
+	// First request consumes the single burst token.
+	sendRequest(proxy, "/v1/chat/completions", openAIBody(), nil)
+	// Second request should be rate-limited.
+	w := sendRequest(proxy, "/v1/chat/completions", openAIBody(), nil)
+
+	if w.Code != http.StatusTooManyRequests {
+		t.Fatalf("Expected 429, got %d", w.Code)
+	}
+	retryAfter := w.Header().Get("Retry-After")
+	if retryAfter == "" {
+		t.Error("Expected Retry-After header on 429 response")
+	}
+	val := 0
+	fmt.Sscanf(retryAfter, "%d", &val)
+	if val < 1 {
+		t.Errorf("Expected Retry-After >= 1, got %q", retryAfter)
+	}
+}
+
+func TestRateLimit_PerClientIsolation(t *testing.T) {
+	philterSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write(explainJSON("hello", "doc-id", nil))
+	}))
+	defer philterSrv.Close()
+	providerSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"hi"}}]}`))
+	}))
+	defer providerSrv.Close()
+
+	// burst=2 per client. Client A exhausts its bucket; client B should still pass.
+	proxy := newRateLimitedProxy(philterSrv.URL, providerSrv.URL, 0.001, 2, 0, 0)
+
+	// Exhaust client A's bucket (3 requests, burst=2).
+	for i := 0; i < 3; i++ {
+		req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(openAIBody()))
+		req.RemoteAddr = "10.0.0.1:1234"
+		proxy.ServeHTTP(httptest.NewRecorder(), req)
+	}
+
+	// Client B (different IP) should still be allowed.
+	req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(openAIBody()))
+	req.RemoteAddr = "10.0.0.2:1234"
+	w := httptest.NewRecorder()
+	proxy.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("Expected client B to pass unaffected, got %d", w.Code)
+	}
+}
+
+func TestRateLimit_GlobalLimit(t *testing.T) {
+	proxy := newRateLimitedProxy("http://127.0.0.1:1", "http://127.0.0.1:1",
+		1000, 1000, // high per-client limit — won't trigger
+		0.001, 1,   // global burst=1, very low rps
+	)
+
+	// First request from client A consumes the global token.
+	reqA := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(openAIBody()))
+	reqA.RemoteAddr = "10.0.0.1:1234"
+	proxy.ServeHTTP(httptest.NewRecorder(), reqA)
+
+	// Second request from a different client B hits the global limit.
+	reqB := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(openAIBody()))
+	reqB.RemoteAddr = "10.0.0.2:1234"
+	wB := httptest.NewRecorder()
+	proxy.ServeHTTP(wB, reqB)
+
+	if wB.Code != http.StatusTooManyRequests {
+		t.Errorf("Expected 429 from global limit, got %d", wB.Code)
+	}
+}
+
+func TestRateLimit_UsesAPIKeyAsClientID(t *testing.T) {
+	philterSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write(explainJSON("hello", "doc-id", nil))
+	}))
+	defer philterSrv.Close()
+	providerSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"hi"}}]}`))
+	}))
+	defer providerSrv.Close()
+
+	cfg := testConfig(philterSrv.URL)
+	cfg.RateLimit = RateLimitConfig{Enabled: true, RequestsPerSecond: 0.001, Burst: 2}
+	cfg.Auth.APIKeys = []APIKeyEntry{{Key: "key-a"}, {Key: "key-b"}}
+	u, _ := url.Parse(providerSrv.URL)
+	proxy := &Proxy{
+		config:       cfg,
+		philter:      testPhilterClient(philterSrv.URL),
+		openaiTarget: u,
+		openaiClient: http.DefaultClient,
+		keyIndex:     map[string]string{"key-a": "", "key-b": ""},
+		rateLimiter:  newProxyRateLimiter(cfg.RateLimit, cfg.Auth.APIKeys),
+	}
+
+	// Exhaust key-a's bucket (burst=2, send 3).
+	for i := 0; i < 3; i++ {
+		sendRequest(proxy, "/v1/chat/completions", openAIBody(), map[string]string{"x-philter-proxy-key": "key-a"})
+	}
+
+	// key-b should have its own independent bucket and still pass.
+	w := sendRequest(proxy, "/v1/chat/completions", openAIBody(), map[string]string{"x-philter-proxy-key": "key-b"})
+	if w.Code != http.StatusOK {
+		t.Errorf("Expected key-b to pass independently, got %d", w.Code)
+	}
+}
+
+func TestRateLimit_UsesIPWhenNoAuth(t *testing.T) {
+	philterSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write(explainJSON("hello", "doc-id", nil))
+	}))
+	defer philterSrv.Close()
+	providerSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"hi"}}]}`))
+	}))
+	defer providerSrv.Close()
+
+	// No auth configured — rate limiter uses client IP.
+	proxy := newRateLimitedProxy(philterSrv.URL, providerSrv.URL, 0.001, 2, 0, 0)
+
+	// Exhaust the bucket for 10.0.0.1 (burst=2, send 3).
+	var got429 bool
+	for i := 0; i < 3; i++ {
+		req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(openAIBody()))
+		req.RemoteAddr = "10.0.0.1:9999"
+		w := httptest.NewRecorder()
+		proxy.ServeHTTP(w, req)
+		if w.Code == http.StatusTooManyRequests {
+			got429 = true
+		}
+	}
+	if !got429 {
+		t.Error("Expected 429 after exhausting per-IP bucket")
+	}
+}
+
+func TestRateLimit_WarningLogged(t *testing.T) {
+	proxy := newRateLimitedProxy("http://127.0.0.1:1", "http://127.0.0.1:1", 0.001, 1, 0, 0)
+
+	var buf strings.Builder
+	// Replace the default logger temporarily.
+	orig := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn})))
+	defer slog.SetDefault(orig)
+
+	// First request takes the token; second should be rate-limited and logged.
+	sendRequest(proxy, "/v1/chat/completions", openAIBody(), nil)
+	sendRequest(proxy, "/v1/chat/completions", openAIBody(), nil)
+
+	if !strings.Contains(buf.String(), "Rate limit exceeded") {
+		t.Errorf("Expected rate limit warning in log, got: %s", buf.String())
+	}
+}
+
+func TestRateLimit_PerKeyOverride(t *testing.T) {
+	philterSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write(explainJSON("hello", "doc-id", nil))
+	}))
+	defer philterSrv.Close()
+	providerSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"hi"}}]}`))
+	}))
+	defer providerSrv.Close()
+
+	// Default burst=10; key-restricted has burst=1 via per-key override.
+	cfg := testConfig(philterSrv.URL)
+	cfg.RateLimit = RateLimitConfig{Enabled: true, RequestsPerSecond: 0.001, Burst: 10}
+	cfg.Auth.APIKeys = []APIKeyEntry{
+		{Key: "default-key"},
+		{Key: "restricted-key", RateLimit: &RateLimitBucket{RequestsPerSecond: 0.001, Burst: 1}},
+	}
+	u, _ := url.Parse(providerSrv.URL)
+	proxy := &Proxy{
+		config:       cfg,
+		philter:      testPhilterClient(philterSrv.URL),
+		openaiTarget: u,
+		openaiClient: http.DefaultClient,
+		keyIndex:     map[string]string{"default-key": "", "restricted-key": ""},
+		rateLimiter:  newProxyRateLimiter(cfg.RateLimit, cfg.Auth.APIKeys),
+	}
+
+	// restricted-key exhausted after 1 request (burst=1).
+	sendRequest(proxy, "/v1/chat/completions", openAIBody(), map[string]string{"x-philter-proxy-key": "restricted-key"})
+	w := sendRequest(proxy, "/v1/chat/completions", openAIBody(), map[string]string{"x-philter-proxy-key": "restricted-key"})
+	if w.Code != http.StatusTooManyRequests {
+		t.Errorf("Expected 429 for restricted-key after burst=1, got %d", w.Code)
+	}
+
+	// default-key still has burst=10 and should pass.
+	w2 := sendRequest(proxy, "/v1/chat/completions", openAIBody(), map[string]string{"x-philter-proxy-key": "default-key"})
+	if w2.Code != http.StatusOK {
+		t.Errorf("Expected default-key to pass with burst=10, got %d", w2.Code)
+	}
+}
+
+func TestConfig_RateLimit_Validation(t *testing.T) {
+	// Zero rps rejected
+	cfg := testConfig("http://127.0.0.1:1")
+	cfg.RateLimit = RateLimitConfig{Enabled: true, RequestsPerSecond: 0, Burst: 5}
+	if err := validateConfig(cfg); err == nil {
+		t.Error("Expected error for requestsPerSecond=0")
+	}
+
+	// Zero burst rejected
+	cfg2 := testConfig("http://127.0.0.1:1")
+	cfg2.RateLimit = RateLimitConfig{Enabled: true, RequestsPerSecond: 10, Burst: 0}
+	if err := validateConfig(cfg2); err == nil {
+		t.Error("Expected error for burst=0")
+	}
+
+	// Per-key override with zero rps rejected
+	cfg3 := testConfig("http://127.0.0.1:1")
+	cfg3.RateLimit = RateLimitConfig{Enabled: true, RequestsPerSecond: 10, Burst: 5}
+	cfg3.Auth.APIKeys = []APIKeyEntry{
+		{Key: "k", RateLimit: &RateLimitBucket{RequestsPerSecond: 0, Burst: 1}},
+	}
+	if err := validateConfig(cfg3); err == nil {
+		t.Error("Expected error for per-key rateLimit.requestsPerSecond=0")
+	}
+
+	// Valid config passes
+	cfg4 := testConfig("http://127.0.0.1:1")
+	cfg4.RateLimit = RateLimitConfig{Enabled: true, RequestsPerSecond: 10, Burst: 5}
+	if err := validateConfig(cfg4); err != nil {
+		t.Errorf("Expected valid config, got: %v", err)
+	}
+}
+
+// Ensure math and atomic imports are used (suppress unused-import errors if
+// tests above happen to not reference them directly).
+var _ = math.Ceil
+var _ atomic.Int64

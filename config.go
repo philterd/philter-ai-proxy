@@ -16,9 +16,22 @@ type ListenConfig struct {
 	ClientCA        string `yaml:"clientCA"`
 }
 
+type RateLimitBucket struct {
+	RequestsPerSecond float64 `yaml:"requestsPerSecond"`
+	Burst             int     `yaml:"burst"`
+}
+
+type RateLimitConfig struct {
+	Enabled           bool            `yaml:"enabled"`
+	RequestsPerSecond float64         `yaml:"requestsPerSecond"`
+	Burst             int             `yaml:"burst"`
+	Global            RateLimitBucket `yaml:"global"`
+}
+
 type APIKeyEntry struct {
-	Key    string `yaml:"key"`
-	Policy string `yaml:"policy"`
+	Key       string           `yaml:"key"`
+	Policy    string           `yaml:"policy"`
+	RateLimit *RateLimitBucket `yaml:"rateLimit"`
 }
 
 type AuthConfig struct {
@@ -111,6 +124,7 @@ type Config struct {
 	Routes    []RouteConfig   `yaml:"routes"`
 	Defaults  DefaultsConfig  `yaml:"defaults"`
 	Auth      AuthConfig      `yaml:"auth"`
+	RateLimit RateLimitConfig `yaml:"rateLimit"`
 }
 
 func defaultConfig() *Config {
@@ -234,6 +248,21 @@ func validateConfig(cfg *Config) error {
 		return fmt.Errorf("config: defaults.outbound.action %q is invalid (must be redact, block, or flag)", cfg.Defaults.Outbound.Action)
 	}
 
+	if cfg.RateLimit.Enabled {
+		if cfg.RateLimit.RequestsPerSecond <= 0 {
+			return fmt.Errorf("config: rateLimit.requestsPerSecond must be > 0 when rate limiting is enabled")
+		}
+		if cfg.RateLimit.Burst < 1 {
+			return fmt.Errorf("config: rateLimit.burst must be >= 1 when rate limiting is enabled")
+		}
+		if cfg.RateLimit.Global.RequestsPerSecond < 0 {
+			return fmt.Errorf("config: rateLimit.global.requestsPerSecond must be >= 0")
+		}
+		if cfg.RateLimit.Global.Burst < 0 {
+			return fmt.Errorf("config: rateLimit.global.burst must be >= 0")
+		}
+	}
+
 	seen := map[string]bool{}
 	for i, entry := range cfg.Auth.APIKeys {
 		if entry.Key == "" {
@@ -243,6 +272,14 @@ func validateConfig(cfg *Config) error {
 			return fmt.Errorf("config: auth.apiKeys contains duplicate key at index %d", i)
 		}
 		seen[entry.Key] = true
+		if entry.RateLimit != nil {
+			if entry.RateLimit.RequestsPerSecond <= 0 {
+				return fmt.Errorf("config: auth.apiKeys[%d].rateLimit.requestsPerSecond must be > 0", i)
+			}
+			if entry.RateLimit.Burst < 1 {
+				return fmt.Errorf("config: auth.apiKeys[%d].rateLimit.burst must be >= 1", i)
+			}
+		}
 	}
 
 	// Reserved path prefixes used by built-in providers.

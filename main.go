@@ -155,6 +155,7 @@ type Proxy struct {
 	auditLogger     *slog.Logger
 	metrics         *ProxyMetrics
 	keyIndex        map[string]string // API key value → bound policy (empty string = no override)
+	rateLimiter     *ProxyRateLimiter
 }
 
 type AuditEntry struct {
@@ -1112,13 +1113,14 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// API key authentication. Enforced only when keys are configured; disabled by default.
+	var clientKey string
 	var keyBoundPolicy string
 	if len(p.keyIndex) > 0 {
 		headerName := p.config.Auth.Header
 		if headerName == "" {
 			headerName = "x-philter-proxy-key"
 		}
-		clientKey := r.Header.Get(headerName)
+		clientKey = r.Header.Get(headerName)
 		if clientKey == "" {
 			w.Header().Set("Content-Type", "application/json")
 			http.Error(w, `{"error":{"message":"missing API key","type":"unauthorized"}}`, http.StatusUnauthorized)
@@ -1133,6 +1135,26 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		keyBoundPolicy = boundPolicy
 		// Strip the proxy auth header so it is never forwarded to the LLM provider.
 		r.Header.Del(headerName)
+	}
+
+	// Rate limiting. Uses the API key as client identifier when auth is enabled,
+	// falling back to client IP. Disabled by default (rateLimiter == nil).
+	if p.rateLimiter != nil {
+		id := clientKey
+		if id == "" {
+			id = clientIP(r)
+		}
+		if allowed, retryAfter := p.rateLimiter.Allow(id); !allowed {
+			slog.Warn("Rate limit exceeded", "client", id)
+			retrySecs := int(retryAfter.Seconds())
+			if retrySecs < 1 {
+				retrySecs = 1
+			}
+			w.Header().Set("Retry-After", strconv.Itoa(retrySecs))
+			w.Header().Set("Content-Type", "application/json")
+			http.Error(w, `{"error":{"message":"rate limit exceeded","type":"rate_limit_error"}}`, http.StatusTooManyRequests)
+			return
+		}
 	}
 
 	if p.metrics != nil {
@@ -1675,6 +1697,14 @@ func main() {
 		slog.Info("API key authentication enabled", "keys", len(keyIndex))
 	}
 
+	var proxyRateLimiter *ProxyRateLimiter
+	if cfg.RateLimit.Enabled {
+		proxyRateLimiter = newProxyRateLimiter(cfg.RateLimit, cfg.Auth.APIKeys)
+		slog.Info("Rate limiting enabled",
+			"requestsPerSecond", cfg.RateLimit.RequestsPerSecond,
+			"burst", cfg.RateLimit.Burst)
+	}
+
 	p := &Proxy{
 		config:          cfg,
 		openaiTarget:    targets[0],
@@ -1694,6 +1724,7 @@ func main() {
 		auditLogger:             auditLogger,
 		metrics:                 proxyMetrics,
 		keyIndex:                keyIndex,
+		rateLimiter:             proxyRateLimiter,
 	}
 
 	port := fmt.Sprintf("%d", cfg.Listen.Port)

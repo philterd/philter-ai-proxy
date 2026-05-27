@@ -87,3 +87,15 @@ defaults:
 #     - key: your-secret-key-here
 #       # policy: hipaa-safe-harbor  # optional: lock this key to a specific Philter policy
 #     - key: another-key-here
+#       # rateLimit:                 # optional: per-key override (takes precedence over global rateLimit)
+#       #   requestsPerSecond: 5.0
+#       #   burst: 10
+
+# Rate limiting is disabled by default. Uncomment to enable.
+# rateLimit:
+#   enabled: true
+#   requestsPerSecond: 10.0   # per-client limit (API key or IP)
+#   burst: 20                 # maximum burst size
+#   global:                   # optional: global backstop across all clients
+#     requestsPerSecond: 100.0
+#     burst: 200
