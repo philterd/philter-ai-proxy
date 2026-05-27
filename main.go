@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
@@ -75,6 +76,7 @@ type Proxy struct {
 	anthropicProxy  *httputil.ReverseProxy
 	geminiProxy     *httputil.ReverseProxy
 	ollamaProxy     *httputil.ReverseProxy
+	philterClient   *http.Client
 }
 
 type FilterResponse struct {
@@ -83,7 +85,33 @@ type FilterResponse struct {
 	DocumentId   string `json:"documentId"`
 }
 
-func Filter(endpoint string, input string, context string, documentId string, policyName string) FilterResponse {
+func buildTLSConfig(skipVerify bool, caCertPath string) (*tls.Config, error) {
+	tlsConfig := &tls.Config{InsecureSkipVerify: skipVerify}
+
+	if caCertPath != "" && !skipVerify {
+		caCert, err := os.ReadFile(caCertPath)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read CA certificate %s: %w", caCertPath, err)
+		}
+		caCertPool := x509.NewCertPool()
+		if !caCertPool.AppendCertsFromPEM(caCert) {
+			return nil, fmt.Errorf("failed to parse CA certificate %s", caCertPath)
+		}
+		tlsConfig.RootCAs = caCertPool
+	}
+
+	return tlsConfig, nil
+}
+
+func getBoolEnv(key string, defaultVal bool) bool {
+	val, exists := os.LookupEnv(key)
+	if !exists {
+		return defaultVal
+	}
+	return strings.EqualFold(val, "true") || val == "1"
+}
+
+func Filter(client *http.Client, endpoint string, input string, context string, documentId string, policyName string) FilterResponse {
 
 	var text = []byte(input)
 
@@ -101,7 +129,6 @@ func Filter(endpoint string, input string, context string, documentId string, po
 
 	base.RawQuery = params.Encode()
 
-	http.DefaultTransport.(*http.Transport).TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
 	request, err := http.NewRequest("POST", base.String(), bytes.NewReader(text))
 
 	if err != nil {
@@ -111,7 +138,6 @@ func Filter(endpoint string, input string, context string, documentId string, po
 
 	request.Header.Add("Content-Type", "text/plain")
 
-	client := &http.Client{}
 	response, err := client.Do(request)
 
 	documentId = response.Header.Get("x-document-id")
@@ -172,12 +198,12 @@ func (p *Proxy) handleOllamaGenerate(w http.ResponseWriter, r *http.Request, phi
 	}
 
 	if o.Prompt != "" {
-		filterResponse := Filter(philter_endpoint, o.Prompt, context, documentId, policyName)
+		filterResponse := Filter(p.philterClient, philter_endpoint, o.Prompt, context, documentId, policyName)
 		o.Prompt = filterResponse.FilteredText
 	}
 
 	if o.System != "" {
-		filterResponse := Filter(philter_endpoint, o.System, context, documentId, policyName)
+		filterResponse := Filter(p.philterClient, philter_endpoint, o.System, context, documentId, policyName)
 		o.System = filterResponse.FilteredText
 	}
 
@@ -205,7 +231,7 @@ func (p *Proxy) handleOllamaChat(w http.ResponseWriter, r *http.Request, philter
 	}
 
 	for i := 0; i < len(o.Messages); i++ {
-		filterResponse := Filter(philter_endpoint, o.Messages[i].Content, context, documentId, policyName)
+		filterResponse := Filter(p.philterClient, philter_endpoint, o.Messages[i].Content, context, documentId, policyName)
 		o.Messages[i].Content = filterResponse.FilteredText
 	}
 
@@ -235,7 +261,7 @@ func (p *Proxy) handleGeminiNative(w http.ResponseWriter, r *http.Request, philt
 	for i := 0; i < len(g.Contents); i++ {
 		for j := 0; j < len(g.Contents[i].Parts); j++ {
 			if g.Contents[i].Parts[j].Text != "" {
-				filterResponse := Filter(philter_endpoint, g.Contents[i].Parts[j].Text, context, documentId, policyName)
+				filterResponse := Filter(p.philterClient, philter_endpoint, g.Contents[i].Parts[j].Text, context, documentId, policyName)
 				g.Contents[i].Parts[j].Text = filterResponse.FilteredText
 			}
 		}
@@ -265,7 +291,7 @@ func (p *Proxy) handleOpenAI(w http.ResponseWriter, r *http.Request, philter_end
 	}
 
 	for i := 0; i < len(o.Messages); i++ {
-		filterResponse := Filter(philter_endpoint, o.Messages[i].Content, context, documentId, policyName)
+		filterResponse := Filter(p.philterClient, philter_endpoint, o.Messages[i].Content, context, documentId, policyName)
 		o.Messages[i].Content = filterResponse.FilteredText
 	}
 
@@ -294,7 +320,7 @@ func (p *Proxy) handleAnthropic(w http.ResponseWriter, r *http.Request, philter_
 
 	// Redact system prompt
 	if a.System != "" {
-		filterResponse := Filter(philter_endpoint, a.System, context, documentId, policyName)
+		filterResponse := Filter(p.philterClient, philter_endpoint, a.System, context, documentId, policyName)
 		a.System = filterResponse.FilteredText
 	}
 
@@ -302,7 +328,7 @@ func (p *Proxy) handleAnthropic(w http.ResponseWriter, r *http.Request, philter_
 	for i := 0; i < len(a.Messages); i++ {
 		switch v := a.Messages[i].Content.(type) {
 		case string:
-			filterResponse := Filter(philter_endpoint, v, context, documentId, policyName)
+			filterResponse := Filter(p.philterClient, philter_endpoint, v, context, documentId, policyName)
 			a.Messages[i].Content = filterResponse.FilteredText
 		case []any:
 			// Content is an array of content blocks
@@ -310,7 +336,7 @@ func (p *Proxy) handleAnthropic(w http.ResponseWriter, r *http.Request, philter_
 				if block, ok := v[j].(map[string]any); ok {
 					if block["type"] == "text" {
 						if text, ok := block["text"].(string); ok {
-							filterResponse := Filter(philter_endpoint, text, context, documentId, policyName)
+							filterResponse := Filter(p.philterClient, philter_endpoint, text, context, documentId, policyName)
 							block["text"] = filterResponse.FilteredText
 						}
 					}
@@ -339,6 +365,25 @@ func getEnv(key, fallback string) string {
 
 func main() {
 
+	philterTLSVerify := getBoolEnv("PHILTER_TLS_VERIFY", true)
+	philterCACert := getEnv("PHILTER_CA_CERT", "")
+	providerTLSVerify := getBoolEnv("PROVIDER_TLS_VERIFY", true)
+
+	philterTLSConfig, err := buildTLSConfig(!philterTLSVerify, philterCACert)
+	if err != nil {
+		log.Fatalf("Philter TLS configuration error: %v", err)
+	}
+	providerTLSConfig, err := buildTLSConfig(!providerTLSVerify, "")
+	if err != nil {
+		log.Fatalf("Provider TLS configuration error: %v", err)
+	}
+
+	philterClient := &http.Client{
+		Transport: &http.Transport{
+			TLSClientConfig: philterTLSConfig,
+		},
+	}
+
 	openaiTarget, err := url.Parse("https://api.openai.com")
 	if err != nil {
 		panic(err)
@@ -361,22 +406,22 @@ func main() {
 
 	openaiProxy := httputil.NewSingleHostReverseProxy(openaiTarget)
 	openaiProxy.Transport = &http.Transport{
-		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		TLSClientConfig: providerTLSConfig,
 	}
 
 	anthropicProxy := httputil.NewSingleHostReverseProxy(anthropicTarget)
 	anthropicProxy.Transport = &http.Transport{
-		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		TLSClientConfig: providerTLSConfig,
 	}
 
 	geminiProxy := httputil.NewSingleHostReverseProxy(geminiTarget)
 	geminiProxy.Transport = &http.Transport{
-		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		TLSClientConfig: providerTLSConfig,
 	}
 
 	ollamaProxy := httputil.NewSingleHostReverseProxy(ollamaTarget)
 	ollamaProxy.Transport = &http.Transport{
-		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		TLSClientConfig: providerTLSConfig,
 	}
 
 	p := &Proxy{
@@ -388,6 +433,7 @@ func main() {
 		anthropicProxy:  anthropicProxy,
 		geminiProxy:     geminiProxy,
 		ollamaProxy:     ollamaProxy,
+		philterClient:   philterClient,
 	}
 
 	port := getEnv("PHILTER_PROXY_PORT", "8080")
