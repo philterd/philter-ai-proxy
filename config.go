@@ -20,6 +20,11 @@ type LoggingConfig struct {
 	File    string `yaml:"file"`
 }
 
+type MetricsConfig struct {
+	Enabled bool `yaml:"enabled"`
+	Port    int  `yaml:"port"`
+}
+
 type PhilterConfig struct {
 	Endpoint  string `yaml:"endpoint"`
 	TLSVerify *bool  `yaml:"tlsVerify"`
@@ -59,6 +64,7 @@ type DefaultsConfig struct {
 type Config struct {
 	Listen    ListenConfig    `yaml:"listen"`
 	Logging   LoggingConfig   `yaml:"logging"`
+	Metrics   MetricsConfig   `yaml:"metrics"`
 	Philter   PhilterConfig   `yaml:"philter"`
 	Providers ProvidersConfig `yaml:"providers"`
 	Routes    []RouteConfig   `yaml:"routes"`
@@ -76,6 +82,10 @@ func defaultConfig() *Config {
 		},
 		Logging: LoggingConfig{
 			Enabled: true,
+		},
+		Metrics: MetricsConfig{
+			Enabled: true,
+			Port:    9090,
 		},
 		Philter: PhilterConfig{
 			Endpoint:  "https://localhost:8080",
@@ -135,6 +145,10 @@ func validateConfig(cfg *Config) error {
 
 	if cfg.Listen.Port < 1 || cfg.Listen.Port > 65535 {
 		return fmt.Errorf("config: listen.port %d is out of range (1-65535)", cfg.Listen.Port)
+	}
+
+	if cfg.Metrics.Enabled && (cfg.Metrics.Port < 1 || cfg.Metrics.Port > 65535) {
+		return fmt.Errorf("config: metrics.port %d is out of range (1-65535)", cfg.Metrics.Port)
 	}
 
 	for i, route := range cfg.Routes {

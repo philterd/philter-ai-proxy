@@ -80,6 +80,15 @@ defaults:
 | `enabled` | bool | `true` | Enable structured audit logging |
 | `file` | string | (none) | Path to an additional log output file. When set, logs are written to both stdout and this file. |
 
+### `metrics`
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `enabled` | bool | `true` | Enable the Prometheus metrics endpoint |
+| `port` | int | `9090` | Port for the metrics HTTP server (separate from the proxy TLS port) |
+
+See [Monitoring](monitoring.md) for available metrics, PromQL examples, and Grafana dashboard setup.
+
 ### `philter`
 
 | Field | Type | Default | Description |

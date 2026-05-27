@@ -8,6 +8,10 @@ logging:
   enabled: true
   # file: /var/log/philter-ai-proxy/audit.log
 
+metrics:
+  enabled: true
+  port: 9090
+
 philter:
   endpoint: https://philter.internal:8080
   tlsVerify: true

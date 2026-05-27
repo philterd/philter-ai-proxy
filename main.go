@@ -14,11 +14,14 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 type Message struct {
@@ -97,32 +100,34 @@ type OllamaChatRequest struct {
 }
 
 type Proxy struct {
-	config           *Config
-	openaiTarget     *url.URL
-	anthropicTarget  *url.URL
-	geminiTarget     *url.URL
-	ollamaTarget     *url.URL
-	openaiClient     *http.Client
-	anthropicClient  *http.Client
-	geminiClient     *http.Client
-	ollamaClient     *http.Client
-	philterClient    *http.Client
-	auditLogger      *slog.Logger
+	config          *Config
+	openaiTarget    *url.URL
+	anthropicTarget *url.URL
+	geminiTarget    *url.URL
+	ollamaTarget    *url.URL
+	openaiClient    *http.Client
+	anthropicClient *http.Client
+	geminiClient    *http.Client
+	ollamaClient    *http.Client
+	philterClient   *http.Client
+	auditLogger     *slog.Logger
+	metrics         *ProxyMetrics
 }
 
 type AuditEntry struct {
-	RequestID      string        `json:"request_id"`
-	Direction      string        `json:"direction"`
-	Provider       string        `json:"provider"`
-	Model          string        `json:"model"`
-	PolicyName     string        `json:"policy_name"`
-	DocumentID     string        `json:"document_id"`
-	FieldsRedacted int           `json:"fields_redacted"`
-	EntityCount    int           `json:"entity_count"`
-	EntityTypes    []string      `json:"entity_types"`
-	RedactLatency  time.Duration `json:"redact_latency_ms"`
-	ClientIP       string        `json:"client_ip"`
-	HTTPStatus     int           `json:"http_status"`
+	RequestID        string         `json:"request_id"`
+	Direction        string         `json:"direction"`
+	Provider         string         `json:"provider"`
+	Model            string         `json:"model"`
+	PolicyName       string         `json:"policy_name"`
+	DocumentID       string         `json:"document_id"`
+	FieldsRedacted   int            `json:"fields_redacted"`
+	EntityCount      int            `json:"entity_count"`
+	EntityTypes      []string       `json:"entity_types"`
+	RedactLatency    time.Duration  `json:"redact_latency_ms"`
+	ClientIP         string         `json:"client_ip"`
+	HTTPStatus       int            `json:"http_status"`
+	EntityTypeCounts map[string]int `json:"-"`
 }
 
 type responseCapture struct {
@@ -169,7 +174,41 @@ func sanitizeQuery(rawQuery string) string {
 	return params.Encode()
 }
 
-func (p *Proxy) forwardToProvider(w http.ResponseWriter, origReq *http.Request, target *url.URL, client *http.Client, body []byte) {
+func (p *Proxy) philterError(w http.ResponseWriter, err error) {
+	slog.Error("Philter request failed", "error", err)
+	if p.metrics != nil {
+		p.metrics.philterErrors.Inc()
+	}
+	http.Error(w, "philter request failed", http.StatusBadGateway)
+}
+
+func (p *Proxy) handleHealth(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	if p.config == nil || p.philterClient == nil {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"status":"ok"}`))
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+	defer cancel()
+
+	req, _ := http.NewRequestWithContext(ctx, "GET", p.config.Philter.Endpoint, nil)
+	resp, err := p.philterClient.Do(req)
+	if err == nil {
+		resp.Body.Close()
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"status":"ok","philter":"ok"}`))
+		return
+	}
+
+	slog.Warn("Philter health check failed", "error", err)
+	w.WriteHeader(http.StatusServiceUnavailable)
+	w.Write([]byte(`{"status":"degraded","philter":"unreachable"}`))
+}
+
+func (p *Proxy) forwardToProvider(w http.ResponseWriter, origReq *http.Request, target *url.URL, client *http.Client, body []byte, provider string) {
 	targetURL := *target
 	targetURL.Path = origReq.URL.Path
 	targetURL.RawQuery = origReq.URL.RawQuery
@@ -199,10 +238,17 @@ func (p *Proxy) forwardToProvider(w http.ResponseWriter, origReq *http.Request, 
 			safeURL += "?" + sanitizeQuery(origReq.URL.RawQuery)
 		}
 		slog.Error("Provider request failed", "error", err, "url", safeURL)
+		if p.metrics != nil {
+			p.metrics.upstreamErrors.WithLabelValues(provider, "502").Inc()
+		}
 		http.Error(w, "provider request failed", http.StatusBadGateway)
 		return
 	}
 	defer resp.Body.Close()
+
+	if p.metrics != nil && resp.StatusCode >= 400 {
+		p.metrics.upstreamErrors.WithLabelValues(provider, strconv.Itoa(resp.StatusCode)).Inc()
+	}
 
 	for key, values := range resp.Header {
 		if hopByHopHeaders[key] {
@@ -267,12 +313,13 @@ type ExplainResponse struct {
 }
 
 type FilterResponse struct {
-	FilteredText string
-	Context      string
-	DocumentId   string
-	EntityCount  int
-	EntityTypes  []string
-	Latency      time.Duration
+	FilteredText     string
+	Context          string
+	DocumentId       string
+	EntityCount      int
+	EntityTypes      []string
+	EntityTypeCounts map[string]int
+	Latency          time.Duration
 }
 
 func buildTLSConfig(skipVerify bool, caCertPath string) (*tls.Config, error) {
@@ -293,55 +340,47 @@ func buildTLSConfig(skipVerify bool, caCertPath string) (*tls.Config, error) {
 	return tlsConfig, nil
 }
 
-func Filter(client *http.Client, endpoint string, input string, context string, documentId string, policyName string) FilterResponse {
-
-	var text = []byte(input)
-
+func Filter(client *http.Client, endpoint string, input string, context string, documentId string, policyName string) (FilterResponse, error) {
 	base, err := url.Parse(endpoint + "/api/explain")
-
 	if err != nil {
-		slog.Error("Failed to parse Philter endpoint", "error", err)
-		os.Exit(1)
+		return FilterResponse{}, fmt.Errorf("failed to parse Philter endpoint: %w", err)
 	}
 
 	params := url.Values{}
 	params.Add("c", context)
 	params.Add("d", documentId)
 	params.Add("p", policyName)
-
 	base.RawQuery = params.Encode()
 
-	request, err := http.NewRequest("POST", base.String(), bytes.NewReader(text))
-
+	request, err := http.NewRequest("POST", base.String(), bytes.NewReader([]byte(input)))
 	if err != nil {
-		slog.Error("Failed to create Philter request", "error", err)
-		os.Exit(1)
+		return FilterResponse{}, fmt.Errorf("failed to create Philter request: %w", err)
 	}
-
 	request.Header.Add("Content-Type", "text/plain")
 
 	start := time.Now()
 	response, err := client.Do(request)
 	latency := time.Since(start)
+	if err != nil {
+		return FilterResponse{}, fmt.Errorf("Philter request failed: %w", err)
+	}
+	defer response.Body.Close()
 
 	responseData, err := ioutil.ReadAll(response.Body)
-
 	if err != nil {
-		slog.Error("Failed to read Philter response", "error", err)
-		os.Exit(1)
+		return FilterResponse{}, fmt.Errorf("failed to read Philter response: %w", err)
 	}
-
-	response.Body.Close()
 
 	var explainResp ExplainResponse
 	if err := json.Unmarshal(responseData, &explainResp); err != nil {
-		slog.Error("Failed to parse Philter explain response", "error", err)
-		os.Exit(1)
+		return FilterResponse{}, fmt.Errorf("failed to parse Philter response: %w", err)
 	}
 
 	typesSet := make(map[string]struct{})
+	typeCounts := make(map[string]int)
 	for _, span := range explainResp.Explanation.AppliedSpans {
 		typesSet[span.FilterType] = struct{}{}
+		typeCounts[span.FilterType]++
 	}
 	entityTypes := make([]string, 0, len(typesSet))
 	for t := range typesSet {
@@ -349,14 +388,14 @@ func Filter(client *http.Client, endpoint string, input string, context string, 
 	}
 
 	return FilterResponse{
-		FilteredText: explainResp.FilteredText,
-		Context:      explainResp.Context,
-		DocumentId:   explainResp.DocumentId,
-		EntityCount:  len(explainResp.Explanation.AppliedSpans),
-		EntityTypes:  entityTypes,
-		Latency:      latency,
-	}
-
+		FilteredText:     explainResp.FilteredText,
+		Context:          explainResp.Context,
+		DocumentId:       explainResp.DocumentId,
+		EntityCount:      len(explainResp.Explanation.AppliedSpans),
+		EntityTypes:      entityTypes,
+		EntityTypeCounts: typeCounts,
+		Latency:          latency,
+	}, nil
 }
 
 func (a *AuditEntry) recordFilterResult(fr FilterResponse) {
@@ -376,6 +415,14 @@ func (a *AuditEntry) recordFilterResult(fr FilterResponse) {
 			a.EntityTypes = append(a.EntityTypes, t)
 		}
 	}
+	if len(fr.EntityTypeCounts) > 0 {
+		if a.EntityTypeCounts == nil {
+			a.EntityTypeCounts = make(map[string]int)
+		}
+		for t, count := range fr.EntityTypeCounts {
+			a.EntityTypeCounts[t] += count
+		}
+	}
 }
 
 func clientIP(r *http.Request) string {
@@ -386,42 +433,60 @@ func clientIP(r *http.Request) string {
 	return host
 }
 
-func redactAny(client *http.Client, v any, endpoint, ctx, docID, policy string, audit *AuditEntry) any {
+func redactAny(client *http.Client, v any, endpoint, ctx, docID, policy string, audit *AuditEntry) (any, error) {
 	switch val := v.(type) {
 	case string:
 		if val != "" {
-			fr := Filter(client, endpoint, val, ctx, docID, policy)
+			fr, err := Filter(client, endpoint, val, ctx, docID, policy)
+			if err != nil {
+				return nil, err
+			}
 			audit.recordFilterResult(fr)
-			return fr.FilteredText
+			return fr.FilteredText, nil
 		}
-		return val
+		return val, nil
 	case map[string]any:
 		for k, elem := range val {
-			val[k] = redactAny(client, elem, endpoint, ctx, docID, policy, audit)
+			redacted, err := redactAny(client, elem, endpoint, ctx, docID, policy, audit)
+			if err != nil {
+				return nil, err
+			}
+			val[k] = redacted
 		}
-		return val
+		return val, nil
 	case []any:
 		for i, elem := range val {
-			val[i] = redactAny(client, elem, endpoint, ctx, docID, policy, audit)
+			redacted, err := redactAny(client, elem, endpoint, ctx, docID, policy, audit)
+			if err != nil {
+				return nil, err
+			}
+			val[i] = redacted
 		}
-		return val
+		return val, nil
 	default:
-		return v
+		return v, nil
 	}
 }
 
-func redactJSONArguments(client *http.Client, arguments string, endpoint, ctx, docID, policy string, audit *AuditEntry) string {
+func redactJSONArguments(client *http.Client, arguments string, endpoint, ctx, docID, policy string, audit *AuditEntry) (string, error) {
 	var parsed any
 	if err := json.Unmarshal([]byte(arguments), &parsed); err != nil {
-		fr := Filter(client, endpoint, arguments, ctx, docID, policy)
+		fr, err := Filter(client, endpoint, arguments, ctx, docID, policy)
+		if err != nil {
+			return "", err
+		}
 		audit.recordFilterResult(fr)
-		return fr.FilteredText
+		return fr.FilteredText, nil
 	}
-	result, err := json.Marshal(redactAny(client, parsed, endpoint, ctx, docID, policy, audit))
+	result, err := redactAny(client, parsed, endpoint, ctx, docID, policy, audit)
 	if err != nil {
-		return arguments
+		return "", err
 	}
-	return string(result)
+	j, err := json.Marshal(result)
+	if err != nil {
+		return arguments, nil
+	}
+	return string(j), nil
 }
 
 func extractModel(body []byte) string {
@@ -435,10 +500,15 @@ func extractModel(body []byte) string {
 func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	if r.URL.Path == "/health" {
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("ok"))
+		p.handleHealth(w, r)
 		return
 	}
+
+	if p.metrics != nil {
+		p.metrics.activeRequests.Inc()
+		defer p.metrics.activeRequests.Dec()
+	}
+	start := time.Now()
 
 	bodyBytes, err := ioutil.ReadAll(r.Body)
 	if err != nil {
@@ -483,12 +553,24 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	audit.HTTPStatus = rc.statusCode
 	emitAuditLog(p.auditLogger, *audit)
+
+	if p.metrics != nil {
+		dur := time.Since(start).Seconds()
+		statusStr := strconv.Itoa(rc.statusCode)
+		p.metrics.requestsTotal.WithLabelValues(audit.Provider, statusStr, audit.PolicyName).Inc()
+		p.metrics.requestDuration.WithLabelValues(audit.Provider).Observe(dur)
+		if audit.RedactLatency > 0 {
+			p.metrics.redactionDuration.WithLabelValues(audit.Provider, audit.PolicyName).Observe(audit.RedactLatency.Seconds())
+		}
+		for entityType, count := range audit.EntityTypeCounts {
+			p.metrics.entitiesRedacted.WithLabelValues(entityType, audit.Provider).Add(float64(count))
+		}
+	}
 }
 
 func (p *Proxy) handleOllamaGenerate(w http.ResponseWriter, r *http.Request, bodyBytes []byte, philter_endpoint string, context string, documentId string, policyName string, audit *AuditEntry) {
 	var o OllamaGenerateRequest
-	err := json.Unmarshal(bodyBytes, &o)
-	if err != nil {
+	if err := json.Unmarshal(bodyBytes, &o); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -496,15 +578,23 @@ func (p *Proxy) handleOllamaGenerate(w http.ResponseWriter, r *http.Request, bod
 	audit.Model = o.Model
 
 	if o.Prompt != "" {
-		filterResponse := Filter(p.philterClient, philter_endpoint, o.Prompt, context, documentId, policyName)
-		o.Prompt = filterResponse.FilteredText
-		audit.recordFilterResult(filterResponse)
+		fr, err := Filter(p.philterClient, philter_endpoint, o.Prompt, context, documentId, policyName)
+		if err != nil {
+			p.philterError(w, err)
+			return
+		}
+		o.Prompt = fr.FilteredText
+		audit.recordFilterResult(fr)
 	}
 
 	if o.System != "" {
-		filterResponse := Filter(p.philterClient, philter_endpoint, o.System, context, documentId, policyName)
-		o.System = filterResponse.FilteredText
-		audit.recordFilterResult(filterResponse)
+		fr, err := Filter(p.philterClient, philter_endpoint, o.System, context, documentId, policyName)
+		if err != nil {
+			p.philterError(w, err)
+			return
+		}
+		o.System = fr.FilteredText
+		audit.recordFilterResult(fr)
 	}
 
 	j, err := json.Marshal(o)
@@ -513,23 +603,26 @@ func (p *Proxy) handleOllamaGenerate(w http.ResponseWriter, r *http.Request, bod
 		return
 	}
 
-	p.forwardToProvider(w, r, p.ollamaTarget, p.ollamaClient, j)
+	p.forwardToProvider(w, r, p.ollamaTarget, p.ollamaClient, j, "ollama")
 }
 
 func (p *Proxy) handleOllamaChat(w http.ResponseWriter, r *http.Request, bodyBytes []byte, philter_endpoint string, context string, documentId string, policyName string, audit *AuditEntry) {
 	var o OllamaChatRequest
-	err := json.Unmarshal(bodyBytes, &o)
-	if err != nil {
+	if err := json.Unmarshal(bodyBytes, &o); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
 	audit.Model = o.Model
 
-	for i := 0; i < len(o.Messages); i++ {
-		filterResponse := Filter(p.philterClient, philter_endpoint, o.Messages[i].Content, context, documentId, policyName)
-		o.Messages[i].Content = filterResponse.FilteredText
-		audit.recordFilterResult(filterResponse)
+	for i := range o.Messages {
+		fr, err := Filter(p.philterClient, philter_endpoint, o.Messages[i].Content, context, documentId, policyName)
+		if err != nil {
+			p.philterError(w, err)
+			return
+		}
+		o.Messages[i].Content = fr.FilteredText
+		audit.recordFilterResult(fr)
 	}
 
 	j, err := json.Marshal(o)
@@ -538,29 +631,41 @@ func (p *Proxy) handleOllamaChat(w http.ResponseWriter, r *http.Request, bodyByt
 		return
 	}
 
-	p.forwardToProvider(w, r, p.ollamaTarget, p.ollamaClient, j)
+	p.forwardToProvider(w, r, p.ollamaTarget, p.ollamaClient, j, "ollama")
 }
 
 func (p *Proxy) handleGeminiNative(w http.ResponseWriter, r *http.Request, bodyBytes []byte, philter_endpoint string, context string, documentId string, policyName string, audit *AuditEntry) {
 	var g GeminiRequest
-	err := json.Unmarshal(bodyBytes, &g)
-	if err != nil {
+	if err := json.Unmarshal(bodyBytes, &g); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
-	for i := 0; i < len(g.Contents); i++ {
-		for j := 0; j < len(g.Contents[i].Parts); j++ {
+	var filterErr error
+loop:
+	for i := range g.Contents {
+		for j := range g.Contents[i].Parts {
 			part := &g.Contents[i].Parts[j]
 			if part.Text != "" {
-				filterResponse := Filter(p.philterClient, philter_endpoint, part.Text, context, documentId, policyName)
-				part.Text = filterResponse.FilteredText
-				audit.recordFilterResult(filterResponse)
+				fr, err := Filter(p.philterClient, philter_endpoint, part.Text, context, documentId, policyName)
+				if err != nil {
+					filterErr = err
+					break loop
+				}
+				part.Text = fr.FilteredText
+				audit.recordFilterResult(fr)
 			}
 			if part.FunctionResponse != nil && part.FunctionResponse.Response != nil {
-				redactAny(p.philterClient, part.FunctionResponse.Response, philter_endpoint, context, documentId, policyName, audit)
+				if _, err := redactAny(p.philterClient, part.FunctionResponse.Response, philter_endpoint, context, documentId, policyName, audit); err != nil {
+					filterErr = err
+					break loop
+				}
 			}
 		}
+	}
+	if filterErr != nil {
+		p.philterError(w, filterErr)
+		return
 	}
 
 	j, err := json.Marshal(g)
@@ -569,13 +674,12 @@ func (p *Proxy) handleGeminiNative(w http.ResponseWriter, r *http.Request, bodyB
 		return
 	}
 
-	p.forwardToProvider(w, r, p.geminiTarget, p.geminiClient, j)
+	p.forwardToProvider(w, r, p.geminiTarget, p.geminiClient, j, "gemini")
 }
 
 func (p *Proxy) handleOpenAI(w http.ResponseWriter, r *http.Request, bodyBytes []byte, philter_endpoint string, context string, documentId string, policyName string, audit *AuditEntry) {
 	var o OpenAIRequest
-	err := json.Unmarshal(bodyBytes, &o)
-	if err != nil {
+	if err := json.Unmarshal(bodyBytes, &o); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -585,21 +689,28 @@ func (p *Proxy) handleOpenAI(w http.ResponseWriter, r *http.Request, bodyBytes [
 	for i := range o.Messages {
 		msg := &o.Messages[i]
 
-		// Redact string content (user, system, tool role messages)
 		if len(msg.Content) > 0 {
 			var s string
 			if json.Unmarshal(msg.Content, &s) == nil && s != "" {
-				fr := Filter(p.philterClient, philter_endpoint, s, context, documentId, policyName)
+				fr, err := Filter(p.philterClient, philter_endpoint, s, context, documentId, policyName)
+				if err != nil {
+					p.philterError(w, err)
+					return
+				}
 				msg.Content, _ = json.Marshal(fr.FilteredText)
 				audit.recordFilterResult(fr)
 			}
 		}
 
-		// Redact tool_calls function arguments (assistant messages)
 		for j := range msg.ToolCalls {
 			tc := &msg.ToolCalls[j]
 			if tc.Function.Arguments != "" {
-				tc.Function.Arguments = redactJSONArguments(p.philterClient, tc.Function.Arguments, philter_endpoint, context, documentId, policyName, audit)
+				redacted, err := redactJSONArguments(p.philterClient, tc.Function.Arguments, philter_endpoint, context, documentId, policyName, audit)
+				if err != nil {
+					p.philterError(w, err)
+					return
+				}
+				tc.Function.Arguments = redacted
 			}
 		}
 	}
@@ -610,57 +721,79 @@ func (p *Proxy) handleOpenAI(w http.ResponseWriter, r *http.Request, bodyBytes [
 		return
 	}
 
-	p.forwardToProvider(w, r, p.openaiTarget, p.openaiClient, j)
+	p.forwardToProvider(w, r, p.openaiTarget, p.openaiClient, j, "openai")
 }
 
 func (p *Proxy) handleAnthropic(w http.ResponseWriter, r *http.Request, bodyBytes []byte, philter_endpoint string, context string, documentId string, policyName string, audit *AuditEntry) {
 	var a AnthropicRequest
-	err := json.Unmarshal(bodyBytes, &a)
-	if err != nil {
+	if err := json.Unmarshal(bodyBytes, &a); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
 	audit.Model = a.Model
 
+	var filterErr error
+
 	if a.System != "" {
-		filterResponse := Filter(p.philterClient, philter_endpoint, a.System, context, documentId, policyName)
-		a.System = filterResponse.FilteredText
-		audit.recordFilterResult(filterResponse)
+		fr, err := Filter(p.philterClient, philter_endpoint, a.System, context, documentId, policyName)
+		if err != nil {
+			p.philterError(w, err)
+			return
+		}
+		a.System = fr.FilteredText
+		audit.recordFilterResult(fr)
 	}
 
-	for i := 0; i < len(a.Messages); i++ {
+msgloop:
+	for i := range a.Messages {
 		switch v := a.Messages[i].Content.(type) {
 		case string:
-			filterResponse := Filter(p.philterClient, philter_endpoint, v, context, documentId, policyName)
-			a.Messages[i].Content = filterResponse.FilteredText
-			audit.recordFilterResult(filterResponse)
+			fr, err := Filter(p.philterClient, philter_endpoint, v, context, documentId, policyName)
+			if err != nil {
+				filterErr = err
+				break msgloop
+			}
+			a.Messages[i].Content = fr.FilteredText
+			audit.recordFilterResult(fr)
 		case []any:
-			for j := 0; j < len(v); j++ {
+			for j := range v {
 				if block, ok := v[j].(map[string]any); ok {
 					switch block["type"] {
 					case "text":
 						if text, ok := block["text"].(string); ok && text != "" {
-							filterResponse := Filter(p.philterClient, philter_endpoint, text, context, documentId, policyName)
-							block["text"] = filterResponse.FilteredText
-							audit.recordFilterResult(filterResponse)
+							fr, err := Filter(p.philterClient, philter_endpoint, text, context, documentId, policyName)
+							if err != nil {
+								filterErr = err
+								break msgloop
+							}
+							block["text"] = fr.FilteredText
+							audit.recordFilterResult(fr)
 						}
 					case "tool_result":
 						switch c := block["content"].(type) {
 						case string:
 							if c != "" {
-								filterResponse := Filter(p.philterClient, philter_endpoint, c, context, documentId, policyName)
-								block["content"] = filterResponse.FilteredText
-								audit.recordFilterResult(filterResponse)
+								fr, err := Filter(p.philterClient, philter_endpoint, c, context, documentId, policyName)
+								if err != nil {
+									filterErr = err
+									break msgloop
+								}
+								block["content"] = fr.FilteredText
+								audit.recordFilterResult(fr)
 							}
 						case []any:
 							for _, elem := range c {
 								if subBlock, ok := elem.(map[string]any); ok {
 									if subBlock["type"] == "text" {
 										if text, ok := subBlock["text"].(string); ok && text != "" {
-											filterResponse := Filter(p.philterClient, philter_endpoint, text, context, documentId, policyName)
-											subBlock["text"] = filterResponse.FilteredText
-											audit.recordFilterResult(filterResponse)
+											fr, err := Filter(p.philterClient, philter_endpoint, text, context, documentId, policyName)
+											if err != nil {
+												filterErr = err
+												break msgloop
+											}
+											subBlock["text"] = fr.FilteredText
+											audit.recordFilterResult(fr)
 										}
 									}
 								}
@@ -672,13 +805,18 @@ func (p *Proxy) handleAnthropic(w http.ResponseWriter, r *http.Request, bodyByte
 		}
 	}
 
+	if filterErr != nil {
+		p.philterError(w, filterErr)
+		return
+	}
+
 	j, err := json.Marshal(a)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	p.forwardToProvider(w, r, p.anthropicTarget, p.anthropicClient, j)
+	p.forwardToProvider(w, r, p.anthropicTarget, p.anthropicClient, j, "anthropic")
 }
 
 func setupAuditLogger(enabled bool, filePath string) *slog.Logger {
@@ -770,6 +908,13 @@ func main() {
 		}
 	}
 
+	var proxyMetrics *ProxyMetrics
+	var metricsReg *prometheus.Registry
+	if cfg.Metrics.Enabled {
+		metricsReg = prometheus.NewRegistry()
+		proxyMetrics = newMetrics(metricsReg)
+	}
+
 	p := &Proxy{
 		config:          cfg,
 		openaiTarget:    targets[0],
@@ -782,6 +927,7 @@ func main() {
 		ollamaClient:    clients[3],
 		philterClient:   philterClient,
 		auditLogger:     auditLogger,
+		metrics:         proxyMetrics,
 	}
 
 	port := fmt.Sprintf("%d", cfg.Listen.Port)
@@ -792,6 +938,22 @@ func main() {
 	srv := &http.Server{
 		Addr:    ":" + port,
 		Handler: p,
+	}
+
+	var metricsSrv *http.Server
+	if cfg.Metrics.Enabled {
+		mux := http.NewServeMux()
+		mux.Handle("/metrics", promhttp.HandlerFor(metricsReg, promhttp.HandlerOpts{}))
+		metricsSrv = &http.Server{
+			Addr:    fmt.Sprintf(":%d", cfg.Metrics.Port),
+			Handler: mux,
+		}
+		go func() {
+			slog.Info("Started metrics server", "port", cfg.Metrics.Port)
+			if err := metricsSrv.ListenAndServe(); err != http.ErrServerClosed {
+				slog.Warn("Metrics server stopped", "error", err)
+			}
+		}()
 	}
 
 	go func() {
@@ -810,6 +972,10 @@ func main() {
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(shutdownTimeoutSec)*time.Second)
 	defer cancel()
+
+	if metricsSrv != nil {
+		metricsSrv.Shutdown(ctx)
+	}
 
 	if err := srv.Shutdown(ctx); err != nil {
 		slog.Error("Forced shutdown", "error", err)

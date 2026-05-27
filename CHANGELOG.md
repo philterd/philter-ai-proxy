@@ -12,6 +12,9 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- Prometheus metrics endpoint on a configurable port (`metrics.port`, default `9090`). Metrics: `philter_proxy_requests_total`, `philter_proxy_request_duration_seconds`, `philter_proxy_redaction_duration_seconds`, `philter_proxy_entities_redacted_total`, `philter_proxy_philter_errors_total`, `philter_proxy_upstream_errors_total`, `philter_proxy_active_requests`. All labeled by provider and/or policy. See [Monitoring](http://philterd.github.io/philter-ai-proxy/monitoring/) for PromQL examples and Grafana alerting rules.
+- `/health` endpoint now checks Philter backend reachability and returns `{"status":"degraded","philter":"unreachable"}` with HTTP 503 when the backend is unavailable; returns `{"status":"ok","philter":"ok"}` when healthy.
+- `Filter` function no longer calls `os.Exit` on failure — errors are propagated to callers and result in a `502` response to the client with `philter_proxy_philter_errors_total` incremented.
 - Tool-use and function-calling redaction for all providers. OpenAI `role: tool` message content, OpenAI `tool_calls[].function.arguments` (parsed, redacted, re-serialized), Anthropic `tool_result` content blocks, and Gemini `functionResponse` parts are now all redacted before the request is forwarded. OpenAI `role: system` messages are also explicitly covered.
 - YAML configuration file support via `--config` flag or `PHILTER_PROXY_CONFIG` environment variable. Supports per-route policy selection based on request headers, URL path, or model name, and per-provider target URLs. Environment variables still work as overrides. Config is validated at startup with clear error messages.
 - Streaming (SSE) support for all four providers (OpenAI, Anthropic, Gemini, Ollama). Response chunks are forwarded to the client in real time without buffering.

@@ -25,6 +25,9 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/prometheus/client_golang/prometheus"
+	dto "github.com/prometheus/client_model/go"
 )
 
 func testConfig(philterEndpoint string) *Config {
@@ -167,7 +170,10 @@ func TestFilter(t *testing.T) {
 	}))
 	defer server.Close()
 
-	resp := Filter(http.DefaultClient, server.URL, "original text", "context", "docid", "policy")
+	resp, err := Filter(http.DefaultClient, server.URL, "original text", "context", "docid", "policy")
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
 
 	if resp.FilteredText != "filtered text" {
 		t.Errorf("Expected 'filtered text', got '%s'", resp.FilteredText)
@@ -180,6 +186,16 @@ func TestFilter(t *testing.T) {
 	}
 	if len(resp.EntityTypes) != 1 || resp.EntityTypes[0] != "NER_ENTITY" {
 		t.Errorf("Expected EntityTypes [NER_ENTITY], got %v", resp.EntityTypes)
+	}
+	if resp.EntityTypeCounts["NER_ENTITY"] != 1 {
+		t.Errorf("Expected EntityTypeCounts[NER_ENTITY]=1, got %d", resp.EntityTypeCounts["NER_ENTITY"])
+	}
+}
+
+func TestFilter_Error(t *testing.T) {
+	_, err := Filter(http.DefaultClient, "http://127.0.0.1:1", "text", "ctx", "doc", "policy")
+	if err == nil {
+		t.Error("Expected error when Philter is unreachable")
 	}
 }
 
@@ -515,7 +531,15 @@ func TestProxy_ServeHTTP_Gemini(t *testing.T) {
 }
 
 func TestProxy_ServeHTTP_Health(t *testing.T) {
-	proxy := &Proxy{}
+	philterServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer philterServer.Close()
+
+	proxy := &Proxy{
+		config:        testConfig(philterServer.URL),
+		philterClient: http.DefaultClient,
+	}
 	req := httptest.NewRequest("GET", "/health", nil)
 	w := httptest.NewRecorder()
 
@@ -524,10 +548,43 @@ func TestProxy_ServeHTTP_Health(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Errorf("Expected status 200, got %d", w.Code)
 	}
+	if ct := w.Header().Get("Content-Type"); ct != "application/json" {
+		t.Errorf("Expected Content-Type application/json, got %s", ct)
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, `"status":"ok"`) {
+		t.Errorf("Expected ok status in body, got %s", body)
+	}
+}
 
-	body, _ := ioutil.ReadAll(w.Body)
-	if string(body) != "ok" {
-		t.Errorf("Expected body 'ok', got '%s'", string(body))
+func TestProxy_ServeHTTP_Health_Degraded(t *testing.T) {
+	proxy := &Proxy{
+		config:        testConfig("http://127.0.0.1:1"),
+		philterClient: http.DefaultClient,
+	}
+	req := httptest.NewRequest("GET", "/health", nil)
+	w := httptest.NewRecorder()
+
+	proxy.ServeHTTP(w, req)
+
+	if w.Code != http.StatusServiceUnavailable {
+		t.Errorf("Expected status 503, got %d", w.Code)
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, `"status":"degraded"`) {
+		t.Errorf("Expected degraded status in body, got %s", body)
+	}
+}
+
+func TestProxy_ServeHTTP_Health_NilConfig(t *testing.T) {
+	proxy := &Proxy{}
+	req := httptest.NewRequest("GET", "/health", nil)
+	w := httptest.NewRecorder()
+
+	proxy.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("Expected status 200, got %d", w.Code)
 	}
 }
 
@@ -1525,5 +1582,187 @@ func TestProxy_ServeHTTP_Gemini_FunctionResponse(t *testing.T) {
 
 	if w.Code != http.StatusOK {
 		t.Errorf("Expected status 200, got %d", w.Code)
+	}
+}
+
+// counterValue reads the current value of a prometheus.Counter.
+func counterValue(c prometheus.Counter) float64 {
+	m := &dto.Metric{}
+	c.Write(m)
+	return m.GetCounter().GetValue()
+}
+
+// counterVecValue reads the value of a CounterVec for the given label values.
+func counterVecValue(cv *prometheus.CounterVec, labels ...string) float64 {
+	c, err := cv.GetMetricWithLabelValues(labels...)
+	if err != nil {
+		return 0
+	}
+	return counterValue(c)
+}
+
+// gaugeValue reads the current value of a prometheus.Gauge.
+func gaugeValue(g prometheus.Gauge) float64 {
+	m := &dto.Metric{}
+	g.Write(m)
+	return m.GetGauge().GetValue()
+}
+
+func newTestProxy(philterURL, providerURL string, providerKey string) (*Proxy, *ProxyMetrics) {
+	reg := prometheus.NewRegistry()
+	metrics := newMetrics(reg)
+	cfg := testConfig(philterURL)
+	u, _ := url.Parse(providerURL)
+	p := &Proxy{
+		config:        cfg,
+		philterClient: http.DefaultClient,
+		metrics:       metrics,
+	}
+	switch providerKey {
+	case "openai":
+		p.openaiTarget = u
+		p.openaiClient = http.DefaultClient
+	case "anthropic":
+		p.anthropicTarget = u
+		p.anthropicClient = http.DefaultClient
+	case "gemini":
+		p.geminiTarget = u
+		p.geminiClient = http.DefaultClient
+	case "ollama":
+		p.ollamaTarget = u
+		p.ollamaClient = http.DefaultClient
+	}
+	return p, metrics
+}
+
+func TestMetrics_RequestsTotal(t *testing.T) {
+	philterServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write(explainJSON("REDACTED", "doc-id", nil))
+	}))
+	defer philterServer.Close()
+
+	openaiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer openaiServer.Close()
+
+	proxy, m := newTestProxy(philterServer.URL, openaiServer.URL, "openai")
+
+	reqBody := `{"model":"gpt-4","messages":[{"role":"user","content":"hello"}]}`
+	req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(reqBody))
+	w := httptest.NewRecorder()
+	proxy.ServeHTTP(w, req)
+
+	val := counterVecValue(m.requestsTotal, "openai", "200", "default")
+	if val != 1 {
+		t.Errorf("Expected requestsTotal=1, got %f", val)
+	}
+}
+
+func TestMetrics_EntitiesRedacted(t *testing.T) {
+	philterServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write(explainJSON("REDACTED", "doc-id", []Span{
+			{FilterType: "NER_ENTITY", Confidence: 0.9},
+			{FilterType: "NER_ENTITY", Confidence: 0.85},
+			{FilterType: "SSN", Confidence: 0.99},
+		}))
+	}))
+	defer philterServer.Close()
+
+	openaiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer openaiServer.Close()
+
+	proxy, m := newTestProxy(philterServer.URL, openaiServer.URL, "openai")
+
+	reqBody := `{"model":"gpt-4","messages":[{"role":"user","content":"John Smith SSN 123-45-6789"}]}`
+	req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(reqBody))
+	w := httptest.NewRecorder()
+	proxy.ServeHTTP(w, req)
+
+	nerVal := counterVecValue(m.entitiesRedacted, "NER_ENTITY", "openai")
+	if nerVal != 2 {
+		t.Errorf("Expected NER_ENTITY count=2, got %f", nerVal)
+	}
+	ssnVal := counterVecValue(m.entitiesRedacted, "SSN", "openai")
+	if ssnVal != 1 {
+		t.Errorf("Expected SSN count=1, got %f", ssnVal)
+	}
+}
+
+func TestMetrics_ActiveRequests(t *testing.T) {
+	philterServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write(explainJSON("REDACTED", "doc-id", nil))
+	}))
+	defer philterServer.Close()
+
+	started := make(chan struct{})
+	finish := make(chan struct{})
+	openaiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		close(started)
+		<-finish
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer openaiServer.Close()
+
+	proxy, m := newTestProxy(philterServer.URL, openaiServer.URL, "openai")
+
+	reqBody := `{"model":"gpt-4","messages":[{"role":"user","content":"hello"}]}`
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(reqBody))
+		proxy.ServeHTTP(httptest.NewRecorder(), req)
+	}()
+
+	<-started
+	if v := gaugeValue(m.activeRequests); v != 1 {
+		t.Errorf("Expected activeRequests=1 during request, got %f", v)
+	}
+	close(finish)
+	wg.Wait()
+
+	if v := gaugeValue(m.activeRequests); v != 0 {
+		t.Errorf("Expected activeRequests=0 after request, got %f", v)
+	}
+}
+
+func TestMetrics_PhilterError(t *testing.T) {
+	proxy, m := newTestProxy("http://127.0.0.1:1", "http://127.0.0.1:1", "openai")
+
+	reqBody := `{"model":"gpt-4","messages":[{"role":"user","content":"hello"}]}`
+	req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(reqBody))
+	w := httptest.NewRecorder()
+	proxy.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadGateway {
+		t.Errorf("Expected 502, got %d", w.Code)
+	}
+	if v := counterValue(m.philterErrors); v != 1 {
+		t.Errorf("Expected philterErrors=1, got %f", v)
+	}
+}
+
+func TestMetrics_UpstreamError(t *testing.T) {
+	philterServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write(explainJSON("REDACTED", "doc-id", nil))
+	}))
+	defer philterServer.Close()
+
+	proxy, m := newTestProxy(philterServer.URL, "http://127.0.0.1:1", "openai")
+
+	reqBody := `{"model":"gpt-4","messages":[{"role":"user","content":"hello"}]}`
+	req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(reqBody))
+	w := httptest.NewRecorder()
+	proxy.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadGateway {
+		t.Errorf("Expected 502, got %d", w.Code)
+	}
+	if v := counterVecValue(m.upstreamErrors, "openai", "502"); v != 1 {
+		t.Errorf("Expected upstreamErrors[openai,502]=1, got %f", v)
 	}
 }
