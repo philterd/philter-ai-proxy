@@ -11,7 +11,9 @@ import (
 	"crypto/x509/pkix"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"log"
 	"log/slog"
@@ -26,16 +28,36 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/credentials/stscreds"
+	"github.com/aws/aws-sdk-go-v2/service/sts"
+	stypes "github.com/aws/aws-sdk-go-v2/service/sts/types"
+
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
 )
 
 func testConfig(philterEndpoint string) *Config {
 	cfg := defaultConfig()
+	cfg.Philter.Retry = RetryConfig{MaxAttempts: 1}
+	cfg.Philter.CircuitBreaker = CircuitBreakerConfig{Enabled: false}
 	if philterEndpoint != "" {
 		cfg.Philter.Endpoint = philterEndpoint
 	}
 	return cfg
+}
+
+func testPhilterClient(url string) *PhilterClient {
+	return newPhilterClient(http.DefaultClient, url,
+		RetryConfig{MaxAttempts: 1},
+		CircuitBreakerConfig{Enabled: false},
+	)
+}
+
+func testFilterFunc(url string) filterFunc {
+	return func(input, ctx, docID, policy string) (FilterResponse, error) {
+		return Filter(http.DefaultClient, url, input, ctx, docID, policy)
+	}
 }
 
 func TestBuildTLSConfig_VerifyEnabled(t *testing.T) {
@@ -236,7 +258,7 @@ func TestProxy_ServeHTTP_CustomConfig(t *testing.T) {
 		config:        cfg,
 		openaiTarget:  openaiURL,
 		openaiClient:  http.DefaultClient,
-		philterClient: http.DefaultClient,
+		philter: testPhilterClient(cfg.Philter.Endpoint),
 	}
 
 	reqBody := `{"model": "gpt-3.5-turbo", "messages": [{"role": "user", "content": "secret"}]}`
@@ -277,7 +299,7 @@ func TestProxy_ServeHTTP_RandomUUID(t *testing.T) {
 		config:         testConfig(philterServer.URL),
 		openaiTarget: openaiURL,
 		openaiClient: http.DefaultClient,
-		philterClient: http.DefaultClient,
+		philter: testPhilterClient(philterServer.URL),
 	}
 
 	reqBody := `{"model": "gpt-3.5-turbo", "messages": [{"role": "user", "content": "secret"}]}`
@@ -326,7 +348,7 @@ func TestProxy_ServeHTTP_OpenAI(t *testing.T) {
 		config:         testConfig(philterURL),
 		openaiTarget: openaiURL,
 		openaiClient: http.DefaultClient,
-		philterClient: http.DefaultClient,
+		philter: testPhilterClient(philterURL),
 	}
 
 	reqBody := `{"model": "gpt-3.5-turbo", "messages": [{"role": "user", "content": "Hello John Smith"}]}`
@@ -374,7 +396,7 @@ func TestProxy_ServeHTTP_Anthropic(t *testing.T) {
 		config:          testConfig(philterURL),
 		anthropicTarget: anthropicURL,
 		anthropicClient: http.DefaultClient,
-		philterClient:   http.DefaultClient,
+		philter: testPhilterClient(philterURL),
 	}
 
 	reqBody := `{"model": "claude-3-opus", "messages": [{"role": "user", "content": "Hello John Smith"}]}`
@@ -423,7 +445,7 @@ func TestProxy_ServeHTTP_Anthropic_Complex(t *testing.T) {
 		config:          testConfig(philterURL),
 		anthropicTarget: anthropicURL,
 		anthropicClient: http.DefaultClient,
-		philterClient:   http.DefaultClient,
+		philter: testPhilterClient(philterURL),
 	}
 
 	reqBody := `{"model": "claude-3-opus", "messages": [{"role": "user", "content": [{"type": "text", "text": "Hello John Smith"}]}]}`
@@ -469,7 +491,7 @@ func TestProxy_ServeHTTP_Anthropic_System(t *testing.T) {
 		config:          testConfig(philterURL),
 		anthropicTarget: anthropicURL,
 		anthropicClient: http.DefaultClient,
-		philterClient:   http.DefaultClient,
+		philter: testPhilterClient(philterURL),
 	}
 
 	reqBody := `{"model": "claude-3-opus", "system": "Hello John Smith", "messages": [{"role": "user", "content": "Hi"}]}`
@@ -516,7 +538,7 @@ func TestProxy_ServeHTTP_Gemini(t *testing.T) {
 		config:         testConfig(philterURL),
 		geminiTarget: geminiURL,
 		geminiClient: http.DefaultClient,
-		philterClient: http.DefaultClient,
+		philter: testPhilterClient(philterURL),
 	}
 
 	reqBody := `{"contents": [{"parts": [{"text": "John Smith"}]}]}`
@@ -538,7 +560,7 @@ func TestProxy_ServeHTTP_Health(t *testing.T) {
 
 	proxy := &Proxy{
 		config:        testConfig(philterServer.URL),
-		philterClient: http.DefaultClient,
+		philter: testPhilterClient(philterServer.URL),
 	}
 	req := httptest.NewRequest("GET", "/health", nil)
 	w := httptest.NewRecorder()
@@ -560,7 +582,7 @@ func TestProxy_ServeHTTP_Health(t *testing.T) {
 func TestProxy_ServeHTTP_Health_Degraded(t *testing.T) {
 	proxy := &Proxy{
 		config:        testConfig("http://127.0.0.1:1"),
-		philterClient: http.DefaultClient,
+		philter: testPhilterClient("http://127.0.0.1:1"),
 	}
 	req := httptest.NewRequest("GET", "/health", nil)
 	w := httptest.NewRecorder()
@@ -624,7 +646,7 @@ func TestProxy_ServeHTTP_OllamaGenerate(t *testing.T) {
 		config:         testConfig(philterURL),
 		ollamaTarget: ollamaURL,
 		ollamaClient: http.DefaultClient,
-		philterClient: http.DefaultClient,
+		philter: testPhilterClient(philterURL),
 	}
 
 	reqBody := `{"model": "llama3", "prompt": "John Smith", "system": "John Smith"}`
@@ -671,7 +693,7 @@ func TestProxy_ServeHTTP_OllamaChat(t *testing.T) {
 		config:         testConfig(philterURL),
 		ollamaTarget: ollamaURL,
 		ollamaClient: http.DefaultClient,
-		philterClient: http.DefaultClient,
+		philter: testPhilterClient(philterURL),
 	}
 
 	reqBody := `{"model": "llama3", "messages": [{"role": "user", "content": "John Smith"}]}`
@@ -715,7 +737,7 @@ func TestStreaming_OpenAI_SSE(t *testing.T) {
 		config:         testConfig(philterURL),
 		openaiTarget: openaiURL,
 		openaiClient: http.DefaultClient,
-		philterClient: http.DefaultClient,
+		philter: testPhilterClient(philterURL),
 	}
 
 	reqBody := `{"model": "gpt-4", "messages": [{"role": "user", "content": "secret"}], "stream": true}`
@@ -767,7 +789,7 @@ func TestStreaming_Anthropic_SSE(t *testing.T) {
 		config:          testConfig(philterURL),
 		anthropicTarget: anthropicURL,
 		anthropicClient: http.DefaultClient,
-		philterClient:   http.DefaultClient,
+		philter: testPhilterClient(philterURL),
 	}
 
 	reqBody := `{"model": "claude-3-opus", "messages": [{"role": "user", "content": "secret"}], "stream": true}`
@@ -816,7 +838,7 @@ func TestStreaming_Gemini_Chunked(t *testing.T) {
 		config:         testConfig(philterURL),
 		geminiTarget: geminiURL,
 		geminiClient: http.DefaultClient,
-		philterClient: http.DefaultClient,
+		philter: testPhilterClient(philterURL),
 	}
 
 	reqBody := `{"contents": [{"parts": [{"text": "secret"}]}]}`
@@ -865,7 +887,7 @@ func TestStreaming_Ollama_NDJSON(t *testing.T) {
 		config:         testConfig(philterURL),
 		ollamaTarget: ollamaURL,
 		ollamaClient: http.DefaultClient,
-		philterClient: http.DefaultClient,
+		philter: testPhilterClient(philterURL),
 	}
 
 	reqBody := `{"model": "llama3", "messages": [{"role": "user", "content": "secret"}]}`
@@ -908,7 +930,7 @@ func TestStreaming_HeadersPreserved(t *testing.T) {
 		config:         testConfig(philterURL),
 		openaiTarget: openaiURL,
 		openaiClient: http.DefaultClient,
-		philterClient: http.DefaultClient,
+		philter: testPhilterClient(philterURL),
 	}
 
 	reqBody := `{"model": "gpt-4", "messages": [{"role": "user", "content": "secret"}], "stream": true}`
@@ -1044,7 +1066,7 @@ func TestAuditLog_OpenAI_Integration(t *testing.T) {
 		config:         testConfig(philterURL),
 		openaiTarget: openaiURL,
 		openaiClient: http.DefaultClient,
-		philterClient: http.DefaultClient,
+		philter: testPhilterClient(philterURL),
 		auditLogger:    auditLogger,
 	}
 
@@ -1111,7 +1133,7 @@ func TestAuditLog_Disabled(t *testing.T) {
 		config:         testConfig(philterURL),
 		openaiTarget: openaiURL,
 		openaiClient: http.DefaultClient,
-		philterClient: http.DefaultClient,
+		philter: testPhilterClient(philterURL),
 		auditLogger:    nil,
 	}
 
@@ -1380,7 +1402,7 @@ func TestProxy_ServeHTTP_OpenAI_SystemMessage(t *testing.T) {
 		config:        testConfig(philterServer.URL),
 		openaiTarget:  openaiURL,
 		openaiClient:  http.DefaultClient,
-		philterClient: http.DefaultClient,
+		philter: testPhilterClient(philterServer.URL),
 	}
 
 	reqBody := `{"model":"gpt-4","messages":[{"role":"system","content":"You are a helpful assistant. The user is John Smith."}]}`
@@ -1423,7 +1445,7 @@ func TestProxy_ServeHTTP_OpenAI_ToolResult(t *testing.T) {
 		config:        testConfig(philterServer.URL),
 		openaiTarget:  openaiURL,
 		openaiClient:  http.DefaultClient,
-		philterClient: http.DefaultClient,
+		philter: testPhilterClient(philterServer.URL),
 	}
 
 	reqBody := `{"model":"gpt-4","messages":[{"role":"tool","tool_call_id":"call_abc123","content":"Customer John Smith, SSN 123-45-6789, has a balance of $4,200."}]}`
@@ -1474,7 +1496,7 @@ func TestProxy_ServeHTTP_OpenAI_ToolCallArguments(t *testing.T) {
 		config:        testConfig(philterServer.URL),
 		openaiTarget:  openaiURL,
 		openaiClient:  http.DefaultClient,
-		philterClient: http.DefaultClient,
+		philter: testPhilterClient(philterServer.URL),
 	}
 
 	reqBody := `{"model":"gpt-4","messages":[{"role":"assistant","tool_calls":[{"id":"call_abc123","type":"function","function":{"name":"lookup_customer","arguments":"{\"name\":\"John Smith\",\"ssn\":\"123-45-6789\"}"}}]}]}`
@@ -1523,7 +1545,7 @@ func TestProxy_ServeHTTP_Anthropic_ToolResult(t *testing.T) {
 		config:          testConfig(philterServer.URL),
 		anthropicTarget: anthropicURL,
 		anthropicClient: http.DefaultClient,
-		philterClient:   http.DefaultClient,
+		philter: testPhilterClient(philterServer.URL),
 	}
 
 	reqBody := `{"model":"claude-3-opus","messages":[{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_abc123","content":"Patient Margaret Collins, DOB 04/12/1978, MRN 8847291."}]}]}`
@@ -1571,7 +1593,7 @@ func TestProxy_ServeHTTP_Gemini_FunctionResponse(t *testing.T) {
 		config:        testConfig(philterServer.URL),
 		geminiTarget:  geminiURL,
 		geminiClient:  http.DefaultClient,
-		philterClient: http.DefaultClient,
+		philter: testPhilterClient(philterServer.URL),
 	}
 
 	reqBody := `{"contents":[{"parts":[{"functionResponse":{"name":"get_patient","response":{"result":"Patient John Smith, SSN 123-45-6789"}}}]}]}`
@@ -1615,7 +1637,7 @@ func newTestProxy(philterURL, providerURL string, providerKey string) (*Proxy, *
 	u, _ := url.Parse(providerURL)
 	p := &Proxy{
 		config:        cfg,
-		philterClient: http.DefaultClient,
+		philter: testPhilterClient(cfg.Philter.Endpoint),
 		metrics:       metrics,
 	}
 	switch providerKey {
@@ -1829,7 +1851,7 @@ func TestFilter_InvalidEndpoint(t *testing.T) {
 
 func TestRedactAny_EmptyString(t *testing.T) {
 	audit := &AuditEntry{}
-	result, err := redactAny(http.DefaultClient, "", "http://127.0.0.1:1", "ctx", "doc", "pol", audit)
+	result, err := redactAny(testFilterFunc("http://127.0.0.1:1"), "", "ctx", "doc", "pol", audit)
 	if err != nil {
 		t.Errorf("Unexpected error: %v", err)
 	}
@@ -1841,7 +1863,7 @@ func TestRedactAny_EmptyString(t *testing.T) {
 func TestRedactAny_NonStringScalar(t *testing.T) {
 	audit := &AuditEntry{}
 	for _, v := range []any{42, true, nil, 3.14} {
-		result, err := redactAny(http.DefaultClient, v, "http://127.0.0.1:1", "ctx", "doc", "pol", audit)
+		result, err := redactAny(testFilterFunc("http://127.0.0.1:1"), v, "ctx", "doc", "pol", audit)
 		if err != nil {
 			t.Errorf("Unexpected error for %v: %v", v, err)
 		}
@@ -1854,7 +1876,7 @@ func TestRedactAny_NonStringScalar(t *testing.T) {
 func TestRedactAny_MapError(t *testing.T) {
 	audit := &AuditEntry{}
 	m := map[string]any{"name": "John Smith"}
-	_, err := redactAny(http.DefaultClient, m, "http://127.0.0.1:1", "ctx", "doc", "pol", audit)
+	_, err := redactAny(testFilterFunc("http://127.0.0.1:1"), m, "ctx", "doc", "pol", audit)
 	if err == nil {
 		t.Error("Expected error when Philter unreachable for map value")
 	}
@@ -1863,7 +1885,7 @@ func TestRedactAny_MapError(t *testing.T) {
 func TestRedactAny_SliceError(t *testing.T) {
 	audit := &AuditEntry{}
 	s := []any{"John Smith", "another value"}
-	_, err := redactAny(http.DefaultClient, s, "http://127.0.0.1:1", "ctx", "doc", "pol", audit)
+	_, err := redactAny(testFilterFunc("http://127.0.0.1:1"), s, "ctx", "doc", "pol", audit)
 	if err == nil {
 		t.Error("Expected error when Philter unreachable for slice element")
 	}
@@ -1877,7 +1899,7 @@ func TestRedactAny_MapSuccess(t *testing.T) {
 
 	audit := &AuditEntry{}
 	m := map[string]any{"name": "John", "count": 42}
-	result, err := redactAny(http.DefaultClient, m, philter.URL, "ctx", "doc", "pol", audit)
+	result, err := redactAny(testFilterFunc(philter.URL), m, "ctx", "doc", "pol", audit)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -1898,7 +1920,7 @@ func TestRedactAny_SliceSuccess(t *testing.T) {
 
 	audit := &AuditEntry{}
 	s := []any{"John", 99}
-	result, err := redactAny(http.DefaultClient, s, philter.URL, "ctx", "doc", "pol", audit)
+	result, err := redactAny(testFilterFunc(philter.URL), s, "ctx", "doc", "pol", audit)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -1920,7 +1942,7 @@ func TestRedactJSONArguments_NonJSONString(t *testing.T) {
 	defer philter.Close()
 
 	audit := &AuditEntry{}
-	result, err := redactJSONArguments(http.DefaultClient, "not json at all", philter.URL, "ctx", "doc", "pol", audit)
+	result, err := redactJSONArguments(testFilterFunc(philter.URL), "not json at all", "ctx", "doc", "pol", audit)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -1931,7 +1953,7 @@ func TestRedactJSONArguments_NonJSONString(t *testing.T) {
 
 func TestRedactJSONArguments_NonJSON_PhilterError(t *testing.T) {
 	audit := &AuditEntry{}
-	_, err := redactJSONArguments(http.DefaultClient, "not json", "http://127.0.0.1:1", "ctx", "doc", "pol", audit)
+	_, err := redactJSONArguments(testFilterFunc("http://127.0.0.1:1"), "not json", "ctx", "doc", "pol", audit)
 	if err == nil {
 		t.Error("Expected error when non-JSON argument and Philter unreachable")
 	}
@@ -1939,7 +1961,7 @@ func TestRedactJSONArguments_NonJSON_PhilterError(t *testing.T) {
 
 func TestRedactJSONArguments_PhilterError(t *testing.T) {
 	audit := &AuditEntry{}
-	_, err := redactJSONArguments(http.DefaultClient, `{"name":"John"}`, "http://127.0.0.1:1", "ctx", "doc", "pol", audit)
+	_, err := redactJSONArguments(testFilterFunc("http://127.0.0.1:1"), `{"name":"John"}`, "ctx", "doc", "pol", audit)
 	if err == nil {
 		t.Error("Expected error when Philter unreachable for JSON argument")
 	}
@@ -2169,7 +2191,7 @@ func TestHandleAnthropic_ToolResult_ArrayContent(t *testing.T) {
 		config:          testConfig(ps.URL),
 		anthropicTarget: anthropicURL,
 		anthropicClient: http.DefaultClient,
-		philterClient:   http.DefaultClient,
+		philter: testPhilterClient(ps.URL),
 	}
 
 	reqBody := `{"model":"claude-3-opus","messages":[{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":[{"type":"text","text":"John Smith"}]}]}]}`
@@ -2226,7 +2248,7 @@ func TestForwardToProvider_QueryStringInErrorLog(t *testing.T) {
 
 	proxy := &Proxy{
 		config:        testConfig(ps.URL),
-		philterClient: http.DefaultClient,
+		philter: testPhilterClient(ps.URL),
 		geminiTarget:  mustParseURL("http://127.0.0.1:1"),
 		geminiClient:  http.DefaultClient,
 	}
@@ -2279,7 +2301,7 @@ func newOutboundProxy(philterURL, providerURL, provider string, action string) *
 	u, _ := url.Parse(providerURL)
 	p := &Proxy{
 		config:        cfg,
-		philterClient: http.DefaultClient,
+		philter: testPhilterClient(cfg.Philter.Endpoint),
 	}
 	switch provider {
 	case "openai":
@@ -2628,7 +2650,7 @@ func TestOutbound_AuditLog(t *testing.T) {
 	cfg.Defaults.Outbound = OutboundConfig{Enabled: true, Action: "redact"}
 	proxy := &Proxy{
 		config:        cfg,
-		philterClient: http.DefaultClient,
+		philter: testPhilterClient(cfg.Philter.Endpoint),
 		openaiTarget:  mustParseURL(provider.URL),
 		openaiClient:  http.DefaultClient,
 		auditLogger:   auditLogger,
@@ -2728,5 +2750,629 @@ func TestValidateConfig_Route_InvalidOutboundAction(t *testing.T) {
 	}
 	if err := validateConfig(cfg); err == nil {
 		t.Error("Expected error for invalid route outbound action")
+	}
+}
+
+// ── PhilterClient retry ───────────────────────────────────────────────────────
+
+func TestPhilterClient_SuccessOnFirstAttempt(t *testing.T) {
+	calls := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.Write(explainJSON("REDACTED", "doc", nil))
+	}))
+	defer srv.Close()
+
+	pc := newPhilterClient(http.DefaultClient, srv.URL,
+		RetryConfig{MaxAttempts: 3, InitialBackoffMs: 1, MaxBackoffMs: 10},
+		CircuitBreakerConfig{Enabled: false},
+	)
+	fr, err := pc.Filter("hello", "ctx", "doc", "pol")
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if fr.FilteredText != "REDACTED" {
+		t.Errorf("Expected REDACTED, got %s", fr.FilteredText)
+	}
+	if calls != 1 {
+		t.Errorf("Expected 1 call, got %d", calls)
+	}
+}
+
+func TestPhilterClient_RetryOnTransientError(t *testing.T) {
+	calls := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		if calls < 3 {
+			w.WriteHeader(http.StatusServiceUnavailable) // 503 — transient
+			return
+		}
+		w.Write(explainJSON("REDACTED", "doc", nil))
+	}))
+	defer srv.Close()
+
+	pc := newPhilterClient(http.DefaultClient, srv.URL,
+		RetryConfig{MaxAttempts: 3, InitialBackoffMs: 1, MaxBackoffMs: 10},
+		CircuitBreakerConfig{Enabled: false},
+	)
+	fr, err := pc.Filter("hello", "ctx", "doc", "pol")
+	if err != nil {
+		t.Fatalf("Expected success after retries, got error: %v", err)
+	}
+	if fr.FilteredText != "REDACTED" {
+		t.Errorf("Expected REDACTED, got %s", fr.FilteredText)
+	}
+	if calls != 3 {
+		t.Errorf("Expected 3 calls, got %d", calls)
+	}
+}
+
+func TestPhilterClient_NoRetryOn4xx(t *testing.T) {
+	calls := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.WriteHeader(http.StatusBadRequest) // 400 — not transient
+	}))
+	defer srv.Close()
+
+	pc := newPhilterClient(http.DefaultClient, srv.URL,
+		RetryConfig{MaxAttempts: 3, InitialBackoffMs: 1, MaxBackoffMs: 10},
+		CircuitBreakerConfig{Enabled: false},
+	)
+	_, err := pc.Filter("hello", "ctx", "doc", "pol")
+	if err == nil {
+		t.Error("Expected error for 4xx response")
+	}
+	if calls != 1 {
+		t.Errorf("Expected exactly 1 call (no retry on 4xx), got %d", calls)
+	}
+}
+
+func TestPhilterClient_ExhaustedRetries(t *testing.T) {
+	calls := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.WriteHeader(http.StatusBadGateway) // 502 — transient
+	}))
+	defer srv.Close()
+
+	pc := newPhilterClient(http.DefaultClient, srv.URL,
+		RetryConfig{MaxAttempts: 3, InitialBackoffMs: 1, MaxBackoffMs: 10},
+		CircuitBreakerConfig{Enabled: false},
+	)
+	_, err := pc.Filter("hello", "ctx", "doc", "pol")
+	if err == nil {
+		t.Error("Expected error after exhausting retries")
+	}
+	if calls != 3 {
+		t.Errorf("Expected 3 calls (all retried), got %d", calls)
+	}
+}
+
+// ── Circuit breaker ────────────────────────────────────────────────────────────
+
+func TestCircuitBreaker_OpensAfterThreshold(t *testing.T) {
+	cb := newCircuitBreaker(3, 30*time.Second, "block")
+
+	for i := 0; i < 3; i++ {
+		allowed, _ := cb.allow()
+		if !allowed {
+			t.Fatalf("Expected allowed before threshold at iteration %d", i)
+		}
+		cb.recordFailure()
+	}
+
+	allowed, fallback := cb.allow()
+	if allowed {
+		t.Error("Expected circuit breaker to be open after threshold failures")
+	}
+	if fallback != "block" {
+		t.Errorf("Expected fallback=block, got %s", fallback)
+	}
+	if cb.State() != "open" {
+		t.Errorf("Expected state=open, got %s", cb.State())
+	}
+}
+
+func TestCircuitBreaker_PassthroughFallback(t *testing.T) {
+	cb := newCircuitBreaker(1, 30*time.Second, "passthrough")
+	cb.allow()
+	cb.recordFailure()
+
+	allowed, fallback := cb.allow()
+	if allowed {
+		t.Error("Expected circuit breaker to block")
+	}
+	if fallback != "passthrough" {
+		t.Errorf("Expected fallback=passthrough, got %s", fallback)
+	}
+}
+
+func TestCircuitBreaker_HalfOpenAfterTimeout(t *testing.T) {
+	cb := newCircuitBreaker(1, 50*time.Millisecond, "block")
+	cb.allow()
+	cb.recordFailure()
+
+	// Immediately still open
+	allowed, _ := cb.allow()
+	if allowed {
+		t.Error("Expected circuit breaker still open immediately after failure")
+	}
+
+	time.Sleep(60 * time.Millisecond)
+
+	// After timeout, should allow probe
+	allowed, _ = cb.allow()
+	if !allowed {
+		t.Error("Expected circuit breaker to allow probe after timeout")
+	}
+	if cb.State() != "half-open" {
+		t.Errorf("Expected state=half-open, got %s", cb.State())
+	}
+}
+
+func TestCircuitBreaker_ClosesAfterSuccessfulProbe(t *testing.T) {
+	cb := newCircuitBreaker(1, 50*time.Millisecond, "block")
+	cb.allow()
+	cb.recordFailure()
+	time.Sleep(60 * time.Millisecond)
+	cb.allow() // transitions to half-open
+
+	cb.recordSuccess()
+	if cb.State() != "closed" {
+		t.Errorf("Expected state=closed after successful probe, got %s", cb.State())
+	}
+}
+
+func TestCircuitBreaker_ReopensOnProbeFailure(t *testing.T) {
+	cb := newCircuitBreaker(1, 50*time.Millisecond, "block")
+	cb.allow()
+	cb.recordFailure()
+	time.Sleep(60 * time.Millisecond)
+	cb.allow() // half-open
+
+	cb.recordFailure() // probe fails
+	if cb.State() != "open" {
+		t.Errorf("Expected state=open after failed probe, got %s", cb.State())
+	}
+}
+
+func TestPhilterClient_CircuitBreakerBlock(t *testing.T) {
+	calls := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	pc := newPhilterClient(http.DefaultClient, srv.URL,
+		RetryConfig{MaxAttempts: 1, InitialBackoffMs: 1, MaxBackoffMs: 10},
+		CircuitBreakerConfig{Enabled: true, Threshold: 2, TimeoutSeconds: 30, Fallback: "block"},
+	)
+
+	// Trigger two failures to open the circuit
+	pc.Filter("x", "ctx", "doc", "pol") //nolint
+	pc.Filter("x", "ctx", "doc", "pol") //nolint
+
+	// Circuit should now be open — expect CircuitOpenError
+	_, err := pc.Filter("x", "ctx", "doc", "pol")
+	var cbErr *CircuitOpenError
+	if !errors.As(err, &cbErr) {
+		t.Errorf("Expected CircuitOpenError, got %v", err)
+	}
+	// Should not have made another HTTP call
+	if calls != 2 {
+		t.Errorf("Expected 2 HTTP calls (circuit open on 3rd), got %d", calls)
+	}
+}
+
+func TestPhilterClient_CircuitBreakerPassthrough(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	pc := newPhilterClient(http.DefaultClient, srv.URL,
+		RetryConfig{MaxAttempts: 1, InitialBackoffMs: 1, MaxBackoffMs: 10},
+		CircuitBreakerConfig{Enabled: true, Threshold: 1, TimeoutSeconds: 30, Fallback: "passthrough"},
+	)
+
+	// Trigger one failure to open the circuit
+	pc.Filter("x", "ctx", "doc", "pol") //nolint
+
+	// Circuit open with passthrough: input returned unchanged
+	fr, err := pc.Filter("original text", "ctx", "doc", "pol")
+	if err != nil {
+		t.Fatalf("Expected passthrough, got error: %v", err)
+	}
+	if fr.FilteredText != "original text" {
+		t.Errorf("Expected original text returned unchanged, got %s", fr.FilteredText)
+	}
+}
+
+func TestProxy_CircuitBreakerOpen_Returns503(t *testing.T) {
+	// Philter always fails
+	philterSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer philterSrv.Close()
+
+	cfg := testConfig(philterSrv.URL)
+	pc := newPhilterClient(http.DefaultClient, philterSrv.URL,
+		RetryConfig{MaxAttempts: 1, InitialBackoffMs: 1, MaxBackoffMs: 10},
+		CircuitBreakerConfig{Enabled: true, Threshold: 1, TimeoutSeconds: 30, Fallback: "block"},
+	)
+	// Trigger the circuit open
+	pc.Filter("x", "ctx", "doc", "pol") //nolint
+
+	reg := prometheus.NewRegistry()
+	proxy := &Proxy{
+		config:  cfg,
+		philter: pc,
+		metrics: newMetrics(reg),
+		openaiTarget: mustParseURL("http://127.0.0.1:1"),
+		openaiClient: http.DefaultClient,
+	}
+
+	req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(`{"model":"gpt-4","messages":[{"role":"user","content":"hello"}]}`))
+	w := httptest.NewRecorder()
+	proxy.ServeHTTP(w, req)
+
+	if w.Code != http.StatusServiceUnavailable {
+		t.Errorf("Expected 503 when circuit breaker open, got %d", w.Code)
+	}
+}
+
+// ── Bedrock Converse API ──────────────────────────────────────────────────────
+
+// staticCreds returns a CredentialsProvider that always returns the supplied values.
+func staticCreds(key, secret string) *testCredProvider {
+	return &testCredProvider{key: key, secret: secret}
+}
+
+type testCredProvider struct{ key, secret string }
+
+func (tc *testCredProvider) Retrieve(_ context.Context) (aws.Credentials, error) {
+	return aws.Credentials{AccessKeyID: tc.key, SecretAccessKey: tc.secret, Source: "test"}, nil
+}
+
+// newBedrockProxy builds a proxy with a fake Bedrock endpoint and fake AWS creds.
+func newBedrockProxy(philterURL, bedrockURL string) *Proxy {
+	cfg := testConfig(philterURL)
+	// Parse just the host+scheme for the bedrockTarget; the handler builds the URL itself.
+	u, _ := url.Parse(bedrockURL)
+	_ = u
+	return &Proxy{
+		config:        cfg,
+		philter:       testPhilterClient(philterURL),
+		bedrockRegion: "us-east-1",
+		bedrockCreds:  staticCreds("AKIATEST", "secrettest"),
+		bedrockClient: &http.Client{Transport: &mockBedrockTransport{bedrockURL: bedrockURL}},
+	}
+}
+
+// mockBedrockTransport rewrites the request Host to point at the test server,
+// bypassing the actual AWS endpoint derived from the region.
+type mockBedrockTransport struct{ bedrockURL string }
+
+func (m *mockBedrockTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	u, _ := url.Parse(m.bedrockURL)
+	req.URL.Scheme = u.Scheme
+	req.URL.Host = u.Host
+	return http.DefaultTransport.RoundTrip(req)
+}
+
+func TestBedrock_BasicRedaction(t *testing.T) {
+	philterSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write(explainJSON("REDACTED", "doc-id", []Span{{FilterType: "NER_ENTITY"}}))
+	}))
+	defer philterSrv.Close()
+
+	var receivedBody []byte
+	bedrockSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedBody, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(BedrockConverseResponse{
+			Output: BedrockConverseOutput{
+				Message: BedrockMessage{
+					Role:    "assistant",
+					Content: []BedrockContentBlock{{Text: "Hello"}},
+				},
+			},
+			StopReason: "end_turn",
+		})
+	}))
+	defer bedrockSrv.Close()
+
+	proxy := newBedrockProxy(philterSrv.URL, bedrockSrv.URL)
+
+	body := `{"messages":[{"role":"user","content":[{"text":"John Smith"}]}]}`
+	req := httptest.NewRequest("POST", "/model/amazon.titan-text-v1/converse", strings.NewReader(body))
+	w := httptest.NewRecorder()
+	proxy.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("Expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var forwarded BedrockConverseRequest
+	if err := json.Unmarshal(receivedBody, &forwarded); err != nil {
+		t.Fatalf("Could not parse forwarded body: %v", err)
+	}
+	if len(forwarded.Messages) == 0 || len(forwarded.Messages[0].Content) == 0 {
+		t.Fatal("Expected forwarded message content")
+	}
+	if forwarded.Messages[0].Content[0].Text != "REDACTED" {
+		t.Errorf("Expected content redacted, got %q", forwarded.Messages[0].Content[0].Text)
+	}
+}
+
+func TestBedrock_SystemPromptRedaction(t *testing.T) {
+	philterSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write(explainJSON("REDACTED", "doc-id", nil))
+	}))
+	defer philterSrv.Close()
+
+	var receivedBody []byte
+	bedrockSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedBody, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(BedrockConverseResponse{
+			Output: BedrockConverseOutput{
+				Message: BedrockMessage{Role: "assistant", Content: []BedrockContentBlock{{Text: "OK"}}},
+			},
+		})
+	}))
+	defer bedrockSrv.Close()
+
+	proxy := newBedrockProxy(philterSrv.URL, bedrockSrv.URL)
+
+	body := `{"messages":[{"role":"user","content":[{"text":"hello"}]}],"system":[{"text":"Patient SSN: 123-45-6789"}]}`
+	req := httptest.NewRequest("POST", "/model/anthropic.claude-3-sonnet/converse", strings.NewReader(body))
+	w := httptest.NewRecorder()
+	proxy.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("Expected 200, got %d", w.Code)
+	}
+
+	var forwarded BedrockConverseRequest
+	json.Unmarshal(receivedBody, &forwarded)
+	if len(forwarded.System) == 0 || forwarded.System[0].Text != "REDACTED" {
+		t.Errorf("Expected system prompt redacted, got %+v", forwarded.System)
+	}
+}
+
+func TestBedrock_PhilterError(t *testing.T) {
+	proxy := newBedrockProxy("http://127.0.0.1:1", "http://127.0.0.1:1")
+
+	body := `{"messages":[{"role":"user","content":[{"text":"hello"}]}]}`
+	req := httptest.NewRequest("POST", "/model/amazon.titan-text-v1/converse", strings.NewReader(body))
+	w := httptest.NewRecorder()
+	proxy.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadGateway {
+		t.Errorf("Expected 502 when Philter unreachable, got %d", w.Code)
+	}
+}
+
+func TestBedrock_BadJSON(t *testing.T) {
+	philterSrv := philterOK()
+	defer philterSrv.Close()
+
+	proxy := newBedrockProxy(philterSrv.URL, "http://127.0.0.1:1")
+	req := httptest.NewRequest("POST", "/model/amazon.titan-text-v1/converse", strings.NewReader("{bad}"))
+	w := httptest.NewRecorder()
+	proxy.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("Expected 400, got %d", w.Code)
+	}
+}
+
+func TestBedrock_NotConfigured(t *testing.T) {
+	cfg := testConfig("http://127.0.0.1:1")
+	proxy := &Proxy{
+		config:  cfg,
+		philter: testPhilterClient("http://127.0.0.1:1"),
+		// bedrockRegion intentionally empty
+	}
+
+	req := httptest.NewRequest("POST", "/model/amazon.titan-text-v1/converse", strings.NewReader("{}"))
+	w := httptest.NewRecorder()
+	proxy.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Errorf("Expected 404 when Bedrock not configured, got %d", w.Code)
+	}
+}
+
+func TestBedrock_ModelFromPath(t *testing.T) {
+	cases := []struct {
+		path  string
+		model string
+	}{
+		{"/model/amazon.titan-text-v1/converse", "amazon.titan-text-v1"},
+		{"/model/anthropic.claude-3-sonnet-20240229-v1:0/converse", "anthropic.claude-3-sonnet-20240229-v1:0"},
+		{"/model/meta.llama3-8b-instruct-v1:0/converse", "meta.llama3-8b-instruct-v1:0"},
+	}
+	for _, tc := range cases {
+		got := bedrockModelFromPath(tc.path)
+		if got != tc.model {
+			t.Errorf("bedrockModelFromPath(%q) = %q, want %q", tc.path, got, tc.model)
+		}
+	}
+}
+
+func TestBedrock_IsBedrockPath(t *testing.T) {
+	yes := []string{
+		"/model/amazon.titan-text-v1/converse",
+		"/model/anthropic.claude-3/converse",
+	}
+	no := []string{
+		"/v1/chat/completions",
+		"/v1/messages",
+		"/api/generate",
+		"/model/foo/converseStream",
+		"/model/foo",
+		"/health",
+	}
+	for _, p := range yes {
+		if !isBedrockPath(p) {
+			t.Errorf("Expected isBedrockPath(%q) = true", p)
+		}
+	}
+	for _, p := range no {
+		if isBedrockPath(p) {
+			t.Errorf("Expected isBedrockPath(%q) = false", p)
+		}
+	}
+}
+
+func TestBedrock_AuditLog(t *testing.T) {
+	philterSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write(explainJSON("REDACTED", "doc-id", []Span{{FilterType: "NER_ENTITY"}}))
+	}))
+	defer philterSrv.Close()
+
+	bedrockSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(BedrockConverseResponse{
+			Output: BedrockConverseOutput{
+				Message: BedrockMessage{Role: "assistant", Content: []BedrockContentBlock{{Text: "OK"}}},
+			},
+		})
+	}))
+	defer bedrockSrv.Close()
+
+	var buf strings.Builder
+	auditLogger := slog.New(slog.NewJSONHandler(&buf, nil))
+
+	proxy := newBedrockProxy(philterSrv.URL, bedrockSrv.URL)
+	proxy.auditLogger = auditLogger
+
+	body := `{"messages":[{"role":"user","content":[{"text":"hello world"}]}]}`
+	req := httptest.NewRequest("POST", "/model/amazon.titan-text-v1/converse", strings.NewReader(body))
+	w := httptest.NewRecorder()
+	proxy.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("Expected 200, got %d", w.Code)
+	}
+
+	log := buf.String()
+	if !strings.Contains(log, `"provider":"bedrock"`) {
+		t.Errorf("Expected provider=bedrock in audit log, got: %s", log)
+	}
+	if !strings.Contains(log, `"model":"amazon.titan-text-v1"`) {
+		t.Errorf("Expected model in audit log, got: %s", log)
+	}
+}
+
+func TestBedrock_RoleArnCredentials(t *testing.T) {
+	// mockSTS satisfies stscreds.AssumeRoleAPIClient and returns deterministic fake creds.
+	var assumedRoleARN string
+	mockSTS := &mockSTSClient{
+		fn: func(ctx context.Context, in *sts.AssumeRoleInput, _ ...func(*sts.Options)) (*sts.AssumeRoleOutput, error) {
+			assumedRoleARN = aws.ToString(in.RoleArn)
+			exp := time.Now().Add(time.Hour)
+			return &sts.AssumeRoleOutput{
+				Credentials: &stypes.Credentials{
+					AccessKeyId:     aws.String("ASIAMOCK"),
+					SecretAccessKey: aws.String("mocksecret"),
+					SessionToken:    aws.String("mocktoken"),
+					Expiration:      &exp,
+				},
+			}, nil
+		},
+	}
+
+	roleArn := "arn:aws:iam::123456789012:role/BedrockRole"
+	creds := aws.NewCredentialsCache(
+		stscreds.NewAssumeRoleProvider(mockSTS, roleArn),
+	)
+
+	philterSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write(explainJSON("REDACTED", "doc-id", nil))
+	}))
+	defer philterSrv.Close()
+
+	bedrockSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(BedrockConverseResponse{
+			Output: BedrockConverseOutput{
+				Message: BedrockMessage{Role: "assistant", Content: []BedrockContentBlock{{Text: "OK"}}},
+			},
+		})
+	}))
+	defer bedrockSrv.Close()
+
+	cfg := testConfig(philterSrv.URL)
+	proxy := &Proxy{
+		config:        cfg,
+		philter:       testPhilterClient(philterSrv.URL),
+		bedrockRegion: "us-east-1",
+		bedrockCreds:  creds,
+		bedrockClient: &http.Client{Transport: &mockBedrockTransport{bedrockURL: bedrockSrv.URL}},
+	}
+
+	body := `{"messages":[{"role":"user","content":[{"text":"hello"}]}]}`
+	req := httptest.NewRequest("POST", "/model/amazon.titan-text-v1/converse", strings.NewReader(body))
+	w := httptest.NewRecorder()
+	proxy.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("Expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if assumedRoleARN != roleArn {
+		t.Errorf("Expected STS AssumeRole called with %q, got %q", roleArn, assumedRoleARN)
+	}
+}
+
+type mockSTSClient struct {
+	fn func(context.Context, *sts.AssumeRoleInput, ...func(*sts.Options)) (*sts.AssumeRoleOutput, error)
+}
+
+func (m *mockSTSClient) AssumeRole(ctx context.Context, in *sts.AssumeRoleInput, opts ...func(*sts.Options)) (*sts.AssumeRoleOutput, error) {
+	return m.fn(ctx, in, opts...)
+}
+
+func TestBedrock_OutboundScan_Redact(t *testing.T) {
+	philterSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write(explainJSON("REDACTED", "doc-id", []Span{{FilterType: "NER_ENTITY"}}))
+	}))
+	defer philterSrv.Close()
+
+	bedrockSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(BedrockConverseResponse{
+			Output: BedrockConverseOutput{
+				Message: BedrockMessage{
+					Role:    "assistant",
+					Content: []BedrockContentBlock{{Text: "John Smith"}},
+				},
+			},
+		})
+	}))
+	defer bedrockSrv.Close()
+
+	proxy := newBedrockProxy(philterSrv.URL, bedrockSrv.URL)
+	proxy.config.Defaults.Outbound = OutboundConfig{Enabled: true, Action: "redact"}
+
+	body := `{"messages":[{"role":"user","content":[{"text":"hello"}]}]}`
+	req := httptest.NewRequest("POST", "/model/amazon.titan-text-v1/converse", strings.NewReader(body))
+	w := httptest.NewRecorder()
+	proxy.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("Expected 200, got %d", w.Code)
+	}
+
+	var resp BedrockConverseResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("Failed to parse response: %v", err)
+	}
+	if len(resp.Output.Message.Content) == 0 || resp.Output.Message.Content[0].Text != "REDACTED" {
+		t.Errorf("Expected outbound response content to be REDACTED, got %+v", resp.Output.Message.Content)
 	}
 }

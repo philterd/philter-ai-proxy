@@ -19,6 +19,8 @@ The proxy inspects and redacts all text-bearing fields in the request body befor
 | Gemini | `functionResponse` part | `response` object — all string values redacted recursively |
 | Ollama generate | — | `prompt`, `system` |
 | Ollama chat | `role: *` | `content` |
+| Bedrock Converse | Top-level | `system[].text` |
+| Bedrock Converse | `messages[].content[]` | `text` |
 
 Fields not in the table (e.g., model names, IDs, non-string values) are forwarded unchanged.
 
@@ -35,6 +37,7 @@ By default, provider responses are forwarded to the client without modification.
 | Gemini | `candidates[].content.parts[].text` |
 | Ollama generate | `response` |
 | Ollama chat | `message.content` |
+| Bedrock Converse | `output.message.content[].text` |
 
 ### Actions
 
@@ -69,6 +72,7 @@ The proxy routes requests based on the URL path:
 | Path containing `generateContent` (case-insensitive) | Gemini |
 | `/api/generate` | Ollama |
 | `/api/chat` | Ollama |
+| `/model/{modelId}/converse` | Amazon Bedrock |
 | `/health` | Health check (no proxying) |
 | All other paths | OpenAI |
 
@@ -155,6 +159,23 @@ The proxy routes requests based on the URL path:
       "model": "llama3",
       "messages": [{"role": "user", "content": "Whose social security number is 123-45-6789"}],
       "stream": false
+    }'
+  ```
+
+### Amazon Bedrock Converse
+
+- **URL**: `/model/{modelId}/converse`
+- **Method**: `POST`
+- **Authentication**: The proxy signs requests to Bedrock using AWS Signature Version 4 with credentials from the standard AWS credential chain (environment variables, `~/.aws/credentials`, EC2/ECS instance profile, IRSA). The client does **not** need to supply AWS credentials.
+- **Streaming**: Not supported in the current release (`converseStream` is deferred).
+- **Required configuration**: `providers.bedrock.region` must be set. See [Configuration](configuration.md#providersbedrock) for details.
+- **Example**:
+  ```bash
+  curl -k https://localhost:8080/model/amazon.titan-text-express-v1/converse \
+    -H "Content-Type: application/json" \
+    -d '{
+      "messages": [{"role": "user", "content": [{"text": "Whose SSN is 123-45-6789?"}]}],
+      "inferenceConfig": {"maxTokens": 512}
     }'
   ```
 

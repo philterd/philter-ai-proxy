@@ -6,6 +6,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -19,6 +20,14 @@ import (
 	"syscall"
 	"time"
 
+	"crypto/sha256"
+	"encoding/hex"
+
+	"github.com/aws/aws-sdk-go-v2/aws"
+	awsconfig "github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/credentials/stscreds"
+	"github.com/aws/aws-sdk-go-v2/service/sts"
+	v4 "github.com/aws/aws-sdk-go-v2/aws/signer/v4"
 	"github.com/google/uuid"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -99,6 +108,34 @@ type OllamaChatRequest struct {
 	Messages []Message `json:"messages"`
 }
 
+type BedrockContentBlock struct {
+	Text string `json:"text,omitempty"`
+}
+
+type BedrockMessage struct {
+	Role    string               `json:"role"`
+	Content []BedrockContentBlock `json:"content"`
+}
+
+type BedrockSystemBlock struct {
+	Text string `json:"text"`
+}
+
+type BedrockConverseRequest struct {
+	Messages        []BedrockMessage     `json:"messages"`
+	System          []BedrockSystemBlock `json:"system,omitempty"`
+	InferenceConfig map[string]any       `json:"inferenceConfig,omitempty"`
+}
+
+type BedrockConverseOutput struct {
+	Message BedrockMessage `json:"message"`
+}
+
+type BedrockConverseResponse struct {
+	Output     BedrockConverseOutput `json:"output"`
+	StopReason string                `json:"stopReason,omitempty"`
+}
+
 type Proxy struct {
 	config          *Config
 	openaiTarget    *url.URL
@@ -109,7 +146,10 @@ type Proxy struct {
 	anthropicClient *http.Client
 	geminiClient    *http.Client
 	ollamaClient    *http.Client
-	philterClient   *http.Client
+	bedrockClient   *http.Client
+	bedrockRegion   string
+	bedrockCreds    aws.CredentialsProvider
+	philter         *PhilterClient
 	auditLogger     *slog.Logger
 	metrics         *ProxyMetrics
 }
@@ -175,17 +215,23 @@ func sanitizeQuery(rawQuery string) string {
 }
 
 func (p *Proxy) philterError(w http.ResponseWriter, err error) {
-	slog.Error("Philter request failed", "error", err)
 	if p.metrics != nil {
 		p.metrics.philterErrors.Inc()
 	}
+	var cbErr *CircuitOpenError
+	if errors.As(err, &cbErr) {
+		slog.Warn("Philter circuit breaker open, blocking request")
+		http.Error(w, "redaction service unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	slog.Error("Philter request failed", "error", err)
 	http.Error(w, "philter request failed", http.StatusBadGateway)
 }
 
 func (p *Proxy) handleHealth(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
-	if p.config == nil || p.philterClient == nil {
+	if p.config == nil || p.philter == nil {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte(`{"status":"ok"}`))
 		return
@@ -195,7 +241,7 @@ func (p *Proxy) handleHealth(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	req, _ := http.NewRequestWithContext(ctx, "GET", p.config.Philter.Endpoint, nil)
-	resp, err := p.philterClient.Do(req)
+	resp, err := p.philter.httpClient.Do(req)
 	if err == nil {
 		resp.Body.Close()
 		w.WriteHeader(http.StatusOK)
@@ -296,32 +342,6 @@ func emitAuditLog(logger *slog.Logger, entry AuditEntry) {
 	)
 }
 
-type Span struct {
-	FilterType string  `json:"filterType"`
-	Confidence float64 `json:"confidence"`
-}
-
-type Explanation struct {
-	AppliedSpans []Span `json:"appliedSpans"`
-}
-
-type ExplainResponse struct {
-	FilteredText string      `json:"filteredText"`
-	Context      string      `json:"context"`
-	DocumentId   string      `json:"documentId"`
-	Explanation  Explanation `json:"explanation"`
-}
-
-type FilterResponse struct {
-	FilteredText     string
-	Context          string
-	DocumentId       string
-	EntityCount      int
-	EntityTypes      []string
-	EntityTypeCounts map[string]int
-	Latency          time.Duration
-}
-
 func buildTLSConfig(skipVerify bool, caCertPath string) (*tls.Config, error) {
 	tlsConfig := &tls.Config{InsecureSkipVerify: skipVerify}
 
@@ -338,64 +358,6 @@ func buildTLSConfig(skipVerify bool, caCertPath string) (*tls.Config, error) {
 	}
 
 	return tlsConfig, nil
-}
-
-func Filter(client *http.Client, endpoint string, input string, context string, documentId string, policyName string) (FilterResponse, error) {
-	base, err := url.Parse(endpoint + "/api/explain")
-	if err != nil {
-		return FilterResponse{}, fmt.Errorf("failed to parse Philter endpoint: %w", err)
-	}
-
-	params := url.Values{}
-	params.Add("c", context)
-	params.Add("d", documentId)
-	params.Add("p", policyName)
-	base.RawQuery = params.Encode()
-
-	request, err := http.NewRequest("POST", base.String(), bytes.NewReader([]byte(input)))
-	if err != nil {
-		return FilterResponse{}, fmt.Errorf("failed to create Philter request: %w", err)
-	}
-	request.Header.Add("Content-Type", "text/plain")
-
-	start := time.Now()
-	response, err := client.Do(request)
-	latency := time.Since(start)
-	if err != nil {
-		return FilterResponse{}, fmt.Errorf("Philter request failed: %w", err)
-	}
-	defer response.Body.Close()
-
-	responseData, err := ioutil.ReadAll(response.Body)
-	if err != nil {
-		return FilterResponse{}, fmt.Errorf("failed to read Philter response: %w", err)
-	}
-
-	var explainResp ExplainResponse
-	if err := json.Unmarshal(responseData, &explainResp); err != nil {
-		return FilterResponse{}, fmt.Errorf("failed to parse Philter response: %w", err)
-	}
-
-	typesSet := make(map[string]struct{})
-	typeCounts := make(map[string]int)
-	for _, span := range explainResp.Explanation.AppliedSpans {
-		typesSet[span.FilterType] = struct{}{}
-		typeCounts[span.FilterType]++
-	}
-	entityTypes := make([]string, 0, len(typesSet))
-	for t := range typesSet {
-		entityTypes = append(entityTypes, t)
-	}
-
-	return FilterResponse{
-		FilteredText:     explainResp.FilteredText,
-		Context:          explainResp.Context,
-		DocumentId:       explainResp.DocumentId,
-		EntityCount:      len(explainResp.Explanation.AppliedSpans),
-		EntityTypes:      entityTypes,
-		EntityTypeCounts: typeCounts,
-		Latency:          latency,
-	}, nil
 }
 
 func (a *AuditEntry) recordFilterResult(fr FilterResponse) {
@@ -433,11 +395,11 @@ func clientIP(r *http.Request) string {
 	return host
 }
 
-func redactAny(client *http.Client, v any, endpoint, ctx, docID, policy string, audit *AuditEntry) (any, error) {
+func redactAny(filter filterFunc, v any, ctx, docID, policy string, audit *AuditEntry) (any, error) {
 	switch val := v.(type) {
 	case string:
 		if val != "" {
-			fr, err := Filter(client, endpoint, val, ctx, docID, policy)
+			fr, err := filter(val, ctx, docID, policy)
 			if err != nil {
 				return nil, err
 			}
@@ -447,7 +409,7 @@ func redactAny(client *http.Client, v any, endpoint, ctx, docID, policy string, 
 		return val, nil
 	case map[string]any:
 		for k, elem := range val {
-			redacted, err := redactAny(client, elem, endpoint, ctx, docID, policy, audit)
+			redacted, err := redactAny(filter, elem, ctx, docID, policy, audit)
 			if err != nil {
 				return nil, err
 			}
@@ -456,7 +418,7 @@ func redactAny(client *http.Client, v any, endpoint, ctx, docID, policy string, 
 		return val, nil
 	case []any:
 		for i, elem := range val {
-			redacted, err := redactAny(client, elem, endpoint, ctx, docID, policy, audit)
+			redacted, err := redactAny(filter, elem, ctx, docID, policy, audit)
 			if err != nil {
 				return nil, err
 			}
@@ -468,17 +430,17 @@ func redactAny(client *http.Client, v any, endpoint, ctx, docID, policy string, 
 	}
 }
 
-func redactJSONArguments(client *http.Client, arguments string, endpoint, ctx, docID, policy string, audit *AuditEntry) (string, error) {
+func redactJSONArguments(filter filterFunc, arguments, ctx, docID, policy string, audit *AuditEntry) (string, error) {
 	var parsed any
 	if err := json.Unmarshal([]byte(arguments), &parsed); err != nil {
-		fr, err := Filter(client, endpoint, arguments, ctx, docID, policy)
+		fr, err := filter(arguments, ctx, docID, policy)
 		if err != nil {
 			return "", err
 		}
 		audit.recordFilterResult(fr)
 		return fr.FilteredText, nil
 	}
-	result, err := redactAny(client, parsed, endpoint, ctx, docID, policy, audit)
+	result, err := redactAny(filter, parsed, ctx, docID, policy, audit)
 	if err != nil {
 		return "", err
 	}
@@ -568,11 +530,11 @@ func (p *Proxy) captureFromProvider(origReq *http.Request, target *url.URL, clie
 
 // outboundScanText runs a single text value through Philter and applies the configured action.
 // Returns (resultText, blocked, error). blocked=true means the response should be blocked entirely.
-func (p *Proxy) outboundScanText(text, endpoint, ctx, docID, policy, action string, audit *AuditEntry) (string, bool, error) {
+func (p *Proxy) outboundScanText(text, ctx, docID, policy, action string, audit *AuditEntry) (string, bool, error) {
 	if text == "" {
 		return text, false, nil
 	}
-	fr, err := Filter(p.philterClient, endpoint, text, ctx, docID, policy)
+	fr, err := p.philter.Filter(text, ctx, docID, policy)
 	if err != nil {
 		return "", false, err
 	}
@@ -594,12 +556,12 @@ func (p *Proxy) outboundScanText(text, endpoint, ctx, docID, policy, action stri
 	}
 }
 
-type responseScanner func([]byte, string, string, string, string, string, *AuditEntry) ([]byte, bool, error)
+type responseScanner func([]byte, string, string, string, string, *AuditEntry) ([]byte, bool, error)
 
 func (p *Proxy) forwardWithOutboundScan(
 	w http.ResponseWriter, r *http.Request,
 	target *url.URL, client *http.Client, body []byte, provider string,
-	endpoint, philterCtx, docID, policy, action string,
+	philterCtx, docID, policy, action string,
 	audit *AuditEntry,
 	scanner responseScanner,
 ) {
@@ -621,7 +583,7 @@ func (p *Proxy) forwardWithOutboundScan(
 	}
 
 	if statusCode >= 200 && statusCode < 300 && !isStreamingResponse(respHeaders) {
-		modified, blocked, scanErr := scanner(respBody, endpoint, philterCtx, docID, policy, action, outboundAudit)
+		modified, blocked, scanErr := scanner(respBody, philterCtx, docID, policy, action, outboundAudit)
 		if scanErr != nil {
 			outboundAudit.HTTPStatus = http.StatusBadGateway
 			emitAuditLog(p.auditLogger, *outboundAudit)
@@ -644,7 +606,7 @@ func (p *Proxy) forwardWithOutboundScan(
 	writeBufferedResponse(w, statusCode, respHeaders, respBody)
 }
 
-func (p *Proxy) scanOpenAIResponse(respBody []byte, endpoint, ctx, docID, policy, action string, audit *AuditEntry) ([]byte, bool, error) {
+func (p *Proxy) scanOpenAIResponse(respBody []byte, ctx, docID, policy, action string, audit *AuditEntry) ([]byte, bool, error) {
 	var resp map[string]interface{}
 	if err := json.Unmarshal(respBody, &resp); err != nil {
 		return respBody, false, nil
@@ -663,7 +625,7 @@ func (p *Proxy) scanOpenAIResponse(respBody []byte, endpoint, ctx, docID, policy
 		if !ok || content == "" {
 			continue
 		}
-		result, blocked, err := p.outboundScanText(content, endpoint, ctx, docID, policy, action, audit)
+		result, blocked, err := p.outboundScanText(content, ctx, docID, policy, action, audit)
 		if err != nil {
 			return nil, false, err
 		}
@@ -679,7 +641,7 @@ func (p *Proxy) scanOpenAIResponse(respBody []byte, endpoint, ctx, docID, policy
 	return modified, false, nil
 }
 
-func (p *Proxy) scanAnthropicResponse(respBody []byte, endpoint, ctx, docID, policy, action string, audit *AuditEntry) ([]byte, bool, error) {
+func (p *Proxy) scanAnthropicResponse(respBody []byte, ctx, docID, policy, action string, audit *AuditEntry) ([]byte, bool, error) {
 	var resp map[string]interface{}
 	if err := json.Unmarshal(respBody, &resp); err != nil {
 		return respBody, false, nil
@@ -697,7 +659,7 @@ func (p *Proxy) scanAnthropicResponse(respBody []byte, endpoint, ctx, docID, pol
 		if !ok || text == "" {
 			continue
 		}
-		result, blocked, err := p.outboundScanText(text, endpoint, ctx, docID, policy, action, audit)
+		result, blocked, err := p.outboundScanText(text, ctx, docID, policy, action, audit)
 		if err != nil {
 			return nil, false, err
 		}
@@ -713,7 +675,7 @@ func (p *Proxy) scanAnthropicResponse(respBody []byte, endpoint, ctx, docID, pol
 	return modified, false, nil
 }
 
-func (p *Proxy) scanGeminiResponse(respBody []byte, endpoint, ctx, docID, policy, action string, audit *AuditEntry) ([]byte, bool, error) {
+func (p *Proxy) scanGeminiResponse(respBody []byte, ctx, docID, policy, action string, audit *AuditEntry) ([]byte, bool, error) {
 	var resp map[string]interface{}
 	if err := json.Unmarshal(respBody, &resp); err != nil {
 		return respBody, false, nil
@@ -738,7 +700,7 @@ func (p *Proxy) scanGeminiResponse(respBody []byte, endpoint, ctx, docID, policy
 			if !ok || text == "" {
 				continue
 			}
-			result, blocked, err := p.outboundScanText(text, endpoint, ctx, docID, policy, action, audit)
+			result, blocked, err := p.outboundScanText(text, ctx, docID, policy, action, audit)
 			if err != nil {
 				return nil, false, err
 			}
@@ -755,7 +717,7 @@ func (p *Proxy) scanGeminiResponse(respBody []byte, endpoint, ctx, docID, policy
 	return modified, false, nil
 }
 
-func (p *Proxy) scanOllamaGenerateResponse(respBody []byte, endpoint, ctx, docID, policy, action string, audit *AuditEntry) ([]byte, bool, error) {
+func (p *Proxy) scanOllamaGenerateResponse(respBody []byte, ctx, docID, policy, action string, audit *AuditEntry) ([]byte, bool, error) {
 	var resp map[string]interface{}
 	if err := json.Unmarshal(respBody, &resp); err != nil {
 		return respBody, false, nil
@@ -764,7 +726,7 @@ func (p *Proxy) scanOllamaGenerateResponse(respBody []byte, endpoint, ctx, docID
 	if !ok || response == "" {
 		return respBody, false, nil
 	}
-	result, blocked, err := p.outboundScanText(response, endpoint, ctx, docID, policy, action, audit)
+	result, blocked, err := p.outboundScanText(response, ctx, docID, policy, action, audit)
 	if err != nil {
 		return nil, false, err
 	}
@@ -779,7 +741,7 @@ func (p *Proxy) scanOllamaGenerateResponse(respBody []byte, endpoint, ctx, docID
 	return modified, false, nil
 }
 
-func (p *Proxy) scanOllamaChatResponse(respBody []byte, endpoint, ctx, docID, policy, action string, audit *AuditEntry) ([]byte, bool, error) {
+func (p *Proxy) scanOllamaChatResponse(respBody []byte, ctx, docID, policy, action string, audit *AuditEntry) ([]byte, bool, error) {
 	var resp map[string]interface{}
 	if err := json.Unmarshal(respBody, &resp); err != nil {
 		return respBody, false, nil
@@ -792,7 +754,7 @@ func (p *Proxy) scanOllamaChatResponse(respBody []byte, endpoint, ctx, docID, po
 	if !ok || content == "" {
 		return respBody, false, nil
 	}
-	result, blocked, err := p.outboundScanText(content, endpoint, ctx, docID, policy, action, audit)
+	result, blocked, err := p.outboundScanText(content, ctx, docID, policy, action, audit)
 	if err != nil {
 		return nil, false, err
 	}
@@ -800,6 +762,261 @@ func (p *Proxy) scanOllamaChatResponse(respBody []byte, endpoint, ctx, docID, po
 		return nil, true, nil
 	}
 	message["content"] = result
+	modified, err := json.Marshal(resp)
+	if err != nil {
+		return respBody, false, nil
+	}
+	return modified, false, nil
+}
+
+func bedrockTargetURL(region string) string {
+	return fmt.Sprintf("https://bedrock-runtime.%s.amazonaws.com", region)
+}
+
+func isBedrockPath(path string) bool {
+	parts := strings.Split(strings.TrimPrefix(path, "/"), "/")
+	return len(parts) == 3 && parts[0] == "model" && parts[2] == "converse"
+}
+
+func bedrockModelFromPath(path string) string {
+	parts := strings.Split(strings.TrimPrefix(path, "/"), "/")
+	if len(parts) >= 2 {
+		return parts[1]
+	}
+	return ""
+}
+
+func sha256Hex(b []byte) string {
+	h := sha256.Sum256(b)
+	return hex.EncodeToString(h[:])
+}
+
+func newBedrockHTTPClient(skipVerify bool) *http.Client {
+	return &http.Client{
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: skipVerify},
+		},
+	}
+}
+
+func (p *Proxy) signBedrockRequest(ctx context.Context, req *http.Request, body []byte) error {
+	creds, err := p.bedrockCreds.Retrieve(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to retrieve AWS credentials: %w", err)
+	}
+	signer := v4.NewSigner()
+	return signer.SignHTTP(ctx, creds, req, sha256Hex(body), "bedrock-runtime", p.bedrockRegion, time.Now())
+}
+
+func (p *Proxy) handleBedrock(w http.ResponseWriter, r *http.Request, bodyBytes []byte, philterCtx string, docID string, policyName string, audit *AuditEntry, outbound OutboundConfig) {
+	var req BedrockConverseRequest
+	if err := json.Unmarshal(bodyBytes, &req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	audit.Model = bedrockModelFromPath(r.URL.Path)
+
+	for i := range req.System {
+		if req.System[i].Text == "" {
+			continue
+		}
+		fr, err := p.philter.Filter(req.System[i].Text, philterCtx, docID, policyName)
+		if err != nil {
+			p.philterError(w, err)
+			return
+		}
+		req.System[i].Text = fr.FilteredText
+		audit.recordFilterResult(fr)
+	}
+
+	for i := range req.Messages {
+		for j := range req.Messages[i].Content {
+			if req.Messages[i].Content[j].Text == "" {
+				continue
+			}
+			fr, err := p.philter.Filter(req.Messages[i].Content[j].Text, philterCtx, docID, policyName)
+			if err != nil {
+				p.philterError(w, err)
+				return
+			}
+			req.Messages[i].Content[j].Text = fr.FilteredText
+			audit.recordFilterResult(fr)
+		}
+	}
+
+	body, err := json.Marshal(req)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	if outbound.Enabled {
+		p.forwardBedrockWithOutboundScan(w, r, body, philterCtx, docID, policyName, outbound.Action, audit)
+		return
+	}
+	p.forwardToBedrockProvider(w, r, body, audit)
+}
+
+func (p *Proxy) forwardToBedrockProvider(w http.ResponseWriter, origReq *http.Request, body []byte, audit *AuditEntry) {
+	targetURL := bedrockTargetURL(p.bedrockRegion) + origReq.URL.Path
+
+	req, err := http.NewRequestWithContext(origReq.Context(), "POST", targetURL, bytes.NewReader(body))
+	if err != nil {
+		slog.Error("Failed to create Bedrock request", "error", err)
+		http.Error(w, "failed to create provider request", http.StatusInternalServerError)
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	if err := p.signBedrockRequest(origReq.Context(), req, body); err != nil {
+		slog.Error("Failed to sign Bedrock request", "error", err)
+		http.Error(w, "failed to sign provider request", http.StatusInternalServerError)
+		return
+	}
+
+	resp, err := p.bedrockClient.Do(req)
+	if err != nil {
+		slog.Error("Bedrock request failed", "error", err)
+		if p.metrics != nil {
+			p.metrics.upstreamErrors.WithLabelValues("bedrock", "502").Inc()
+		}
+		http.Error(w, "provider request failed", http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+
+	if p.metrics != nil && resp.StatusCode >= 400 {
+		p.metrics.upstreamErrors.WithLabelValues("bedrock", strconv.Itoa(resp.StatusCode)).Inc()
+	}
+
+	for key, values := range resp.Header {
+		if hopByHopHeaders[key] {
+			continue
+		}
+		for _, v := range values {
+			w.Header().Add(key, v)
+		}
+	}
+	w.WriteHeader(resp.StatusCode)
+
+	flusher, canFlush := w.(http.Flusher)
+	buf := make([]byte, 4096)
+	for {
+		n, readErr := resp.Body.Read(buf)
+		if n > 0 {
+			w.Write(buf[:n])
+			if canFlush {
+				flusher.Flush()
+			}
+		}
+		if readErr != nil {
+			break
+		}
+	}
+}
+
+func (p *Proxy) captureFromBedrockProvider(origReq *http.Request, body []byte) (int, http.Header, []byte, error) {
+	targetURL := bedrockTargetURL(p.bedrockRegion) + origReq.URL.Path
+
+	req, err := http.NewRequestWithContext(origReq.Context(), "POST", targetURL, bytes.NewReader(body))
+	if err != nil {
+		return 0, nil, nil, fmt.Errorf("failed to create Bedrock request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	if err := p.signBedrockRequest(origReq.Context(), req, body); err != nil {
+		return 0, nil, nil, fmt.Errorf("failed to sign Bedrock request: %w", err)
+	}
+
+	resp, err := p.bedrockClient.Do(req)
+	if err != nil {
+		slog.Error("Bedrock request failed", "error", err)
+		if p.metrics != nil {
+			p.metrics.upstreamErrors.WithLabelValues("bedrock", "502").Inc()
+		}
+		return 0, nil, nil, fmt.Errorf("provider request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if p.metrics != nil && resp.StatusCode >= 400 {
+		p.metrics.upstreamErrors.WithLabelValues("bedrock", strconv.Itoa(resp.StatusCode)).Inc()
+	}
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return 0, nil, nil, fmt.Errorf("failed to read Bedrock response: %w", err)
+	}
+	return resp.StatusCode, resp.Header, respBody, nil
+}
+
+func (p *Proxy) forwardBedrockWithOutboundScan(
+	w http.ResponseWriter, r *http.Request, body []byte,
+	philterCtx, docID, policy, action string,
+	audit *AuditEntry,
+) {
+	statusCode, respHeaders, respBody, err := p.captureFromBedrockProvider(r, body)
+	if err != nil {
+		http.Error(w, "provider request failed", http.StatusBadGateway)
+		return
+	}
+
+	outboundAudit := &AuditEntry{
+		RequestID:  audit.RequestID,
+		Direction:  "outbound",
+		Provider:   "bedrock",
+		Model:      audit.Model,
+		PolicyName: audit.PolicyName,
+		DocumentID: audit.DocumentID,
+		ClientIP:   audit.ClientIP,
+		HTTPStatus: statusCode,
+	}
+
+	if statusCode >= 200 && statusCode < 300 && !isStreamingResponse(respHeaders) {
+		modified, blocked, scanErr := p.scanBedrockResponse(respBody, philterCtx, docID, policy, action, outboundAudit)
+		if scanErr != nil {
+			outboundAudit.HTTPStatus = http.StatusBadGateway
+			emitAuditLog(p.auditLogger, *outboundAudit)
+			p.philterError(w, scanErr)
+			return
+		}
+		if blocked {
+			outboundAudit.HTTPStatus = http.StatusForbidden
+			emitAuditLog(p.auditLogger, *outboundAudit)
+			w.Header().Set("Content-Type", "application/json")
+			http.Error(w, `{"error":{"message":"response blocked: PII detected","type":"pii_blocked"}}`, http.StatusForbidden)
+			return
+		}
+		respBody = modified
+	} else if isStreamingResponse(respHeaders) {
+		slog.Warn("Outbound scanning skipped for streaming response", "provider", "bedrock", "document_id", docID)
+	}
+
+	emitAuditLog(p.auditLogger, *outboundAudit)
+	writeBufferedResponse(w, statusCode, respHeaders, respBody)
+}
+
+func (p *Proxy) scanBedrockResponse(respBody []byte, ctx, docID, policy, action string, audit *AuditEntry) ([]byte, bool, error) {
+	var resp BedrockConverseResponse
+	if err := json.Unmarshal(respBody, &resp); err != nil {
+		return respBody, false, nil
+	}
+
+	for i := range resp.Output.Message.Content {
+		text := resp.Output.Message.Content[i].Text
+		if text == "" {
+			continue
+		}
+		result, blocked, err := p.outboundScanText(text, ctx, docID, policy, action, audit)
+		if err != nil {
+			return nil, false, err
+		}
+		if blocked {
+			return nil, true, nil
+		}
+		resp.Output.Message.Content[i].Text = result
+	}
+
 	modified, err := json.Marshal(resp)
 	if err != nil {
 		return respBody, false, nil
@@ -829,7 +1046,6 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	model := extractModel(bodyBytes)
 	route := matchRoute(p.config, r.URL.Path, model, r.Header.Get)
 
-	philter_endpoint := p.config.Philter.Endpoint
 	philter_context := route.Context
 	philter_document_id := uuid.New().String()
 	philter_policy_name := route.Policy
@@ -846,19 +1062,26 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	if strings.HasPrefix(r.URL.Path, "/v1/messages") {
 		audit.Provider = "anthropic"
-		p.handleAnthropic(rc, r, bodyBytes, philter_endpoint, philter_context, philter_document_id, philter_policy_name, audit, route.Outbound)
+		p.handleAnthropic(rc, r, bodyBytes, philter_context, philter_document_id, philter_policy_name, audit, route.Outbound)
 	} else if strings.Contains(strings.ToLower(r.URL.Path), "generatecontent") {
 		audit.Provider = "gemini"
-		p.handleGeminiNative(rc, r, bodyBytes, philter_endpoint, philter_context, philter_document_id, philter_policy_name, audit, route.Outbound)
+		p.handleGeminiNative(rc, r, bodyBytes, philter_context, philter_document_id, philter_policy_name, audit, route.Outbound)
 	} else if r.URL.Path == "/api/generate" {
 		audit.Provider = "ollama"
-		p.handleOllamaGenerate(rc, r, bodyBytes, philter_endpoint, philter_context, philter_document_id, philter_policy_name, audit, route.Outbound)
+		p.handleOllamaGenerate(rc, r, bodyBytes, philter_context, philter_document_id, philter_policy_name, audit, route.Outbound)
 	} else if r.URL.Path == "/api/chat" {
 		audit.Provider = "ollama"
-		p.handleOllamaChat(rc, r, bodyBytes, philter_endpoint, philter_context, philter_document_id, philter_policy_name, audit, route.Outbound)
+		p.handleOllamaChat(rc, r, bodyBytes, philter_context, philter_document_id, philter_policy_name, audit, route.Outbound)
+	} else if isBedrockPath(r.URL.Path) {
+		audit.Provider = "bedrock"
+		if p.bedrockRegion == "" {
+			http.Error(rc, "bedrock provider not configured", http.StatusNotFound)
+		} else {
+			p.handleBedrock(rc, r, bodyBytes, philter_context, philter_document_id, philter_policy_name, audit, route.Outbound)
+		}
 	} else {
 		audit.Provider = "openai"
-		p.handleOpenAI(rc, r, bodyBytes, philter_endpoint, philter_context, philter_document_id, philter_policy_name, audit, route.Outbound)
+		p.handleOpenAI(rc, r, bodyBytes, philter_context, philter_document_id, philter_policy_name, audit, route.Outbound)
 	}
 
 	audit.HTTPStatus = rc.statusCode
@@ -878,7 +1101,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (p *Proxy) handleOllamaGenerate(w http.ResponseWriter, r *http.Request, bodyBytes []byte, philter_endpoint string, context string, documentId string, policyName string, audit *AuditEntry, outbound OutboundConfig) {
+func (p *Proxy) handleOllamaGenerate(w http.ResponseWriter, r *http.Request, bodyBytes []byte, context string, documentId string, policyName string, audit *AuditEntry, outbound OutboundConfig) {
 	var o OllamaGenerateRequest
 	if err := json.Unmarshal(bodyBytes, &o); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -888,7 +1111,7 @@ func (p *Proxy) handleOllamaGenerate(w http.ResponseWriter, r *http.Request, bod
 	audit.Model = o.Model
 
 	if o.Prompt != "" {
-		fr, err := Filter(p.philterClient, philter_endpoint, o.Prompt, context, documentId, policyName)
+		fr, err := p.philter.Filter(o.Prompt, context, documentId, policyName)
 		if err != nil {
 			p.philterError(w, err)
 			return
@@ -898,7 +1121,7 @@ func (p *Proxy) handleOllamaGenerate(w http.ResponseWriter, r *http.Request, bod
 	}
 
 	if o.System != "" {
-		fr, err := Filter(p.philterClient, philter_endpoint, o.System, context, documentId, policyName)
+		fr, err := p.philter.Filter(o.System, context, documentId, policyName)
 		if err != nil {
 			p.philterError(w, err)
 			return
@@ -915,13 +1138,13 @@ func (p *Proxy) handleOllamaGenerate(w http.ResponseWriter, r *http.Request, bod
 
 	if outbound.Enabled {
 		p.forwardWithOutboundScan(w, r, p.ollamaTarget, p.ollamaClient, j, "ollama",
-			philter_endpoint, context, documentId, policyName, outbound.Action, audit, p.scanOllamaGenerateResponse)
+			context, documentId, policyName, outbound.Action, audit, p.scanOllamaGenerateResponse)
 		return
 	}
 	p.forwardToProvider(w, r, p.ollamaTarget, p.ollamaClient, j, "ollama")
 }
 
-func (p *Proxy) handleOllamaChat(w http.ResponseWriter, r *http.Request, bodyBytes []byte, philter_endpoint string, context string, documentId string, policyName string, audit *AuditEntry, outbound OutboundConfig) {
+func (p *Proxy) handleOllamaChat(w http.ResponseWriter, r *http.Request, bodyBytes []byte, context string, documentId string, policyName string, audit *AuditEntry, outbound OutboundConfig) {
 	var o OllamaChatRequest
 	if err := json.Unmarshal(bodyBytes, &o); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -931,7 +1154,7 @@ func (p *Proxy) handleOllamaChat(w http.ResponseWriter, r *http.Request, bodyByt
 	audit.Model = o.Model
 
 	for i := range o.Messages {
-		fr, err := Filter(p.philterClient, philter_endpoint, o.Messages[i].Content, context, documentId, policyName)
+		fr, err := p.philter.Filter(o.Messages[i].Content, context, documentId, policyName)
 		if err != nil {
 			p.philterError(w, err)
 			return
@@ -948,13 +1171,13 @@ func (p *Proxy) handleOllamaChat(w http.ResponseWriter, r *http.Request, bodyByt
 
 	if outbound.Enabled {
 		p.forwardWithOutboundScan(w, r, p.ollamaTarget, p.ollamaClient, j, "ollama",
-			philter_endpoint, context, documentId, policyName, outbound.Action, audit, p.scanOllamaChatResponse)
+			context, documentId, policyName, outbound.Action, audit, p.scanOllamaChatResponse)
 		return
 	}
 	p.forwardToProvider(w, r, p.ollamaTarget, p.ollamaClient, j, "ollama")
 }
 
-func (p *Proxy) handleGeminiNative(w http.ResponseWriter, r *http.Request, bodyBytes []byte, philter_endpoint string, context string, documentId string, policyName string, audit *AuditEntry, outbound OutboundConfig) {
+func (p *Proxy) handleGeminiNative(w http.ResponseWriter, r *http.Request, bodyBytes []byte, context string, documentId string, policyName string, audit *AuditEntry, outbound OutboundConfig) {
 	var g GeminiRequest
 	if err := json.Unmarshal(bodyBytes, &g); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -967,7 +1190,7 @@ loop:
 		for j := range g.Contents[i].Parts {
 			part := &g.Contents[i].Parts[j]
 			if part.Text != "" {
-				fr, err := Filter(p.philterClient, philter_endpoint, part.Text, context, documentId, policyName)
+				fr, err := p.philter.Filter(part.Text, context, documentId, policyName)
 				if err != nil {
 					filterErr = err
 					break loop
@@ -976,7 +1199,7 @@ loop:
 				audit.recordFilterResult(fr)
 			}
 			if part.FunctionResponse != nil && part.FunctionResponse.Response != nil {
-				if _, err := redactAny(p.philterClient, part.FunctionResponse.Response, philter_endpoint, context, documentId, policyName, audit); err != nil {
+				if _, err := redactAny(p.philter.Filter, part.FunctionResponse.Response, context, documentId, policyName, audit); err != nil {
 					filterErr = err
 					break loop
 				}
@@ -996,13 +1219,13 @@ loop:
 
 	if outbound.Enabled {
 		p.forwardWithOutboundScan(w, r, p.geminiTarget, p.geminiClient, j, "gemini",
-			philter_endpoint, context, documentId, policyName, outbound.Action, audit, p.scanGeminiResponse)
+			context, documentId, policyName, outbound.Action, audit, p.scanGeminiResponse)
 		return
 	}
 	p.forwardToProvider(w, r, p.geminiTarget, p.geminiClient, j, "gemini")
 }
 
-func (p *Proxy) handleOpenAI(w http.ResponseWriter, r *http.Request, bodyBytes []byte, philter_endpoint string, context string, documentId string, policyName string, audit *AuditEntry, outbound OutboundConfig) {
+func (p *Proxy) handleOpenAI(w http.ResponseWriter, r *http.Request, bodyBytes []byte, context string, documentId string, policyName string, audit *AuditEntry, outbound OutboundConfig) {
 	var o OpenAIRequest
 	if err := json.Unmarshal(bodyBytes, &o); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -1017,7 +1240,7 @@ func (p *Proxy) handleOpenAI(w http.ResponseWriter, r *http.Request, bodyBytes [
 		if len(msg.Content) > 0 {
 			var s string
 			if json.Unmarshal(msg.Content, &s) == nil && s != "" {
-				fr, err := Filter(p.philterClient, philter_endpoint, s, context, documentId, policyName)
+				fr, err := p.philter.Filter(s, context, documentId, policyName)
 				if err != nil {
 					p.philterError(w, err)
 					return
@@ -1030,7 +1253,7 @@ func (p *Proxy) handleOpenAI(w http.ResponseWriter, r *http.Request, bodyBytes [
 		for j := range msg.ToolCalls {
 			tc := &msg.ToolCalls[j]
 			if tc.Function.Arguments != "" {
-				redacted, err := redactJSONArguments(p.philterClient, tc.Function.Arguments, philter_endpoint, context, documentId, policyName, audit)
+				redacted, err := redactJSONArguments(p.philter.Filter, tc.Function.Arguments, context, documentId, policyName, audit)
 				if err != nil {
 					p.philterError(w, err)
 					return
@@ -1048,13 +1271,13 @@ func (p *Proxy) handleOpenAI(w http.ResponseWriter, r *http.Request, bodyBytes [
 
 	if outbound.Enabled {
 		p.forwardWithOutboundScan(w, r, p.openaiTarget, p.openaiClient, j, "openai",
-			philter_endpoint, context, documentId, policyName, outbound.Action, audit, p.scanOpenAIResponse)
+			context, documentId, policyName, outbound.Action, audit, p.scanOpenAIResponse)
 		return
 	}
 	p.forwardToProvider(w, r, p.openaiTarget, p.openaiClient, j, "openai")
 }
 
-func (p *Proxy) handleAnthropic(w http.ResponseWriter, r *http.Request, bodyBytes []byte, philter_endpoint string, context string, documentId string, policyName string, audit *AuditEntry, outbound OutboundConfig) {
+func (p *Proxy) handleAnthropic(w http.ResponseWriter, r *http.Request, bodyBytes []byte, context string, documentId string, policyName string, audit *AuditEntry, outbound OutboundConfig) {
 	var a AnthropicRequest
 	if err := json.Unmarshal(bodyBytes, &a); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -1066,7 +1289,7 @@ func (p *Proxy) handleAnthropic(w http.ResponseWriter, r *http.Request, bodyByte
 	var filterErr error
 
 	if a.System != "" {
-		fr, err := Filter(p.philterClient, philter_endpoint, a.System, context, documentId, policyName)
+		fr, err := p.philter.Filter(a.System, context, documentId, policyName)
 		if err != nil {
 			p.philterError(w, err)
 			return
@@ -1079,7 +1302,7 @@ msgloop:
 	for i := range a.Messages {
 		switch v := a.Messages[i].Content.(type) {
 		case string:
-			fr, err := Filter(p.philterClient, philter_endpoint, v, context, documentId, policyName)
+			fr, err := p.philter.Filter(v, context, documentId, policyName)
 			if err != nil {
 				filterErr = err
 				break msgloop
@@ -1092,7 +1315,7 @@ msgloop:
 					switch block["type"] {
 					case "text":
 						if text, ok := block["text"].(string); ok && text != "" {
-							fr, err := Filter(p.philterClient, philter_endpoint, text, context, documentId, policyName)
+							fr, err := p.philter.Filter(text, context, documentId, policyName)
 							if err != nil {
 								filterErr = err
 								break msgloop
@@ -1104,7 +1327,7 @@ msgloop:
 						switch c := block["content"].(type) {
 						case string:
 							if c != "" {
-								fr, err := Filter(p.philterClient, philter_endpoint, c, context, documentId, policyName)
+								fr, err := p.philter.Filter(c, context, documentId, policyName)
 								if err != nil {
 									filterErr = err
 									break msgloop
@@ -1117,7 +1340,7 @@ msgloop:
 								if subBlock, ok := elem.(map[string]any); ok {
 									if subBlock["type"] == "text" {
 										if text, ok := subBlock["text"].(string); ok && text != "" {
-											fr, err := Filter(p.philterClient, philter_endpoint, text, context, documentId, policyName)
+											fr, err := p.philter.Filter(text, context, documentId, policyName)
 											if err != nil {
 												filterErr = err
 												break msgloop
@@ -1148,7 +1371,7 @@ msgloop:
 
 	if outbound.Enabled {
 		p.forwardWithOutboundScan(w, r, p.anthropicTarget, p.anthropicClient, j, "anthropic",
-			philter_endpoint, context, documentId, policyName, outbound.Action, audit, p.scanAnthropicResponse)
+			context, documentId, policyName, outbound.Action, audit, p.scanAnthropicResponse)
 		return
 	}
 	p.forwardToProvider(w, r, p.anthropicTarget, p.anthropicClient, j, "anthropic")
@@ -1200,11 +1423,12 @@ func main() {
 		os.Exit(1)
 	}
 
-	philterClient := &http.Client{
+	philterHTTPClient := &http.Client{
 		Transport: &http.Transport{
 			TLSClientConfig: philterTLSConfig,
 		},
 	}
+	philterClient := newPhilterClient(philterHTTPClient, cfg.Philter.Endpoint, cfg.Philter.Retry, cfg.Philter.CircuitBreaker)
 
 	type providerSetup struct {
 		name   string
@@ -1243,6 +1467,37 @@ func main() {
 		}
 	}
 
+	// Bedrock is optional; only initialize if a region is configured.
+	var bedrockRegion string
+	var bedrockClient *http.Client
+	var bedrockCreds aws.CredentialsProvider
+	if cfg.Providers.Bedrock.Region != "" {
+		bedrockRegion = cfg.Providers.Bedrock.Region
+		awsCfg, err := awsconfig.LoadDefaultConfig(context.Background(),
+			awsconfig.WithRegion(bedrockRegion),
+		)
+		if err != nil {
+			slog.Error("Failed to load AWS configuration for Bedrock", "error", err)
+			os.Exit(1)
+		}
+		if cfg.Providers.Bedrock.RoleArn != "" {
+			stsClient := sts.NewFromConfig(awsCfg)
+			bedrockCreds = aws.NewCredentialsCache(
+				stscreds.NewAssumeRoleProvider(stsClient, cfg.Providers.Bedrock.RoleArn),
+			)
+			slog.Info("Bedrock using assumed IAM role", "role_arn", cfg.Providers.Bedrock.RoleArn)
+		} else {
+			bedrockCreds = awsCfg.Credentials
+		}
+
+		skipVerify := false
+		if cfg.Providers.Bedrock.TLSVerify != nil && !*cfg.Providers.Bedrock.TLSVerify {
+			skipVerify = true
+		}
+		bedrockClient = newBedrockHTTPClient(skipVerify)
+		slog.Info("Bedrock provider configured", "region", bedrockRegion)
+	}
+
 	var proxyMetrics *ProxyMetrics
 	var metricsReg *prometheus.Registry
 	if cfg.Metrics.Enabled {
@@ -1260,7 +1515,10 @@ func main() {
 		anthropicClient: clients[1],
 		geminiClient:    clients[2],
 		ollamaClient:    clients[3],
-		philterClient:   philterClient,
+		bedrockClient:   bedrockClient,
+		bedrockRegion:   bedrockRegion,
+		bedrockCreds:    bedrockCreds,
+		philter:         philterClient,
 		auditLogger:     auditLogger,
 		metrics:         proxyMetrics,
 	}

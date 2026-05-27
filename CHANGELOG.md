@@ -6,6 +6,8 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- Amazon Bedrock Converse API support (`/model/{modelId}/converse`). The proxy signs requests with AWS Signature Version 4 using the standard AWS credential chain (instance profile, IRSA, env vars). Clients send plain JSON with no AWS credentials required. System prompts and all message content blocks are redacted through Philter before forwarding. Outbound scanning is supported. Enable by setting `providers.bedrock.region` in the config. (#101)
+- Retry and circuit breaker for the Philter backend. Failed Philter calls are retried with exponential backoff (configurable attempts, initial delay, and max delay). A circuit breaker can be enabled to open after a configurable number of consecutive failures, with `block` (HTTP 503) or `passthrough` (forward unredacted with a warning) fallback. (#99)
 - Outbound response scanning: LLM responses are optionally scanned through Philter before being returned to the client. Disabled by default; enabled per-route or globally via `outbound.enabled: true` in the config. Configurable `action`: `redact` (replace PII), `block` (return HTTP 403), or `flag` (pass through with a warning log). Streaming responses are passed through unchanged with a warning. Outbound scans reuse the same Philter context and document ID as the inbound request for correlation. (#92)
 
 ### Security

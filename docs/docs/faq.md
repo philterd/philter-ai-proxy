@@ -2,7 +2,7 @@
 
 ### What is the Philter AI Proxy?
 
-The Philter AI Proxy is a proxy for OpenAI, Anthropic (Claude), Google Gemini, and Ollama that uses [Philter](https://philterd.ai/philter/) to remove PII, PHI, and other sensitive information from LLM requests before they are sent to the provider.
+The Philter AI Proxy is a proxy for OpenAI, Anthropic (Claude), Google Gemini, Ollama, and Amazon Bedrock that uses [Philter](https://philterd.ai/philter/) to remove PII, PHI, and other sensitive information from LLM requests before they are sent to the provider.
 
 ### Why should I use it?
 
@@ -16,6 +16,7 @@ The proxy supports:
 * Anthropic (Claude)
 * Google Gemini
 * Ollama
+* Amazon Bedrock (Converse API)
 
 Both streaming and non-streaming requests are supported for all providers.
 
@@ -52,6 +53,22 @@ The proxy is configured via a YAML configuration file. Please refer to the [Conf
 ### Is the proxy open source?
 
 Yes, the Philter AI Proxy is licensed under the Apache License, version 2.
+
+### How does Bedrock authentication work?
+
+The proxy handles AWS Signature Version 4 signing internally. The client sends a plain JSON request (no AWS credentials needed). The proxy signs the modified request using credentials from the standard AWS credential chain — environment variables, EC2 instance profile, ECS task role, or IRSA — before forwarding it to Bedrock. This means you never expose AWS credentials to API clients, and access control is enforced at the IAM level on the proxy's role.
+
+### Does the proxy support streaming with Amazon Bedrock?
+
+Not in the current release. The `converseStream` endpoint is planned for a future release. Non-streaming requests via the Converse API are fully supported.
+
+### What happens if Philter is temporarily unavailable?
+
+By default, the proxy retries failed Philter calls up to 3 times with exponential backoff before returning an error to the client. Only transient errors (network timeouts, HTTP 5xx responses) are retried; 4xx errors are not.
+
+For sustained Philter unavailability, enable the circuit breaker (`philter.circuitBreaker.enabled: true`). Once the configured failure threshold is reached, the circuit opens and subsequent requests either receive HTTP 503 immediately (`fallback: block`, the default) or are forwarded unredacted with a warning log (`fallback: passthrough`). After the configured timeout, the circuit allows a probe request through; if it succeeds, the circuit closes.
+
+See [Configuration](configuration.md#philterretrynew) for retry and circuit breaker settings.
 
 ### Is commercial support available?
 

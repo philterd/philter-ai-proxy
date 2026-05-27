@@ -16,6 +16,15 @@ philter:
   endpoint: https://philter.internal:8080
   tlsVerify: true
   # caCert: /etc/ssl/internal-ca.pem
+  retry:
+    maxAttempts: 3        # total attempts (1 = no retry); default 3
+    initialBackoffMs: 100 # initial backoff in ms; default 100
+    maxBackoffMs: 2000    # maximum backoff in ms; default 2000
+  circuitBreaker:
+    enabled: false        # default false
+    threshold: 5          # consecutive failures before opening; default 5
+    timeoutSeconds: 30    # seconds in open state before probe; default 30
+    fallback: block       # block (503, default) or passthrough (forward unredacted)
 
 providers:
   openai:
@@ -29,6 +38,10 @@ providers:
     # tlsVerify: true
   ollama:
     target: http://localhost:11434
+    # tlsVerify: true
+  bedrock:
+    region: us-east-1   # AWS region; omit to disable Bedrock support
+    # roleArn: arn:aws:iam::123456789012:role/BedrockProxyRole  # optional: assume this role for Bedrock calls
     # tlsVerify: true
 
 # Routes select a Philter policy based on request properties.

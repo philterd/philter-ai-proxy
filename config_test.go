@@ -284,7 +284,7 @@ func TestRouteMatching_EndToEnd(t *testing.T) {
 		config:         cfg,
 		openaiTarget:  openaiURL,
 		openaiClient:  http.DefaultClient,
-		philterClient: http.DefaultClient,
+		philter: testPhilterClient(cfg.Philter.Endpoint),
 	}
 
 	reqBody := `{"model": "gpt-4", "messages": [{"role": "user", "content": "patient data"}]}`
@@ -324,7 +324,7 @@ func TestRouteMatching_ModelMatch_EndToEnd(t *testing.T) {
 		config:         cfg,
 		openaiTarget:  openaiURL,
 		openaiClient:  http.DefaultClient,
-		philterClient: http.DefaultClient,
+		philter: testPhilterClient(cfg.Philter.Endpoint),
 	}
 
 	reqBody := `{"model": "gpt-4", "messages": [{"role": "user", "content": "data"}]}`

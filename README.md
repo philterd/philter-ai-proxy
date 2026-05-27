@@ -1,8 +1,8 @@
 # Philter AI Proxy
 
-This project is a proxy for OpenAI, Claude, Gemini, and Ollama that uses [Philter](https://philterd.ai/philter/) to remove PII, PHI, and other sensitive information from a [chat completion](https://platform.openai.com/docs/api-reference/chat), [messages](https://docs.anthropic.com/claude/reference/messages_post), [Gemini](https://ai.google.dev/api/rest/v1beta/models/generateContent), or [Ollama](https://docs.ollama.com/api/generate) request before sending the request to the respective API. If you don't have a running instance of Philter, you can launch one in your cloud at https://philterd.ai/philter/.
+This project is a proxy for OpenAI, Claude, Gemini, Ollama, and Amazon Bedrock that uses [Philter](https://philterd.ai/philter/) to remove PII, PHI, and other sensitive information from a [chat completion](https://platform.openai.com/docs/api-reference/chat), [messages](https://docs.anthropic.com/claude/reference/messages_post), [Gemini](https://ai.google.dev/api/rest/v1beta/models/generateContent), [Ollama](https://docs.ollama.com/api/generate), or [Bedrock Converse](https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_Converse.html) request before sending the request to the respective API. If you don't have a running instance of Philter, you can launch one in your cloud at https://philterd.ai/philter/.
 
-The proxy works by sending requests destined for OpenAI, Claude, Gemini, or Ollama first to Philter where the sensitive information is redacted per Philter's configuration. The redacted text is then sent to the API. For example, if you send the following text `How old is John Smith?`, the proxy and Philter will remove the text `John Smith` from the request. The redacted request sent to the API will be `How old is REDACTED?`
+The proxy works by sending requests destined for OpenAI, Claude, Gemini, Ollama, or Amazon Bedrock first to Philter where the sensitive information is redacted per Philter's configuration. The redacted text is then sent to the API. For example, if you send the following text `How old is John Smith?`, the proxy and Philter will remove the text `John Smith` from the request. The redacted request sent to the API will be `How old is REDACTED?`
 
 Outbound response scanning is also supported on an opt-in basis: LLM responses can be scanned through Philter before being returned to the client, guarding against hallucinated or training-data PII in responses. The behavior is configurable per route: redact detected PII, block the response entirely, or pass it through with a warning log.
 
@@ -31,7 +31,7 @@ docker compose up
 
 ## Usage
 
-To use this proxy, you can send a request to it like you would to OpenAI, Claude, or Gemini but change the hostname:
+To use this proxy, you can send a request to it like you would to OpenAI, Claude, Gemini, or Bedrock but change the hostname:
 
 ### OpenAI
 
@@ -81,6 +81,19 @@ curl https://localhost:8080/api/generate \
     "model": "llama3",
     "prompt": "Whose social security number is 123-45-6789",
     "stream": false
+  }'
+```
+
+### Amazon Bedrock
+
+The proxy signs requests to Bedrock using AWS Signature Version 4 — no AWS credentials are required from the client. Set `providers.bedrock.region` in `config.yaml` to enable this provider.
+
+```
+curl https://localhost:8080/model/amazon.titan-text-express-v1/converse \
+  -H "Content-Type: application/json" \
+  -d '{
+    "messages": [{"role": "user", "content": [{"text": "Whose social security number is 123-45-6789"}]}],
+    "inferenceConfig": {"maxTokens": 512}
   }'
 ```
 

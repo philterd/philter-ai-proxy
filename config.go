@@ -25,14 +25,35 @@ type MetricsConfig struct {
 	Port    int  `yaml:"port"`
 }
 
+type RetryConfig struct {
+	MaxAttempts      int `yaml:"maxAttempts"`      // total attempts (1 = no retry); default 3
+	InitialBackoffMs int `yaml:"initialBackoffMs"` // initial backoff in ms; default 100
+	MaxBackoffMs     int `yaml:"maxBackoffMs"`     // maximum backoff in ms; default 2000
+}
+
+type CircuitBreakerConfig struct {
+	Enabled        bool   `yaml:"enabled"`        // default false
+	Threshold      int    `yaml:"threshold"`      // consecutive failures before opening; default 5
+	TimeoutSeconds int    `yaml:"timeoutSeconds"` // seconds in open state before probe; default 30
+	Fallback       string `yaml:"fallback"`       // "block" (503, default) or "passthrough"
+}
+
 type PhilterConfig struct {
-	Endpoint  string `yaml:"endpoint"`
-	TLSVerify *bool  `yaml:"tlsVerify"`
-	CACert    string `yaml:"caCert"`
+	Endpoint       string               `yaml:"endpoint"`
+	TLSVerify      *bool                `yaml:"tlsVerify"`
+	CACert         string               `yaml:"caCert"`
+	Retry          RetryConfig          `yaml:"retry"`
+	CircuitBreaker CircuitBreakerConfig `yaml:"circuitBreaker"`
 }
 
 type ProviderConfig struct {
 	Target    string `yaml:"target"`
+	TLSVerify *bool  `yaml:"tlsVerify"`
+}
+
+type BedrockConfig struct {
+	Region    string `yaml:"region"`
+	RoleArn   string `yaml:"roleArn"`
 	TLSVerify *bool  `yaml:"tlsVerify"`
 }
 
@@ -41,6 +62,7 @@ type ProvidersConfig struct {
 	Anthropic ProviderConfig `yaml:"anthropic"`
 	Gemini    ProviderConfig `yaml:"gemini"`
 	Ollama    ProviderConfig `yaml:"ollama"`
+	Bedrock   BedrockConfig  `yaml:"bedrock"`
 }
 
 type RouteMatch struct {
@@ -97,6 +119,11 @@ func defaultConfig() *Config {
 		Philter: PhilterConfig{
 			Endpoint:  "https://localhost:8080",
 			TLSVerify: &t,
+			Retry: RetryConfig{
+				MaxAttempts:      3,
+				InitialBackoffMs: 100,
+				MaxBackoffMs:     2000,
+			},
 		},
 		Providers: ProvidersConfig{
 			OpenAI:    ProviderConfig{Target: "https://api.openai.com"},
@@ -156,6 +183,21 @@ func validateConfig(cfg *Config) error {
 
 	if cfg.Metrics.Enabled && (cfg.Metrics.Port < 1 || cfg.Metrics.Port > 65535) {
 		return fmt.Errorf("config: metrics.port %d is out of range (1-65535)", cfg.Metrics.Port)
+	}
+
+	if cfg.Philter.Retry.MaxAttempts < 0 {
+		return fmt.Errorf("config: philter.retry.maxAttempts must be >= 0")
+	}
+	if cfg.Philter.Retry.InitialBackoffMs < 0 {
+		return fmt.Errorf("config: philter.retry.initialBackoffMs must be >= 0")
+	}
+	if cfg.Philter.Retry.MaxBackoffMs < 0 {
+		return fmt.Errorf("config: philter.retry.maxBackoffMs must be >= 0")
+	}
+
+	validFallbacks := map[string]bool{"block": true, "passthrough": true, "": true}
+	if !validFallbacks[cfg.Philter.CircuitBreaker.Fallback] {
+		return fmt.Errorf("config: philter.circuitBreaker.fallback %q is invalid (must be block or passthrough)", cfg.Philter.CircuitBreaker.Fallback)
 	}
 
 	validOutboundActions := map[string]bool{"redact": true, "block": true, "flag": true, "": true}

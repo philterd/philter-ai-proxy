@@ -25,6 +25,15 @@ philter:
   endpoint: https://philter.internal:8080
   tlsVerify: true
   # caCert: /etc/ssl/internal-ca.pem
+  retry:
+    maxAttempts: 3
+    initialBackoffMs: 100
+    maxBackoffMs: 2000
+  # circuitBreaker:
+  #   enabled: true
+  #   threshold: 5
+  #   timeoutSeconds: 30
+  #   fallback: block
 
 providers:
   openai:
@@ -96,10 +105,29 @@ See [Monitoring](monitoring.md) for available metrics, PromQL examples, and Graf
 | `endpoint` | string | `https://localhost:8080` | URL of the Philter instance |
 | `tlsVerify` | bool | `true` | Enable TLS certificate verification for the Philter connection |
 | `caCert` | string | (none) | Path to a custom CA certificate (PEM) for the Philter connection |
+| `retry` | object | see below | Retry settings for failed Philter calls |
+| `circuitBreaker` | object | see below | Circuit breaker settings for the Philter connection |
+
+#### `philter.retry`
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `maxAttempts` | int | `3` | Total number of attempts (1 = no retry). Only transient errors (network errors, HTTP 5xx) are retried. |
+| `initialBackoffMs` | int | `100` | Initial backoff delay in milliseconds before the first retry |
+| `maxBackoffMs` | int | `2000` | Maximum backoff delay in milliseconds (backoff is capped at this value) |
+
+#### `philter.circuitBreaker`
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `enabled` | bool | `false` | Enable the circuit breaker for the Philter connection |
+| `threshold` | int | `5` | Number of consecutive failures before the circuit opens |
+| `timeoutSeconds` | int | `30` | Seconds the circuit remains open before allowing a probe request (half-open state) |
+| `fallback` | string | `block` | Action when the circuit is open: `block` (return HTTP 503) or `passthrough` (forward the request unredacted with a warning log) |
 
 ### `providers`
 
-Each provider (`openai`, `anthropic`, `gemini`, `ollama`) accepts:
+Each of the standard providers (`openai`, `anthropic`, `gemini`, `ollama`) accepts:
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
@@ -112,6 +140,36 @@ Default provider targets:
 - `anthropic`: `https://api.anthropic.com`
 - `gemini`: `https://generativelanguage.googleapis.com`
 - `ollama`: `http://localhost:11434`
+
+### `providers.bedrock`
+
+Amazon Bedrock is an optional provider. It is enabled by setting `providers.bedrock.region`. When enabled, the proxy accepts requests matching `/model/{modelId}/converse` and forwards them to `https://bedrock-runtime.{region}.amazonaws.com` using AWS Signature Version 4 authentication.
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `region` | string | (none — Bedrock disabled) | AWS region for the Bedrock runtime endpoint (e.g., `us-east-1`) |
+| `roleArn` | string | (none) | ARN of an IAM role to assume for Bedrock calls (e.g., `arn:aws:iam::123456789012:role/BedrockRole`). When set, the proxy calls `sts:AssumeRole` using the host's base credentials and signs Bedrock requests with the resulting session credentials. |
+| `tlsVerify` | bool | `true` | Enable TLS certificate verification for the Bedrock connection |
+
+**Authentication**: The proxy uses the standard [AWS credential chain](https://docs.aws.amazon.com/sdkref/latest/guide/standardized-credentials.html). No AWS credentials need to be supplied by the client. The recommended deployment pattern is to attach an IAM role to the compute resource running the proxy (EC2 instance profile, ECS task role, Kubernetes service account with IRSA) and grant that role the `bedrock:InvokeModel` permission. Environment variable credentials (`AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`) are also supported for development.
+
+If the host credentials do not have Bedrock access directly (e.g., in a multi-account setup), set `roleArn` to an IAM role ARN that the proxy should assume. The proxy will call `sts:AssumeRole` with the host's base credentials and use the resulting session credentials to sign Bedrock requests. The host role must have `sts:AssumeRole` permission on the target role.
+
+**Minimum IAM policy**:
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [{
+    "Effect": "Allow",
+    "Action": "bedrock:InvokeModel",
+    "Resource": "arn:aws:bedrock:us-east-1::foundation-model/*"
+  }]
+}
+```
+
+**Supported models**: Any model available through the [Bedrock Converse API](https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_Converse.html) in the configured region, including Anthropic Claude, Amazon Titan, Meta Llama, Mistral, and Cohere models.
+
+**Streaming**: The `converseStream` endpoint is not yet supported. Streaming support is planned for a future release.
 
 ### `routes`
 
