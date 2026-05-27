@@ -202,8 +202,10 @@ func TestProxy_ServeHTTP_CustomConfig(t *testing.T) {
 		var req OpenAIRequest
 		body, _ := ioutil.ReadAll(r.Body)
 		json.Unmarshal(body, &req)
-		if req.Messages[0].Content != "REDACTED" {
-			t.Errorf("Expected 'REDACTED', got '%s'", req.Messages[0].Content)
+		var content string
+		json.Unmarshal(req.Messages[0].Content, &content)
+		if content != "REDACTED" {
+			t.Errorf("Expected 'REDACTED', got '%s'", content)
 		}
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -292,8 +294,10 @@ func TestProxy_ServeHTTP_OpenAI(t *testing.T) {
 		var req OpenAIRequest
 		body, _ := ioutil.ReadAll(r.Body)
 		json.Unmarshal(body, &req)
-		if req.Messages[0].Content != "Hello REDACTED" {
-			t.Errorf("Expected 'Hello REDACTED', got '%s'", req.Messages[0].Content)
+		var content string
+		json.Unmarshal(req.Messages[0].Content, &content)
+		if content != "Hello REDACTED" {
+			t.Errorf("Expected 'Hello REDACTED', got '%s'", content)
 		}
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte(`{"id": "chatcmpl-123"}`))
@@ -1287,5 +1291,239 @@ func TestGracefulShutdown_Timeout(t *testing.T) {
 	}
 	if err != context.DeadlineExceeded {
 		t.Errorf("Expected DeadlineExceeded, got: %v", err)
+	}
+}
+
+func TestProxy_ServeHTTP_OpenAI_SystemMessage(t *testing.T) {
+	philterServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := ioutil.ReadAll(r.Body)
+		if string(body) == "You are a helpful assistant. The user is John Smith." {
+			w.Write(explainJSON("You are a helpful assistant. The user is REDACTED.", "doc-id", []Span{{FilterType: "NER_ENTITY"}}))
+		} else {
+			w.Write(explainJSON(string(body), "doc-id", nil))
+		}
+	}))
+	defer philterServer.Close()
+
+	openaiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req OpenAIRequest
+		body, _ := ioutil.ReadAll(r.Body)
+		json.Unmarshal(body, &req)
+		var content string
+		json.Unmarshal(req.Messages[0].Content, &content)
+		if content != "You are a helpful assistant. The user is REDACTED." {
+			t.Errorf("Expected system content redacted, got '%s'", content)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer openaiServer.Close()
+
+	openaiURL, _ := url.Parse(openaiServer.URL)
+	proxy := &Proxy{
+		config:        testConfig(philterServer.URL),
+		openaiTarget:  openaiURL,
+		openaiClient:  http.DefaultClient,
+		philterClient: http.DefaultClient,
+	}
+
+	reqBody := `{"model":"gpt-4","messages":[{"role":"system","content":"You are a helpful assistant. The user is John Smith."}]}`
+	req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(reqBody))
+	w := httptest.NewRecorder()
+
+	proxy.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("Expected status 200, got %d", w.Code)
+	}
+}
+
+func TestProxy_ServeHTTP_OpenAI_ToolResult(t *testing.T) {
+	philterServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := ioutil.ReadAll(r.Body)
+		if strings.Contains(string(body), "John Smith") {
+			w.Write(explainJSON("Customer REDACTED, SSN REDACTED, has a balance of $4,200.", "doc-id", []Span{{FilterType: "NER_ENTITY"}}))
+		} else {
+			w.Write(explainJSON(string(body), "doc-id", nil))
+		}
+	}))
+	defer philterServer.Close()
+
+	openaiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req OpenAIRequest
+		body, _ := ioutil.ReadAll(r.Body)
+		json.Unmarshal(body, &req)
+		var content string
+		json.Unmarshal(req.Messages[0].Content, &content)
+		if !strings.Contains(content, "REDACTED") {
+			t.Errorf("Expected tool result content redacted, got '%s'", content)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer openaiServer.Close()
+
+	openaiURL, _ := url.Parse(openaiServer.URL)
+	proxy := &Proxy{
+		config:        testConfig(philterServer.URL),
+		openaiTarget:  openaiURL,
+		openaiClient:  http.DefaultClient,
+		philterClient: http.DefaultClient,
+	}
+
+	reqBody := `{"model":"gpt-4","messages":[{"role":"tool","tool_call_id":"call_abc123","content":"Customer John Smith, SSN 123-45-6789, has a balance of $4,200."}]}`
+	req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(reqBody))
+	w := httptest.NewRecorder()
+
+	proxy.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("Expected status 200, got %d", w.Code)
+	}
+}
+
+func TestProxy_ServeHTTP_OpenAI_ToolCallArguments(t *testing.T) {
+	philterServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := ioutil.ReadAll(r.Body)
+		switch string(body) {
+		case "John Smith", "123-45-6789":
+			w.Write(explainJSON("REDACTED", "doc-id", []Span{{FilterType: "NER_ENTITY"}}))
+		default:
+			w.Write(explainJSON(string(body), "doc-id", nil))
+		}
+	}))
+	defer philterServer.Close()
+
+	openaiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req OpenAIRequest
+		body, _ := ioutil.ReadAll(r.Body)
+		json.Unmarshal(body, &req)
+
+		tc := req.Messages[0].ToolCalls[0]
+		var args map[string]string
+		if err := json.Unmarshal([]byte(tc.Function.Arguments), &args); err != nil {
+			t.Errorf("Failed to parse redacted arguments: %v", err)
+		}
+		if args["name"] != "REDACTED" {
+			t.Errorf("Expected name 'REDACTED', got '%s'", args["name"])
+		}
+		if args["ssn"] != "REDACTED" {
+			t.Errorf("Expected ssn 'REDACTED', got '%s'", args["ssn"])
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer openaiServer.Close()
+
+	openaiURL, _ := url.Parse(openaiServer.URL)
+	proxy := &Proxy{
+		config:        testConfig(philterServer.URL),
+		openaiTarget:  openaiURL,
+		openaiClient:  http.DefaultClient,
+		philterClient: http.DefaultClient,
+	}
+
+	reqBody := `{"model":"gpt-4","messages":[{"role":"assistant","tool_calls":[{"id":"call_abc123","type":"function","function":{"name":"lookup_customer","arguments":"{\"name\":\"John Smith\",\"ssn\":\"123-45-6789\"}"}}]}]}`
+	req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(reqBody))
+	w := httptest.NewRecorder()
+
+	proxy.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("Expected status 200, got %d", w.Code)
+	}
+}
+
+func TestProxy_ServeHTTP_Anthropic_ToolResult(t *testing.T) {
+	philterServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := ioutil.ReadAll(r.Body)
+		if strings.Contains(string(body), "Margaret Collins") {
+			w.Write(explainJSON("Patient REDACTED, DOB REDACTED, MRN REDACTED.", "doc-id", []Span{{FilterType: "NER_ENTITY"}}))
+		} else {
+			w.Write(explainJSON(string(body), "doc-id", nil))
+		}
+	}))
+	defer philterServer.Close()
+
+	anthropicServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req AnthropicRequest
+		body, _ := ioutil.ReadAll(r.Body)
+		json.Unmarshal(body, &req)
+
+		blocks := req.Messages[0].Content.([]any)
+		block := blocks[0].(map[string]any)
+		if block["type"] != "tool_result" {
+			t.Errorf("Expected type 'tool_result', got '%v'", block["type"])
+		}
+		content, _ := block["content"].(string)
+		if !strings.Contains(content, "REDACTED") {
+			t.Errorf("Expected tool_result content redacted, got '%s'", content)
+		}
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"id":"msg_123"}`))
+	}))
+	defer anthropicServer.Close()
+
+	anthropicURL, _ := url.Parse(anthropicServer.URL)
+	proxy := &Proxy{
+		config:          testConfig(philterServer.URL),
+		anthropicTarget: anthropicURL,
+		anthropicClient: http.DefaultClient,
+		philterClient:   http.DefaultClient,
+	}
+
+	reqBody := `{"model":"claude-3-opus","messages":[{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_abc123","content":"Patient Margaret Collins, DOB 04/12/1978, MRN 8847291."}]}]}`
+	req := httptest.NewRequest("POST", "/v1/messages", strings.NewReader(reqBody))
+	w := httptest.NewRecorder()
+
+	proxy.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("Expected status 200, got %d", w.Code)
+	}
+}
+
+func TestProxy_ServeHTTP_Gemini_FunctionResponse(t *testing.T) {
+	philterServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := ioutil.ReadAll(r.Body)
+		if strings.Contains(string(body), "John Smith") {
+			w.Write(explainJSON("Patient REDACTED, SSN REDACTED", "doc-id", []Span{{FilterType: "NER_ENTITY"}}))
+		} else {
+			w.Write(explainJSON(string(body), "doc-id", nil))
+		}
+	}))
+	defer philterServer.Close()
+
+	geminiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req GeminiRequest
+		body, _ := ioutil.ReadAll(r.Body)
+		json.Unmarshal(body, &req)
+
+		part := req.Contents[0].Parts[0]
+		if part.FunctionResponse == nil {
+			t.Fatal("Expected functionResponse part")
+		}
+		result, _ := part.FunctionResponse.Response["result"].(string)
+		if !strings.Contains(result, "REDACTED") {
+			t.Errorf("Expected functionResponse result redacted, got '%s'", result)
+		}
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"candidates":[]}`))
+	}))
+	defer geminiServer.Close()
+
+	geminiURL, _ := url.Parse(geminiServer.URL)
+	proxy := &Proxy{
+		config:        testConfig(philterServer.URL),
+		geminiTarget:  geminiURL,
+		geminiClient:  http.DefaultClient,
+		philterClient: http.DefaultClient,
+	}
+
+	reqBody := `{"contents":[{"parts":[{"functionResponse":{"name":"get_patient","response":{"result":"Patient John Smith, SSN 123-45-6789"}}}]}]}`
+	req := httptest.NewRequest("POST", "/v1beta/models/gemini-pro:generateContent", strings.NewReader(reqBody))
+	w := httptest.NewRecorder()
+
+	proxy.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("Expected status 200, got %d", w.Code)
 	}
 }

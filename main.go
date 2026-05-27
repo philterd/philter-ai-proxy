@@ -26,9 +26,28 @@ type Message struct {
 	Content string `json:"content"`
 }
 
+type OpenAIFunction struct {
+	Name      string `json:"name"`
+	Arguments string `json:"arguments"`
+}
+
+type OpenAIToolCall struct {
+	ID       string         `json:"id"`
+	Type     string         `json:"type"`
+	Function OpenAIFunction `json:"function"`
+}
+
+type OpenAIMessage struct {
+	Role       string           `json:"role"`
+	Content    json.RawMessage  `json:"content,omitempty"`
+	ToolCallID string           `json:"tool_call_id,omitempty"`
+	ToolCalls  []OpenAIToolCall `json:"tool_calls,omitempty"`
+	Name       string           `json:"name,omitempty"`
+}
+
 type OpenAIRequest struct {
-	Model    string    `json:"model"`
-	Messages []Message `json:"messages"`
+	Model    string          `json:"model"`
+	Messages []OpenAIMessage `json:"messages"`
 }
 
 type AnthropicContent struct {
@@ -47,8 +66,14 @@ type AnthropicRequest struct {
 	System   string             `json:"system,omitempty"`
 }
 
+type GeminiFunctionResponse struct {
+	Name     string         `json:"name"`
+	Response map[string]any `json:"response"`
+}
+
 type GeminiPart struct {
-	Text string `json:"text"`
+	Text             string                  `json:"text,omitempty"`
+	FunctionResponse *GeminiFunctionResponse `json:"functionResponse,omitempty"`
 }
 
 type GeminiContent struct {
@@ -361,6 +386,44 @@ func clientIP(r *http.Request) string {
 	return host
 }
 
+func redactAny(client *http.Client, v any, endpoint, ctx, docID, policy string, audit *AuditEntry) any {
+	switch val := v.(type) {
+	case string:
+		if val != "" {
+			fr := Filter(client, endpoint, val, ctx, docID, policy)
+			audit.recordFilterResult(fr)
+			return fr.FilteredText
+		}
+		return val
+	case map[string]any:
+		for k, elem := range val {
+			val[k] = redactAny(client, elem, endpoint, ctx, docID, policy, audit)
+		}
+		return val
+	case []any:
+		for i, elem := range val {
+			val[i] = redactAny(client, elem, endpoint, ctx, docID, policy, audit)
+		}
+		return val
+	default:
+		return v
+	}
+}
+
+func redactJSONArguments(client *http.Client, arguments string, endpoint, ctx, docID, policy string, audit *AuditEntry) string {
+	var parsed any
+	if err := json.Unmarshal([]byte(arguments), &parsed); err != nil {
+		fr := Filter(client, endpoint, arguments, ctx, docID, policy)
+		audit.recordFilterResult(fr)
+		return fr.FilteredText
+	}
+	result, err := json.Marshal(redactAny(client, parsed, endpoint, ctx, docID, policy, audit))
+	if err != nil {
+		return arguments
+	}
+	return string(result)
+}
+
 func extractModel(body []byte) string {
 	var m struct {
 		Model string `json:"model"`
@@ -488,10 +551,14 @@ func (p *Proxy) handleGeminiNative(w http.ResponseWriter, r *http.Request, bodyB
 
 	for i := 0; i < len(g.Contents); i++ {
 		for j := 0; j < len(g.Contents[i].Parts); j++ {
-			if g.Contents[i].Parts[j].Text != "" {
-				filterResponse := Filter(p.philterClient, philter_endpoint, g.Contents[i].Parts[j].Text, context, documentId, policyName)
-				g.Contents[i].Parts[j].Text = filterResponse.FilteredText
+			part := &g.Contents[i].Parts[j]
+			if part.Text != "" {
+				filterResponse := Filter(p.philterClient, philter_endpoint, part.Text, context, documentId, policyName)
+				part.Text = filterResponse.FilteredText
 				audit.recordFilterResult(filterResponse)
+			}
+			if part.FunctionResponse != nil && part.FunctionResponse.Response != nil {
+				redactAny(p.philterClient, part.FunctionResponse.Response, philter_endpoint, context, documentId, policyName, audit)
 			}
 		}
 	}
@@ -515,10 +582,26 @@ func (p *Proxy) handleOpenAI(w http.ResponseWriter, r *http.Request, bodyBytes [
 
 	audit.Model = o.Model
 
-	for i := 0; i < len(o.Messages); i++ {
-		filterResponse := Filter(p.philterClient, philter_endpoint, o.Messages[i].Content, context, documentId, policyName)
-		o.Messages[i].Content = filterResponse.FilteredText
-		audit.recordFilterResult(filterResponse)
+	for i := range o.Messages {
+		msg := &o.Messages[i]
+
+		// Redact string content (user, system, tool role messages)
+		if len(msg.Content) > 0 {
+			var s string
+			if json.Unmarshal(msg.Content, &s) == nil && s != "" {
+				fr := Filter(p.philterClient, philter_endpoint, s, context, documentId, policyName)
+				msg.Content, _ = json.Marshal(fr.FilteredText)
+				audit.recordFilterResult(fr)
+			}
+		}
+
+		// Redact tool_calls function arguments (assistant messages)
+		for j := range msg.ToolCalls {
+			tc := &msg.ToolCalls[j]
+			if tc.Function.Arguments != "" {
+				tc.Function.Arguments = redactJSONArguments(p.philterClient, tc.Function.Arguments, philter_endpoint, context, documentId, policyName, audit)
+			}
+		}
 	}
 
 	j, err := json.Marshal(o)
@@ -555,11 +638,33 @@ func (p *Proxy) handleAnthropic(w http.ResponseWriter, r *http.Request, bodyByte
 		case []any:
 			for j := 0; j < len(v); j++ {
 				if block, ok := v[j].(map[string]any); ok {
-					if block["type"] == "text" {
-						if text, ok := block["text"].(string); ok {
+					switch block["type"] {
+					case "text":
+						if text, ok := block["text"].(string); ok && text != "" {
 							filterResponse := Filter(p.philterClient, philter_endpoint, text, context, documentId, policyName)
 							block["text"] = filterResponse.FilteredText
 							audit.recordFilterResult(filterResponse)
+						}
+					case "tool_result":
+						switch c := block["content"].(type) {
+						case string:
+							if c != "" {
+								filterResponse := Filter(p.philterClient, philter_endpoint, c, context, documentId, policyName)
+								block["content"] = filterResponse.FilteredText
+								audit.recordFilterResult(filterResponse)
+							}
+						case []any:
+							for _, elem := range c {
+								if subBlock, ok := elem.(map[string]any); ok {
+									if subBlock["type"] == "text" {
+										if text, ok := subBlock["text"].(string); ok && text != "" {
+											filterResponse := Filter(p.philterClient, philter_endpoint, text, context, documentId, policyName)
+											subBlock["text"] = filterResponse.FilteredText
+											audit.recordFilterResult(filterResponse)
+										}
+									}
+								}
+							}
 						}
 					}
 				}

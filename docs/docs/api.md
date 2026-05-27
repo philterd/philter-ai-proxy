@@ -2,6 +2,26 @@
 
 The Philter AI Proxy provides several endpoints to redact sensitive information before sending requests to AI providers. All endpoints support both streaming and non-streaming requests.
 
+## Redacted Fields
+
+The proxy inspects and redacts all text-bearing fields in the request body before forwarding. The table below lists exactly which fields are redacted per provider.
+
+| Provider | Message type | Fields redacted |
+|----------|-------------|-----------------|
+| OpenAI | `role: user` | `content` (string) |
+| OpenAI | `role: system` | `content` (string) |
+| OpenAI | `role: tool` | `content` (string) |
+| OpenAI | `role: assistant` with tool calls | `tool_calls[].function.arguments` — parsed as JSON, string values redacted, re-serialized |
+| Anthropic | Top-level | `system` (string) |
+| Anthropic | `text` content block | `text` |
+| Anthropic | `tool_result` content block | `content` (string or nested `text` blocks) |
+| Gemini | `text` part | `text` |
+| Gemini | `functionResponse` part | `response` object — all string values redacted recursively |
+| Ollama generate | — | `prompt`, `system` |
+| Ollama chat | `role: *` | `content` |
+
+Fields not in the table (e.g., model names, IDs, non-string values) are forwarded unchanged.
+
 ## Route Detection
 
 The proxy routes requests based on the URL path:

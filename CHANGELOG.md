@@ -12,6 +12,7 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- Tool-use and function-calling redaction for all providers. OpenAI `role: tool` message content, OpenAI `tool_calls[].function.arguments` (parsed, redacted, re-serialized), Anthropic `tool_result` content blocks, and Gemini `functionResponse` parts are now all redacted before the request is forwarded. OpenAI `role: system` messages are also explicitly covered.
 - YAML configuration file support via `--config` flag or `PHILTER_PROXY_CONFIG` environment variable. Supports per-route policy selection based on request headers, URL path, or model name, and per-provider target URLs. Environment variables still work as overrides. Config is validated at startup with clear error messages.
 - Streaming (SSE) support for all four providers (OpenAI, Anthropic, Gemini, Ollama). Response chunks are forwarded to the client in real time without buffering.
 - Structured audit logging (JSONL) for every proxy request, including request ID, provider, model, policy name, document ID, fields redacted, entity count, entity types detected, redaction latency, client IP, and HTTP status. Enabled by default.

@@ -8,21 +8,23 @@ View the [documentation](http://philterd.github.io/philter-ai-proxy).
 
 ## Running the Proxy
 
-Run using `docker compose` by modifying the environment variables in the `docker-compose.yml` file.
+Copy `config.example.yaml` to `config.yaml`, edit the values to match your environment, then run:
+
+```
+./philter-ai-proxy --config config.yaml
+```
+
+Or set the config path via environment variable:
+
+```
+PHILTER_PROXY_CONFIG=config.yaml ./philter-ai-proxy
+```
+
+To run with Docker Compose, update `config.yaml` (mounted into the container) and then:
 
 ```
 docker compose build
 docker compose up
-```
-
-To run the proxy manually:
-
-```
-export PHILTER_ENDPOINT=https://your-philter-ip:8080
-export PHILTER_CONTEXT=none
-export PHILTER_POLICY_NAME=default
-export OLLAMA_HOST=http://localhost:11434
-./philter-ai-proxy
 ```
 
 ## Usage

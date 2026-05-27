@@ -4,8 +4,17 @@ This project is a proxy for OpenAI, Anthropic (Claude), Google Gemini, and Ollam
 
 ## How it Works
 
-The proxy intercepts requests destined for an LLM provider and sends the text content to Philter, where sensitive information is redacted per Philter's policy configuration. The redacted text is then forwarded to the provider. Streaming responses (SSE, chunked JSON, NDJSON) are passed through to the client in real time without buffering.
+The proxy intercepts requests destined for an LLM provider and sends all text-bearing fields to Philter, where sensitive information is redacted per Philter's policy configuration. The redacted request is then forwarded to the provider. Streaming responses (SSE, chunked JSON, NDJSON) are passed through to the client in real time without buffering.
 
-For example, if you send the following text `How old is John Smith?`, the proxy and Philter will remove the text `John Smith` from the request. The redacted request sent to the API will be `How old is {{{REDACTED-entity}}}?`
+For example, if you send the text `How old is John Smith?`, the proxy will remove `John Smith` before forwarding. The request sent to the provider becomes `How old is {{{REDACTED-entity}}}?`
+
+Redaction covers all message types, including agentic and tool-use workflows:
+
+| Provider | Fields redacted |
+|----------|-----------------|
+| OpenAI | `messages[].content` (all roles: `user`, `system`, `tool`), `tool_calls[].function.arguments` (parsed as JSON, string values redacted, re-serialized) |
+| Anthropic | `system`, `messages[].content` (`text` and `tool_result` blocks) |
+| Gemini | `contents[].parts[].text`, `contents[].parts[].functionResponse.response` (recursive) |
+| Ollama | `messages[].content`, `prompt`, `system` |
 
 Every request produces a structured JSON audit log entry with the provider, model, entity types detected, entity count, and other metadata for compliance and debugging. See [Configuration](configuration.md) for details.
