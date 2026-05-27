@@ -1766,3 +1766,505 @@ func TestMetrics_UpstreamError(t *testing.T) {
 		t.Errorf("Expected upstreamErrors[openai,502]=1, got %f", v)
 	}
 }
+
+// ── sanitizeQuery ─────────────────────────────────────────────────────────────
+
+func TestSanitizeQuery_SensitiveParams(t *testing.T) {
+	cases := []struct {
+		input string
+		param string
+	}{
+		{"key=secret&foo=bar", "key"},
+		{"token=abc123", "token"},
+		{"api_key=sk-xyz", "api_key"},
+	}
+	for _, tc := range cases {
+		out := sanitizeQuery(tc.input)
+		if strings.Contains(out, "secret") || strings.Contains(out, "abc123") || strings.Contains(out, "sk-xyz") {
+			t.Errorf("sanitizeQuery(%q) did not redact %s: %s", tc.input, tc.param, out)
+		}
+		if !strings.Contains(out, "REDACTED") {
+			t.Errorf("sanitizeQuery(%q) expected REDACTED in output, got: %s", tc.input, out)
+		}
+	}
+}
+
+func TestSanitizeQuery_NoSensitiveParams(t *testing.T) {
+	out := sanitizeQuery("model=gpt-4&stream=true")
+	if strings.Contains(out, "REDACTED") {
+		t.Errorf("Expected no redaction, got: %s", out)
+	}
+}
+
+func TestSanitizeQuery_InvalidQuery(t *testing.T) {
+	raw := "%z invalid"
+	out := sanitizeQuery(raw)
+	if out != raw {
+		t.Errorf("Expected raw query returned unchanged, got: %s", out)
+	}
+}
+
+// ── Filter error paths ────────────────────────────────────────────────────────
+
+func TestFilter_InvalidJSON(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("not valid json"))
+	}))
+	defer server.Close()
+
+	_, err := Filter(http.DefaultClient, server.URL, "text", "ctx", "doc", "policy")
+	if err == nil {
+		t.Error("Expected error when Philter returns invalid JSON")
+	}
+}
+
+func TestFilter_InvalidEndpoint(t *testing.T) {
+	_, err := Filter(http.DefaultClient, "://bad url\x00", "text", "ctx", "doc", "policy")
+	if err == nil {
+		t.Error("Expected error for invalid endpoint URL")
+	}
+}
+
+// ── redactAny ─────────────────────────────────────────────────────────────────
+
+func TestRedactAny_EmptyString(t *testing.T) {
+	audit := &AuditEntry{}
+	result, err := redactAny(http.DefaultClient, "", "http://127.0.0.1:1", "ctx", "doc", "pol", audit)
+	if err != nil {
+		t.Errorf("Unexpected error: %v", err)
+	}
+	if result != "" {
+		t.Errorf("Expected empty string, got %v", result)
+	}
+}
+
+func TestRedactAny_NonStringScalar(t *testing.T) {
+	audit := &AuditEntry{}
+	for _, v := range []any{42, true, nil, 3.14} {
+		result, err := redactAny(http.DefaultClient, v, "http://127.0.0.1:1", "ctx", "doc", "pol", audit)
+		if err != nil {
+			t.Errorf("Unexpected error for %v: %v", v, err)
+		}
+		if result != v {
+			t.Errorf("Expected %v unchanged, got %v", v, result)
+		}
+	}
+}
+
+func TestRedactAny_MapError(t *testing.T) {
+	audit := &AuditEntry{}
+	m := map[string]any{"name": "John Smith"}
+	_, err := redactAny(http.DefaultClient, m, "http://127.0.0.1:1", "ctx", "doc", "pol", audit)
+	if err == nil {
+		t.Error("Expected error when Philter unreachable for map value")
+	}
+}
+
+func TestRedactAny_SliceError(t *testing.T) {
+	audit := &AuditEntry{}
+	s := []any{"John Smith", "another value"}
+	_, err := redactAny(http.DefaultClient, s, "http://127.0.0.1:1", "ctx", "doc", "pol", audit)
+	if err == nil {
+		t.Error("Expected error when Philter unreachable for slice element")
+	}
+}
+
+func TestRedactAny_MapSuccess(t *testing.T) {
+	philter := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write(explainJSON("REDACTED", "doc", nil))
+	}))
+	defer philter.Close()
+
+	audit := &AuditEntry{}
+	m := map[string]any{"name": "John", "count": 42}
+	result, err := redactAny(http.DefaultClient, m, philter.URL, "ctx", "doc", "pol", audit)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	rm := result.(map[string]any)
+	if rm["name"] != "REDACTED" {
+		t.Errorf("Expected name=REDACTED, got %v", rm["name"])
+	}
+	if rm["count"] != 42 {
+		t.Errorf("Expected count=42 unchanged, got %v", rm["count"])
+	}
+}
+
+func TestRedactAny_SliceSuccess(t *testing.T) {
+	philter := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write(explainJSON("REDACTED", "doc", nil))
+	}))
+	defer philter.Close()
+
+	audit := &AuditEntry{}
+	s := []any{"John", 99}
+	result, err := redactAny(http.DefaultClient, s, philter.URL, "ctx", "doc", "pol", audit)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	rs := result.([]any)
+	if rs[0] != "REDACTED" {
+		t.Errorf("Expected rs[0]=REDACTED, got %v", rs[0])
+	}
+	if rs[1] != 99 {
+		t.Errorf("Expected rs[1]=99 unchanged, got %v", rs[1])
+	}
+}
+
+// ── redactJSONArguments ───────────────────────────────────────────────────────
+
+func TestRedactJSONArguments_NonJSONString(t *testing.T) {
+	philter := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write(explainJSON("REDACTED", "doc", []Span{{FilterType: "NER_ENTITY"}}))
+	}))
+	defer philter.Close()
+
+	audit := &AuditEntry{}
+	result, err := redactJSONArguments(http.DefaultClient, "not json at all", philter.URL, "ctx", "doc", "pol", audit)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if result != "REDACTED" {
+		t.Errorf("Expected REDACTED, got %s", result)
+	}
+}
+
+func TestRedactJSONArguments_NonJSON_PhilterError(t *testing.T) {
+	audit := &AuditEntry{}
+	_, err := redactJSONArguments(http.DefaultClient, "not json", "http://127.0.0.1:1", "ctx", "doc", "pol", audit)
+	if err == nil {
+		t.Error("Expected error when non-JSON argument and Philter unreachable")
+	}
+}
+
+func TestRedactJSONArguments_PhilterError(t *testing.T) {
+	audit := &AuditEntry{}
+	_, err := redactJSONArguments(http.DefaultClient, `{"name":"John"}`, "http://127.0.0.1:1", "ctx", "doc", "pol", audit)
+	if err == nil {
+		t.Error("Expected error when Philter unreachable for JSON argument")
+	}
+}
+
+// ── bad-JSON request bodies ───────────────────────────────────────────────────
+
+func philterOK() *httptest.Server {
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write(explainJSON("REDACTED", "doc", nil))
+	}))
+}
+
+func TestHandleOpenAI_BadJSON(t *testing.T) {
+	ps := philterOK()
+	defer ps.Close()
+	proxy, _ := newTestProxy(ps.URL, "http://127.0.0.1:1", "openai")
+	req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader("{bad json}"))
+	w := httptest.NewRecorder()
+	proxy.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("Expected 400, got %d", w.Code)
+	}
+}
+
+func TestHandleOpenAI_PhilterError_ContentMessage(t *testing.T) {
+	proxy, _ := newTestProxy("http://127.0.0.1:1", "http://127.0.0.1:1", "openai")
+	reqBody := `{"model":"gpt-4","messages":[{"role":"user","content":"hello"}]}`
+	req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(reqBody))
+	w := httptest.NewRecorder()
+	proxy.ServeHTTP(w, req)
+	if w.Code != http.StatusBadGateway {
+		t.Errorf("Expected 502, got %d", w.Code)
+	}
+}
+
+func TestHandleOpenAI_PhilterError_ToolArgs(t *testing.T) {
+	proxy, _ := newTestProxy("http://127.0.0.1:1", "http://127.0.0.1:1", "openai")
+	reqBody := `{"model":"gpt-4","messages":[{"role":"assistant","tool_calls":[{"id":"c1","type":"function","function":{"name":"f","arguments":"{\"x\":\"John\"}"}}]}]}`
+	req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(reqBody))
+	w := httptest.NewRecorder()
+	proxy.ServeHTTP(w, req)
+	if w.Code != http.StatusBadGateway {
+		t.Errorf("Expected 502, got %d", w.Code)
+	}
+}
+
+func TestHandleOllamaGenerate_BadJSON(t *testing.T) {
+	ps := philterOK()
+	defer ps.Close()
+	proxy, _ := newTestProxy(ps.URL, "http://127.0.0.1:1", "ollama")
+	req := httptest.NewRequest("POST", "/api/generate", strings.NewReader("{bad}"))
+	w := httptest.NewRecorder()
+	proxy.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("Expected 400, got %d", w.Code)
+	}
+}
+
+func TestHandleOllamaGenerate_PhilterError_Prompt(t *testing.T) {
+	proxy, _ := newTestProxy("http://127.0.0.1:1", "http://127.0.0.1:1", "ollama")
+	req := httptest.NewRequest("POST", "/api/generate", strings.NewReader(`{"model":"llama3","prompt":"hello"}`))
+	w := httptest.NewRecorder()
+	proxy.ServeHTTP(w, req)
+	if w.Code != http.StatusBadGateway {
+		t.Errorf("Expected 502, got %d", w.Code)
+	}
+}
+
+func TestHandleOllamaGenerate_PhilterError_System(t *testing.T) {
+	// Prompt succeeds, system fails — use a server that fails after first request
+	callCount := 0
+	ps := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		callCount++
+		if callCount == 1 {
+			w.Write(explainJSON("REDACTED", "doc", nil))
+		} else {
+			w.WriteHeader(http.StatusInternalServerError)
+			w.Write([]byte("not json"))
+		}
+	}))
+	defer ps.Close()
+
+	proxy, _ := newTestProxy(ps.URL, "http://127.0.0.1:1", "ollama")
+	req := httptest.NewRequest("POST", "/api/generate", strings.NewReader(`{"model":"llama3","prompt":"hello","system":"sys"}`))
+	w := httptest.NewRecorder()
+	proxy.ServeHTTP(w, req)
+	if w.Code != http.StatusBadGateway {
+		t.Errorf("Expected 502, got %d", w.Code)
+	}
+}
+
+func TestHandleOllamaChat_BadJSON(t *testing.T) {
+	ps := philterOK()
+	defer ps.Close()
+	proxy, _ := newTestProxy(ps.URL, "http://127.0.0.1:1", "ollama")
+	req := httptest.NewRequest("POST", "/api/chat", strings.NewReader("{bad}"))
+	w := httptest.NewRecorder()
+	proxy.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("Expected 400, got %d", w.Code)
+	}
+}
+
+func TestHandleOllamaChat_PhilterError(t *testing.T) {
+	proxy, _ := newTestProxy("http://127.0.0.1:1", "http://127.0.0.1:1", "ollama")
+	req := httptest.NewRequest("POST", "/api/chat", strings.NewReader(`{"model":"llama3","messages":[{"role":"user","content":"hi"}]}`))
+	w := httptest.NewRecorder()
+	proxy.ServeHTTP(w, req)
+	if w.Code != http.StatusBadGateway {
+		t.Errorf("Expected 502, got %d", w.Code)
+	}
+}
+
+func TestHandleGemini_BadJSON(t *testing.T) {
+	ps := philterOK()
+	defer ps.Close()
+	proxy, _ := newTestProxy(ps.URL, "http://127.0.0.1:1", "gemini")
+	req := httptest.NewRequest("POST", "/v1beta/models/gemini-pro:generateContent", strings.NewReader("{bad}"))
+	w := httptest.NewRecorder()
+	proxy.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("Expected 400, got %d", w.Code)
+	}
+}
+
+func TestHandleGemini_PhilterError_TextPart(t *testing.T) {
+	proxy, _ := newTestProxy("http://127.0.0.1:1", "http://127.0.0.1:1", "gemini")
+	reqBody := `{"contents":[{"parts":[{"text":"hello"}]}]}`
+	req := httptest.NewRequest("POST", "/v1beta/models/gemini-pro:generateContent", strings.NewReader(reqBody))
+	w := httptest.NewRecorder()
+	proxy.ServeHTTP(w, req)
+	if w.Code != http.StatusBadGateway {
+		t.Errorf("Expected 502, got %d", w.Code)
+	}
+}
+
+func TestHandleGemini_PhilterError_FunctionResponse(t *testing.T) {
+	proxy, _ := newTestProxy("http://127.0.0.1:1", "http://127.0.0.1:1", "gemini")
+	reqBody := `{"contents":[{"parts":[{"functionResponse":{"name":"f","response":{"result":"John Smith"}}}]}]}`
+	req := httptest.NewRequest("POST", "/v1beta/models/gemini-pro:generateContent", strings.NewReader(reqBody))
+	w := httptest.NewRecorder()
+	proxy.ServeHTTP(w, req)
+	if w.Code != http.StatusBadGateway {
+		t.Errorf("Expected 502, got %d", w.Code)
+	}
+}
+
+func TestHandleAnthropic_BadJSON(t *testing.T) {
+	ps := philterOK()
+	defer ps.Close()
+	proxy, _ := newTestProxy(ps.URL, "http://127.0.0.1:1", "anthropic")
+	req := httptest.NewRequest("POST", "/v1/messages", strings.NewReader("{bad}"))
+	w := httptest.NewRecorder()
+	proxy.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("Expected 400, got %d", w.Code)
+	}
+}
+
+func TestHandleAnthropic_PhilterError_System(t *testing.T) {
+	proxy, _ := newTestProxy("http://127.0.0.1:1", "http://127.0.0.1:1", "anthropic")
+	reqBody := `{"model":"claude-3-opus","system":"You are helpful","messages":[{"role":"user","content":"hi"}]}`
+	req := httptest.NewRequest("POST", "/v1/messages", strings.NewReader(reqBody))
+	w := httptest.NewRecorder()
+	proxy.ServeHTTP(w, req)
+	if w.Code != http.StatusBadGateway {
+		t.Errorf("Expected 502, got %d", w.Code)
+	}
+}
+
+func TestHandleAnthropic_PhilterError_StringMessage(t *testing.T) {
+	proxy, _ := newTestProxy("http://127.0.0.1:1", "http://127.0.0.1:1", "anthropic")
+	reqBody := `{"model":"claude-3-opus","messages":[{"role":"user","content":"hello"}]}`
+	req := httptest.NewRequest("POST", "/v1/messages", strings.NewReader(reqBody))
+	w := httptest.NewRecorder()
+	proxy.ServeHTTP(w, req)
+	if w.Code != http.StatusBadGateway {
+		t.Errorf("Expected 502, got %d", w.Code)
+	}
+}
+
+func TestHandleAnthropic_PhilterError_TextBlock(t *testing.T) {
+	proxy, _ := newTestProxy("http://127.0.0.1:1", "http://127.0.0.1:1", "anthropic")
+	reqBody := `{"model":"claude-3-opus","messages":[{"role":"user","content":[{"type":"text","text":"hello"}]}]}`
+	req := httptest.NewRequest("POST", "/v1/messages", strings.NewReader(reqBody))
+	w := httptest.NewRecorder()
+	proxy.ServeHTTP(w, req)
+	if w.Code != http.StatusBadGateway {
+		t.Errorf("Expected 502, got %d", w.Code)
+	}
+}
+
+func TestHandleAnthropic_PhilterError_ToolResult(t *testing.T) {
+	proxy, _ := newTestProxy("http://127.0.0.1:1", "http://127.0.0.1:1", "anthropic")
+	reqBody := `{"model":"claude-3-opus","messages":[{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"John Smith"}]}]}`
+	req := httptest.NewRequest("POST", "/v1/messages", strings.NewReader(reqBody))
+	w := httptest.NewRecorder()
+	proxy.ServeHTTP(w, req)
+	if w.Code != http.StatusBadGateway {
+		t.Errorf("Expected 502, got %d", w.Code)
+	}
+}
+
+func TestHandleAnthropic_ToolResult_ArrayContent(t *testing.T) {
+	ps := philterOK()
+	defer ps.Close()
+
+	anthropicServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req AnthropicRequest
+		body, _ := ioutil.ReadAll(r.Body)
+		json.Unmarshal(body, &req)
+		blocks := req.Messages[0].Content.([]any)
+		block := blocks[0].(map[string]any)
+		inner := block["content"].([]any)
+		subBlock := inner[0].(map[string]any)
+		if subBlock["text"] != "REDACTED" {
+			t.Errorf("Expected nested text=REDACTED, got %v", subBlock["text"])
+		}
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"id":"msg_1"}`))
+	}))
+	defer anthropicServer.Close()
+
+	anthropicURL, _ := url.Parse(anthropicServer.URL)
+	proxy := &Proxy{
+		config:          testConfig(ps.URL),
+		anthropicTarget: anthropicURL,
+		anthropicClient: http.DefaultClient,
+		philterClient:   http.DefaultClient,
+	}
+
+	reqBody := `{"model":"claude-3-opus","messages":[{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":[{"type":"text","text":"John Smith"}]}]}]}`
+	req := httptest.NewRequest("POST", "/v1/messages", strings.NewReader(reqBody))
+	w := httptest.NewRecorder()
+	proxy.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Errorf("Expected 200, got %d", w.Code)
+	}
+}
+
+func TestHandleAnthropic_PhilterError_ToolResult_ArrayContent(t *testing.T) {
+	proxy, _ := newTestProxy("http://127.0.0.1:1", "http://127.0.0.1:1", "anthropic")
+	reqBody := `{"model":"claude-3-opus","messages":[{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":[{"type":"text","text":"John Smith"}]}]}]}`
+	req := httptest.NewRequest("POST", "/v1/messages", strings.NewReader(reqBody))
+	w := httptest.NewRecorder()
+	proxy.ServeHTTP(w, req)
+	if w.Code != http.StatusBadGateway {
+		t.Errorf("Expected 502, got %d", w.Code)
+	}
+}
+
+// ── forwardToProvider: upstream 4xx/5xx response ──────────────────────────────
+
+func TestForwardToProvider_UpstreamErrorResponse(t *testing.T) {
+	ps := philterOK()
+	defer ps.Close()
+
+	upstreamServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte(`{"error":"internal"}`))
+	}))
+	defer upstreamServer.Close()
+
+	proxy, m := newTestProxy(ps.URL, upstreamServer.URL, "openai")
+	reqBody := `{"model":"gpt-4","messages":[{"role":"user","content":"hello"}]}`
+	req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(reqBody))
+	w := httptest.NewRecorder()
+	proxy.ServeHTTP(w, req)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Errorf("Expected 500 from upstream, got %d", w.Code)
+	}
+	if v := counterVecValue(m.upstreamErrors, "openai", "500"); v != 1 {
+		t.Errorf("Expected upstreamErrors[openai,500]=1, got %f", v)
+	}
+}
+
+func TestForwardToProvider_QueryStringInErrorLog(t *testing.T) {
+	// Ensures sanitizeQuery is exercised via forwardToProvider's error path
+	// when the original request has a query string (e.g. Gemini key param).
+	ps := philterOK()
+	defer ps.Close()
+
+	proxy := &Proxy{
+		config:        testConfig(ps.URL),
+		philterClient: http.DefaultClient,
+		geminiTarget:  mustParseURL("http://127.0.0.1:1"),
+		geminiClient:  http.DefaultClient,
+	}
+
+	reqBody := `{"contents":[{"parts":[{"text":"hello"}]}]}`
+	req := httptest.NewRequest("POST", "/v1beta/models/gemini-pro:generateContent?key=secret", strings.NewReader(reqBody))
+	w := httptest.NewRecorder()
+	proxy.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadGateway {
+		t.Errorf("Expected 502, got %d", w.Code)
+	}
+}
+
+// ── config validation ─────────────────────────────────────────────────────────
+
+func TestValidateConfig_InvalidMetricsPort(t *testing.T) {
+	cfg := defaultConfig()
+	cfg.Metrics.Port = 99999
+	if err := validateConfig(cfg); err == nil {
+		t.Error("Expected error for out-of-range metrics port")
+	}
+}
+
+func TestValidateConfig_MetricsDisabled_InvalidPort_OK(t *testing.T) {
+	cfg := defaultConfig()
+	cfg.Metrics.Enabled = false
+	cfg.Metrics.Port = 99999
+	if err := validateConfig(cfg); err != nil {
+		t.Errorf("Disabled metrics with bad port should not error, got: %v", err)
+	}
+}
+
+// mustParseURL is a test helper that panics on parse error.
+func mustParseURL(s string) *url.URL {
+	u, err := url.Parse(s)
+	if err != nil {
+		panic(err)
+	}
+	return u
+}
