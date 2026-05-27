@@ -3970,3 +3970,218 @@ func TestTokenUsage_PrometheusMetrics(t *testing.T) {
 		t.Errorf("Expected completionTokensTotal=5, got %g", got)
 	}
 }
+
+// ── Authentication ────────────────────────────────────────────────────────────
+
+// newAuthProxy builds a proxy with API key authentication configured.
+// keys maps key value → optional policy override ("" = no override).
+func newAuthProxy(philterURL, providerURL string, keys map[string]string) *Proxy {
+	cfg := testConfig(philterURL)
+	u, _ := url.Parse(providerURL)
+	idx := make(map[string]string, len(keys))
+	for k, v := range keys {
+		idx[k] = v
+	}
+	return &Proxy{
+		config:       cfg,
+		philter:      testPhilterClient(philterURL),
+		openaiTarget: u,
+		openaiClient: http.DefaultClient,
+		keyIndex:     idx,
+	}
+}
+
+func TestAuth_ValidKey_Passes(t *testing.T) {
+	philterSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write(explainJSON("hello", "doc-id", nil))
+	}))
+	defer philterSrv.Close()
+
+	providerSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"hi"}}]}`))
+	}))
+	defer providerSrv.Close()
+
+	proxy := newAuthProxy(philterSrv.URL, providerSrv.URL, map[string]string{"secret-key": ""})
+
+	req := httptest.NewRequest("POST", "/v1/chat/completions",
+		strings.NewReader(`{"model":"gpt-4","messages":[{"role":"user","content":"hello"}]}`))
+	req.Header.Set("x-philter-proxy-key", "secret-key")
+	w := httptest.NewRecorder()
+	proxy.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("Expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestAuth_MissingKey_Returns401(t *testing.T) {
+	proxy := newAuthProxy("http://127.0.0.1:1", "http://127.0.0.1:1", map[string]string{"secret-key": ""})
+
+	req := httptest.NewRequest("POST", "/v1/chat/completions",
+		strings.NewReader(`{"model":"gpt-4","messages":[{"role":"user","content":"hello"}]}`))
+	// No x-philter-proxy-key header
+	w := httptest.NewRecorder()
+	proxy.ServeHTTP(w, req)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("Expected 401, got %d", w.Code)
+	}
+}
+
+func TestAuth_InvalidKey_Returns401(t *testing.T) {
+	proxy := newAuthProxy("http://127.0.0.1:1", "http://127.0.0.1:1", map[string]string{"secret-key": ""})
+
+	req := httptest.NewRequest("POST", "/v1/chat/completions",
+		strings.NewReader(`{"model":"gpt-4","messages":[{"role":"user","content":"hello"}]}`))
+	req.Header.Set("x-philter-proxy-key", "wrong-key")
+	w := httptest.NewRecorder()
+	proxy.ServeHTTP(w, req)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("Expected 401, got %d", w.Code)
+	}
+}
+
+func TestAuth_Disabled_WhenNoKeysConfigured(t *testing.T) {
+	philterSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write(explainJSON("hello", "doc-id", nil))
+	}))
+	defer philterSrv.Close()
+
+	providerSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"hi"}}]}`))
+	}))
+	defer providerSrv.Close()
+
+	// No keys configured — auth disabled.
+	proxy := newAuthProxy(philterSrv.URL, providerSrv.URL, map[string]string{})
+
+	req := httptest.NewRequest("POST", "/v1/chat/completions",
+		strings.NewReader(`{"model":"gpt-4","messages":[{"role":"user","content":"hello"}]}`))
+	// No auth header sent — should still succeed.
+	w := httptest.NewRecorder()
+	proxy.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("Expected 200 with auth disabled, got %d", w.Code)
+	}
+}
+
+func TestAuth_KeyBoundPolicy_Override(t *testing.T) {
+	var gotPolicy string
+	philterSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPolicy = r.URL.Query().Get("p")
+		w.Write(explainJSON("hello", "doc-id", nil))
+	}))
+	defer philterSrv.Close()
+
+	providerSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"hi"}}]}`))
+	}))
+	defer providerSrv.Close()
+
+	// Key is bound to "hipaa-safe-harbor"; default policy is "default".
+	proxy := newAuthProxy(philterSrv.URL, providerSrv.URL, map[string]string{"hipaa-key": "hipaa-safe-harbor"})
+
+	req := httptest.NewRequest("POST", "/v1/chat/completions",
+		strings.NewReader(`{"model":"gpt-4","messages":[{"role":"user","content":"hello"}]}`))
+	req.Header.Set("x-philter-proxy-key", "hipaa-key")
+	proxy.ServeHTTP(httptest.NewRecorder(), req)
+
+	if gotPolicy != "hipaa-safe-harbor" {
+		t.Errorf("Expected policy hipaa-safe-harbor, got %q", gotPolicy)
+	}
+}
+
+func TestAuth_HeaderStrippedFromUpstream(t *testing.T) {
+	philterSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write(explainJSON("hello", "doc-id", nil))
+	}))
+	defer philterSrv.Close()
+
+	var receivedKey string
+	providerSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedKey = r.Header.Get("x-philter-proxy-key")
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"hi"}}]}`))
+	}))
+	defer providerSrv.Close()
+
+	proxy := newAuthProxy(philterSrv.URL, providerSrv.URL, map[string]string{"secret-key": ""})
+
+	req := httptest.NewRequest("POST", "/v1/chat/completions",
+		strings.NewReader(`{"model":"gpt-4","messages":[{"role":"user","content":"hello"}]}`))
+	req.Header.Set("x-philter-proxy-key", "secret-key")
+	proxy.ServeHTTP(httptest.NewRecorder(), req)
+
+	if receivedKey != "" {
+		t.Errorf("Expected x-philter-proxy-key to be stripped, but provider received %q", receivedKey)
+	}
+}
+
+func TestAuth_ProviderKeyPassthrough(t *testing.T) {
+	philterSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write(explainJSON("hello", "doc-id", nil))
+	}))
+	defer philterSrv.Close()
+
+	var receivedAuth string
+	providerSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedAuth = r.Header.Get("Authorization")
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"hi"}}]}`))
+	}))
+	defer providerSrv.Close()
+
+	proxy := newAuthProxy(philterSrv.URL, providerSrv.URL, map[string]string{"secret-key": ""})
+
+	req := httptest.NewRequest("POST", "/v1/chat/completions",
+		strings.NewReader(`{"model":"gpt-4","messages":[{"role":"user","content":"hello"}]}`))
+	req.Header.Set("x-philter-proxy-key", "secret-key")
+	req.Header.Set("Authorization", "Bearer sk-openai-key")
+	proxy.ServeHTTP(httptest.NewRecorder(), req)
+
+	if receivedAuth != "Bearer sk-openai-key" {
+		t.Errorf("Expected Authorization header forwarded unchanged, got %q", receivedAuth)
+	}
+}
+
+func TestAuth_CustomHeader(t *testing.T) {
+	proxy := newAuthProxy("http://127.0.0.1:1", "http://127.0.0.1:1", map[string]string{"secret-key": ""})
+	proxy.config.Auth.Header = "x-my-custom-key"
+
+	req := httptest.NewRequest("POST", "/v1/chat/completions",
+		strings.NewReader(`{"model":"gpt-4","messages":[{"role":"user","content":"hello"}]}`))
+	req.Header.Set("x-philter-proxy-key", "secret-key") // wrong header name
+	w := httptest.NewRecorder()
+	proxy.ServeHTTP(w, req)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("Expected 401 when key sent in wrong header, got %d", w.Code)
+	}
+}
+
+func TestConfig_Auth_DuplicateKeys(t *testing.T) {
+	cfg := testConfig("http://127.0.0.1:1")
+	cfg.Auth.APIKeys = []APIKeyEntry{
+		{Key: "key-1"},
+		{Key: "key-1"}, // duplicate
+	}
+	if err := validateConfig(cfg); err == nil {
+		t.Error("Expected error for duplicate API key")
+	}
+}
+
+func TestConfig_Auth_EmptyKey(t *testing.T) {
+	cfg := testConfig("http://127.0.0.1:1")
+	cfg.Auth.APIKeys = []APIKeyEntry{
+		{Key: ""},
+	}
+	if err := validateConfig(cfg); err == nil {
+		t.Error("Expected error for empty API key")
+	}
+}

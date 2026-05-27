@@ -9,10 +9,21 @@ import (
 )
 
 type ListenConfig struct {
-	Port            int `yaml:"port"`
+	Port            int    `yaml:"port"`
 	Cert            string `yaml:"cert"`
 	Key             string `yaml:"key"`
 	ShutdownTimeout int    `yaml:"shutdownTimeout"`
+	ClientCA        string `yaml:"clientCA"`
+}
+
+type APIKeyEntry struct {
+	Key    string `yaml:"key"`
+	Policy string `yaml:"policy"`
+}
+
+type AuthConfig struct {
+	Header  string        `yaml:"header"`
+	APIKeys []APIKeyEntry `yaml:"apiKeys"`
 }
 
 type LoggingConfig struct {
@@ -99,6 +110,7 @@ type Config struct {
 	Providers ProvidersConfig `yaml:"providers"`
 	Routes    []RouteConfig   `yaml:"routes"`
 	Defaults  DefaultsConfig  `yaml:"defaults"`
+	Auth      AuthConfig      `yaml:"auth"`
 }
 
 func defaultConfig() *Config {
@@ -220,6 +232,17 @@ func validateConfig(cfg *Config) error {
 
 	if !validOutboundActions[cfg.Defaults.Outbound.Action] {
 		return fmt.Errorf("config: defaults.outbound.action %q is invalid (must be redact, block, or flag)", cfg.Defaults.Outbound.Action)
+	}
+
+	seen := map[string]bool{}
+	for i, entry := range cfg.Auth.APIKeys {
+		if entry.Key == "" {
+			return fmt.Errorf("config: auth.apiKeys[%d].key must not be empty", i)
+		}
+		if seen[entry.Key] {
+			return fmt.Errorf("config: auth.apiKeys contains duplicate key at index %d", i)
+		}
+		seen[entry.Key] = true
 	}
 
 	// Reserved path prefixes used by built-in providers.

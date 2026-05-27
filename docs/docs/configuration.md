@@ -81,6 +81,7 @@ defaults:
 | `cert` | string | `cert.pem` | Path to the TLS certificate file |
 | `key` | string | `key.pem` | Path to the TLS private key file |
 | `shutdownTimeout` | int | `30` | Seconds to wait for in-flight requests during graceful shutdown |
+| `clientCA` | string | (none) | Path to a PEM CA certificate used to verify client certificates. When set, mTLS is enabled and the proxy requires a valid client certificate on every connection. See [mTLS](#mtls-mutual-tls) below. |
 
 ### `logging`
 
@@ -269,6 +270,92 @@ defaults:
   outbound:
     enabled: false
 ```
+
+## Authentication
+
+Authentication is **disabled by default**. The proxy accepts requests from any client with no credentials required. This is appropriate for simple deployments where network-level controls (firewall, VPC, service mesh) are sufficient. Enable authentication for environments where multiple teams or services share a proxy instance, or where access needs to be scoped per client.
+
+### API Key Authentication
+
+Configure a list of API keys in the `auth` section. Each key can optionally be bound to a specific Philter policy.
+
+```yaml
+auth:
+  header: x-philter-proxy-key   # optional — this is the default
+  apiKeys:
+    - key: secret-key-for-team-a
+    - key: secret-key-for-healthcare
+      policy: hipaa-safe-harbor   # this key always uses the HIPAA policy
+```
+
+Clients include the key in the configured request header:
+
+```bash
+curl -k https://localhost:8080/v1/chat/completions \
+  -H "x-philter-proxy-key: secret-key-for-team-a" \
+  -H "Authorization: Bearer $OPENAI_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"gpt-4","messages":[{"role":"user","content":"Hello"}]}'
+```
+
+**Behaviour:**
+
+| Scenario | Result |
+|----------|--------|
+| Valid key, no policy binding | Request proceeds; policy resolved by route matching as normal |
+| Valid key with policy binding | Request proceeds; the key's policy overrides the matched route policy |
+| Missing header | `401 Unauthorized` with JSON error body |
+| Invalid key value | `401 Unauthorized` with JSON error body |
+| No keys configured | All requests pass (auth disabled) |
+
+**The proxy's auth header is always stripped before forwarding.** The LLM provider never sees `x-philter-proxy-key`. The provider's own credentials (`Authorization: Bearer ...`, `x-api-key`, etc.) pass through unchanged.
+
+#### `auth` reference
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `header` | string | `x-philter-proxy-key` | Request header the proxy reads the API key from |
+| `apiKeys` | list | (none — auth disabled) | List of valid API keys |
+
+#### `auth.apiKeys[]` entry
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `key` | string | Yes | The API key value. Keep this secret; treat it like a password. |
+| `policy` | string | No | Philter policy to enforce for all requests authenticated with this key. Overrides route and default policy. |
+
+**Security note:** API keys are stored in the config file in plaintext. Protect the config file with appropriate filesystem permissions (`chmod 600`). For environments with a secrets manager, inject keys via an included file or environment variable substitution at the infrastructure layer.
+
+### mTLS (Mutual TLS)
+
+For service-to-service authentication in zero-trust environments, the proxy can require clients to present a valid TLS certificate signed by a configured CA. Set `listen.clientCA` to the path of the PEM-encoded CA certificate:
+
+```yaml
+listen:
+  port: 8080
+  cert: cert.pem
+  key: key.pem
+  clientCA: /etc/ssl/client-ca.pem
+```
+
+When `clientCA` is set, the proxy configures `RequireAndVerifyClientCert` on its TLS listener. Any connection without a valid client certificate is rejected at the TLS handshake level, before any HTTP processing occurs.
+
+**mTLS and API key authentication are orthogonal** — either or both can be enabled simultaneously. A typical defence-in-depth configuration uses mTLS to authenticate the connection and API keys to scope policy access per team.
+
+**Generating a test client certificate:**
+
+```bash
+# CA key and cert (one-time setup)
+openssl req -newkey rsa:4096 -keyout ca.key -x509 -days 3650 -out ca.crt -subj "/CN=My Proxy CA"
+
+# Client key and CSR
+openssl req -newkey rsa:2048 -keyout client.key -out client.csr -subj "/CN=my-service"
+
+# Sign the client cert with the CA
+openssl x509 -req -in client.csr -CA ca.crt -CAkey ca.key -CAcreateserial -out client.crt -days 365
+```
+
+Set `listen.clientCA: ca.crt` in the proxy config, then pass `--cert client.crt --key client.key` to curl (or configure the equivalent in your HTTP client).
 
 ## Audit Logging
 

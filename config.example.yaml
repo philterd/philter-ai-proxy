@@ -3,6 +3,7 @@ listen:
   cert: cert.pem
   key: key.pem
   shutdownTimeout: 30
+  # clientCA: /etc/ssl/client-ca.pem  # optional: enable mTLS by specifying the CA that signed client certs
 
 logging:
   enabled: true
@@ -78,3 +79,11 @@ defaults:
   # outbound:
   #   enabled: false
   #   action: redact  # redact (default), block, or flag
+
+# Authentication is disabled by default. Uncomment to enable API key auth.
+# auth:
+#   header: x-philter-proxy-key   # optional; this is the default header name
+#   apiKeys:
+#     - key: your-secret-key-here
+#       # policy: hipaa-safe-harbor  # optional: lock this key to a specific Philter policy
+#     - key: another-key-here

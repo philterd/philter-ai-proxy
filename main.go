@@ -154,6 +154,7 @@ type Proxy struct {
 	philter         *PhilterClient
 	auditLogger     *slog.Logger
 	metrics         *ProxyMetrics
+	keyIndex        map[string]string // API key value → bound policy (empty string = no override)
 }
 
 type AuditEntry struct {
@@ -1110,6 +1111,30 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// API key authentication. Enforced only when keys are configured; disabled by default.
+	var keyBoundPolicy string
+	if len(p.keyIndex) > 0 {
+		headerName := p.config.Auth.Header
+		if headerName == "" {
+			headerName = "x-philter-proxy-key"
+		}
+		clientKey := r.Header.Get(headerName)
+		if clientKey == "" {
+			w.Header().Set("Content-Type", "application/json")
+			http.Error(w, `{"error":{"message":"missing API key","type":"unauthorized"}}`, http.StatusUnauthorized)
+			return
+		}
+		boundPolicy, ok := p.keyIndex[clientKey]
+		if !ok {
+			w.Header().Set("Content-Type", "application/json")
+			http.Error(w, `{"error":{"message":"invalid API key","type":"unauthorized"}}`, http.StatusUnauthorized)
+			return
+		}
+		keyBoundPolicy = boundPolicy
+		// Strip the proxy auth header so it is never forwarded to the LLM provider.
+		r.Header.Del(headerName)
+	}
+
 	if p.metrics != nil {
 		p.metrics.activeRequests.Inc()
 		defer p.metrics.activeRequests.Dec()
@@ -1140,6 +1165,11 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	model := extractModel(bodyBytes)
 	route := matchRoute(p.config, r.URL.Path, model, r.Header.Get)
+
+	// A per-key policy binding overrides whatever the route matched.
+	if keyBoundPolicy != "" {
+		route.Policy = keyBoundPolicy
+	}
 
 	philter_context := route.Context
 	philter_document_id := uuid.New().String()
@@ -1635,6 +1665,16 @@ func main() {
 		proxyMetrics = newMetrics(metricsReg)
 	}
 
+	// Build the API key index (key value → bound policy, or "" for no override).
+	// Empty index means authentication is disabled.
+	keyIndex := make(map[string]string, len(cfg.Auth.APIKeys))
+	for _, entry := range cfg.Auth.APIKeys {
+		keyIndex[entry.Key] = entry.Policy
+	}
+	if len(keyIndex) > 0 {
+		slog.Info("API key authentication enabled", "keys", len(keyIndex))
+	}
+
 	p := &Proxy{
 		config:          cfg,
 		openaiTarget:    targets[0],
@@ -1653,6 +1693,7 @@ func main() {
 		philter:                 philterClient,
 		auditLogger:             auditLogger,
 		metrics:                 proxyMetrics,
+		keyIndex:                keyIndex,
 	}
 
 	port := fmt.Sprintf("%d", cfg.Listen.Port)
@@ -1663,6 +1704,25 @@ func main() {
 	srv := &http.Server{
 		Addr:    ":" + port,
 		Handler: p,
+	}
+
+	// mTLS: require and verify client certificates when clientCA is configured.
+	if cfg.Listen.ClientCA != "" {
+		caCert, err := os.ReadFile(cfg.Listen.ClientCA)
+		if err != nil {
+			slog.Error("Failed to read client CA certificate", "path", cfg.Listen.ClientCA, "error", err)
+			os.Exit(1)
+		}
+		pool := x509.NewCertPool()
+		if !pool.AppendCertsFromPEM(caCert) {
+			slog.Error("Failed to parse client CA certificate", "path", cfg.Listen.ClientCA)
+			os.Exit(1)
+		}
+		srv.TLSConfig = &tls.Config{
+			ClientAuth: tls.RequireAndVerifyClientCert,
+			ClientCAs:  pool,
+		}
+		slog.Info("mTLS enabled", "clientCA", cfg.Listen.ClientCA)
 	}
 
 	var metricsSrv *http.Server

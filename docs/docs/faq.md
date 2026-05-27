@@ -55,6 +55,14 @@ The proxy is configured via a YAML configuration file. Please refer to the [Conf
 
 Yes, the Philter AI Proxy is licensed under the Apache License, version 2.
 
+### Does the proxy support authentication?
+
+Yes. API key authentication and mTLS are both supported, and both are disabled by default.
+
+For API key authentication, configure one or more keys under `auth.apiKeys` in the config. Clients send the key in the `x-philter-proxy-key` header (configurable). Requests without a valid key receive HTTP `401`. Each key can optionally be bound to a specific Philter policy, which lets an admin issue a key to the healthcare team that always uses the HIPAA policy regardless of what the client requests. The proxy's auth header is always stripped before forwarding, so LLM providers never see it.
+
+For zero-trust service-to-service authentication, set `listen.clientCA` to a CA certificate. The proxy will require and verify a client TLS certificate on every connection. API key auth and mTLS can be used simultaneously. See [Configuration](configuration.md#authentication) for details and examples.
+
 ### Can I use the proxy with Mistral, Cohere, vLLM, or other OpenAI-compatible providers?
 
 Yes. Register any OpenAI-compatible provider under `providers.openaiCompatible` in the config, giving it a short name and a target URL. Clients send requests to `/{name}/v1/...` (e.g., `/mistral/v1/chat/completions`); the proxy strips the prefix and forwards the standard OpenAI-format request to the configured target after running PII redaction. No changes are needed to route configuration — routes work the same way across all OpenAI-compatible providers. See [Configuration](configuration.md#providersopenaicompatible) for details.
