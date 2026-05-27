@@ -1,6 +1,19 @@
 # API Reference
 
-The Philter AI Proxy provides several endpoints to redact sensitive information before sending requests to AI providers.
+The Philter AI Proxy provides several endpoints to redact sensitive information before sending requests to AI providers. All endpoints support both streaming and non-streaming requests.
+
+## Route Detection
+
+The proxy routes requests based on the URL path:
+
+| Path pattern | Provider |
+|---|---|
+| `/v1/messages` | Anthropic |
+| Path containing `generateContent` (case-insensitive) | Gemini |
+| `/api/generate` | Ollama |
+| `/api/chat` | Ollama |
+| `/health` | Health check (no proxying) |
+| All other paths | OpenAI |
 
 ## Endpoints
 
@@ -8,14 +21,14 @@ The Philter AI Proxy provides several endpoints to redact sensitive information 
 
 - **URL**: `/v1/chat/completions`
 - **Method**: `POST`
-- **Description**: Proxies requests to the OpenAI Chat Completions API.
+- **Streaming**: Set `"stream": true` in the request body. Response is SSE (`text/event-stream`).
 - **Example**:
   ```bash
-  curl https://localhost:8080/v1/chat/completions \
+  curl -k https://localhost:8080/v1/chat/completions \
     -H "Content-Type: application/json" \
     -H "Authorization: Bearer $OPENAI_API_KEY" \
     -d '{
-      "model": "gpt-3.5-turbo",
+      "model": "gpt-4",
       "messages": [{"role": "user", "content": "Whose social security number is 123-45-6789"}]
     }'
   ```
@@ -24,15 +37,15 @@ The Philter AI Proxy provides several endpoints to redact sensitive information 
 
 - **URL**: `/v1/messages`
 - **Method**: `POST`
-- **Description**: Proxies requests to the Anthropic Messages API.
+- **Streaming**: Set `"stream": true` in the request body. Response is SSE (`text/event-stream`).
 - **Example**:
   ```bash
-  curl https://localhost:8080/v1/messages \
+  curl -k https://localhost:8080/v1/messages \
     -H "Content-Type: application/json" \
     -H "x-api-key: $ANTHROPIC_API_KEY" \
     -H "anthropic-version: 2023-06-01" \
     -d '{
-      "model": "claude-3-5-sonnet-20241022",
+      "model": "claude-sonnet-4-20250514",
       "max_tokens": 1024,
       "messages": [{"role": "user", "content": "Whose social security number is 123-45-6789"}]
     }'
@@ -42,10 +55,11 @@ The Philter AI Proxy provides several endpoints to redact sensitive information 
 
 - **URL**: `/v1beta/models/{model}:generateContent`
 - **Method**: `POST`
-- **Description**: Proxies requests to the Google Gemini Generate Content API.
+- **Streaming**: Use `:streamGenerateContent` instead of `:generateContent`. Response is chunked JSON.
+- **Note**: The Gemini API passes the API key as a URL query parameter (`?key=...`) rather than a header. The proxy forwards the query string to the provider but never logs API keys — sensitive query parameters are redacted from all log and error output.
 - **Example**:
   ```bash
-  curl "https://localhost:8080/v1beta/models/gemini-1.5-flash:generateContent?key=$GEMINI_API_KEY" \
+  curl -k "https://localhost:8080/v1beta/models/gemini-2.0-flash:generateContent?key=$GEMINI_API_KEY" \
       -H 'Content-Type: application/json' \
       -X POST \
       -d '{
@@ -59,10 +73,10 @@ The Philter AI Proxy provides several endpoints to redact sensitive information 
 
 - **URL**: `/api/generate`
 - **Method**: `POST`
-- **Description**: Proxies requests to the Ollama Generate API.
+- **Streaming**: Ollama streams by default (NDJSON). Set `"stream": false` to receive a single response.
 - **Example**:
   ```bash
-  curl https://localhost:8080/api/generate \
+  curl -k https://localhost:8080/api/generate \
     -H "Content-Type: application/json" \
     -d '{
       "model": "llama3",
@@ -75,10 +89,10 @@ The Philter AI Proxy provides several endpoints to redact sensitive information 
 
 - **URL**: `/api/chat`
 - **Method**: `POST`
-- **Description**: Proxies requests to the Ollama Chat API.
+- **Streaming**: Ollama streams by default (NDJSON). Set `"stream": false` to receive a single response.
 - **Example**:
   ```bash
-  curl https://localhost:8080/api/chat \
+  curl -k https://localhost:8080/api/chat \
     -H "Content-Type: application/json" \
     -d '{
       "model": "llama3",

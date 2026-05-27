@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-- Go 1.25 or later
+- Go 1.21 or later
 - [Philter](https://philterd.ai/philter/) instance running and accessible
 
 ## Building from Source

@@ -12,6 +12,7 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- Streaming (SSE) support for all four providers (OpenAI, Anthropic, Gemini, Ollama). Response chunks are forwarded to the client in real time without buffering.
 - Structured audit logging (JSONL) for every proxy request, including request ID, provider, model, policy name, document ID, fields redacted, entity count, entity types detected, redaction latency, client IP, and HTTP status. Enabled by default.
 - Added `PHILTER_LOGGING_ENABLED` environment variable (default: `true`) to control audit logging.
 - Added `PHILTER_LOG_FILE` environment variable to write audit logs to a file in addition to stdout.
@@ -19,6 +20,7 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 
+- Replaced `httputil.ReverseProxy` with a streaming-capable forwarding function that reads response chunks and flushes them to the client immediately. This enables real-time SSE pass-through for all providers.
 - Switched from Philter's `/api/filter` endpoint to `/api/explain` endpoint, which returns entity types and counts in the response. This enables full audit logging of what was redacted.
 - Graceful shutdown with connection draining on SIGTERM/SIGINT. In-flight requests are allowed to complete up to a configurable timeout before the process exits.
 - Added `PHILTER_SHUTDOWN_TIMEOUT` environment variable (default: 30 seconds) to control the graceful shutdown drain period.

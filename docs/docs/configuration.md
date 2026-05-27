@@ -72,6 +72,17 @@ The proxy outputs one JSON object per line (JSONL) to stdout, which is the stand
 
 For file-based collection (non-containerized deployments), set `PHILTER_LOG_FILE` and point your collector at that path.
 
+## Streaming
+
+The proxy supports streaming responses (`stream: true`) for all four providers:
+
+- **OpenAI**: Server-Sent Events (SSE) with `data:` prefixed chunks
+- **Anthropic**: SSE with `event:` / `data:` chunks
+- **Gemini**: Chunked JSON via `streamGenerateContent`
+- **Ollama**: Newline-delimited JSON (streaming is the default)
+
+Streaming requires no additional configuration. Inbound prompt redaction works identically for streaming and non-streaming requests. Response chunks are forwarded to the client in real time without buffering.
+
 ## TLS Configuration
 
 By default, TLS certificate verification is enabled for all outbound connections (both to the Philter backend and to LLM providers). This is the recommended configuration for production deployments.

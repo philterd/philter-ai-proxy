@@ -2,18 +2,30 @@
 
 ### What is the Philter AI Proxy?
 
-The Philter AI Proxy is a proxy for OpenAI, Claude, and Gemini that uses [Philter](https://philterd.ai/philter/) to remove PII, PHI, and other sensitive information from chat completion requests before they are sent to the respective AI provider.
+The Philter AI Proxy is a proxy for OpenAI, Anthropic (Claude), Google Gemini, and Ollama that uses [Philter](https://philterd.ai/philter/) to remove PII, PHI, and other sensitive information from LLM requests before they are sent to the provider.
 
 ### Why should I use it?
 
-By using the proxy, you ensure that sensitive information never leaves your environment and is not sent to the AI providers, helping you maintain compliance and protect privacy.
+By using the proxy, you ensure that sensitive information never leaves your environment and is not sent to the AI providers, helping you maintain compliance and protect privacy. Every request produces a structured audit log for compliance reporting.
 
 ### Which AI providers are supported?
 
-Currently, the proxy supports:
+The proxy supports:
+
 * OpenAI
-* Claude (Anthropic)
-* Gemini (Google)
+* Anthropic (Claude)
+* Google Gemini
+* Ollama
+
+Both streaming and non-streaming requests are supported for all providers.
+
+### Does it support streaming?
+
+Yes. Streaming responses (SSE for OpenAI/Anthropic, chunked JSON for Gemini, NDJSON for Ollama) are forwarded to the client in real time without buffering. Inbound prompt redaction works identically for streaming and non-streaming requests.
+
+### Is any sensitive data logged?
+
+No. The audit log contains only metadata (provider, model, entity types, counts, latency, etc.). No message content or filtered text is ever logged. Client IP addresses are included, which may be considered personal data under GDPR.
 
 ### Do I need a Philter instance?
 

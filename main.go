@@ -11,7 +11,6 @@ import (
 	"io/ioutil"
 	"log/slog"
 	"net/http"
-	"net/http/httputil"
 	"net/url"
 	"os"
 	"os/signal"
@@ -78,10 +77,7 @@ type Proxy struct {
 	anthropicTarget *url.URL
 	geminiTarget    *url.URL
 	ollamaTarget    *url.URL
-	openaiProxy     *httputil.ReverseProxy
-	anthropicProxy  *httputil.ReverseProxy
-	geminiProxy     *httputil.ReverseProxy
-	ollamaProxy     *httputil.ReverseProxy
+	providerClient  *http.Client
 	philterClient   *http.Client
 	auditLogger     *slog.Logger
 }
@@ -113,6 +109,97 @@ func newResponseCapture(w http.ResponseWriter) *responseCapture {
 func (rc *responseCapture) WriteHeader(code int) {
 	rc.statusCode = code
 	rc.ResponseWriter.WriteHeader(code)
+}
+
+func (rc *responseCapture) Flush() {
+	if f, ok := rc.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
+var hopByHopHeaders = map[string]bool{
+	"Connection":          true,
+	"Keep-Alive":          true,
+	"Proxy-Authenticate":  true,
+	"Proxy-Authorization": true,
+	"Te":                  true,
+	"Trailer":             true,
+	"Transfer-Encoding":   true,
+	"Upgrade":             true,
+}
+
+func sanitizeQuery(rawQuery string) string {
+	params, err := url.ParseQuery(rawQuery)
+	if err != nil {
+		return rawQuery
+	}
+	for _, sensitive := range []string{"key", "token", "api_key"} {
+		if params.Has(sensitive) {
+			params.Set(sensitive, "REDACTED")
+		}
+	}
+	return params.Encode()
+}
+
+func (p *Proxy) forwardToProvider(w http.ResponseWriter, origReq *http.Request, target *url.URL, body []byte) {
+	targetURL := *target
+	targetURL.Path = origReq.URL.Path
+	targetURL.RawQuery = origReq.URL.RawQuery
+
+	req, err := http.NewRequest(origReq.Method, targetURL.String(), bytes.NewReader(body))
+	if err != nil {
+		slog.Error("Failed to create provider request", "error", err, "path", origReq.URL.Path)
+		http.Error(w, "failed to create provider request", http.StatusInternalServerError)
+		return
+	}
+
+	for key, values := range origReq.Header {
+		if hopByHopHeaders[key] {
+			continue
+		}
+		for _, v := range values {
+			req.Header.Add(key, v)
+		}
+	}
+	req.ContentLength = int64(len(body))
+	req.Host = target.Host
+
+	resp, err := p.providerClient.Do(req)
+	if err != nil {
+		safeURL := target.Host + origReq.URL.Path
+		if origReq.URL.RawQuery != "" {
+			safeURL += "?" + sanitizeQuery(origReq.URL.RawQuery)
+		}
+		slog.Error("Provider request failed", "error", err, "url", safeURL)
+		http.Error(w, "provider request failed", http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+
+	for key, values := range resp.Header {
+		if hopByHopHeaders[key] {
+			continue
+		}
+		for _, v := range values {
+			w.Header().Add(key, v)
+		}
+	}
+	w.WriteHeader(resp.StatusCode)
+
+	flusher, canFlush := w.(http.Flusher)
+	buf := make([]byte, 4096)
+	for {
+		n, readErr := resp.Body.Read(buf)
+		if n > 0 {
+			w.Write(buf[:n])
+			if canFlush {
+				flusher.Flush()
+			}
+		}
+		if readErr != nil {
+			break
+		}
+	}
 }
 
 func emitAuditLog(logger *slog.Logger, entry AuditEntry) {
@@ -308,7 +395,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if strings.HasPrefix(r.URL.Path, "/v1/messages") {
 		audit.Provider = "anthropic"
 		p.handleAnthropic(rc, r, philter_endpoint, philter_context, philter_document_id, philter_policy_name, audit)
-	} else if strings.Contains(r.URL.Path, ":generateContent") {
+	} else if strings.Contains(strings.ToLower(r.URL.Path), "generatecontent") {
 		audit.Provider = "gemini"
 		p.handleGeminiNative(rc, r, philter_endpoint, philter_context, philter_document_id, philter_policy_name, audit)
 	} else if r.URL.Path == "/api/generate" {
@@ -354,13 +441,12 @@ func (p *Proxy) handleOllamaGenerate(w http.ResponseWriter, r *http.Request, phi
 	}
 
 	j, err := json.Marshal(o)
-	new_body_content := string(j[:])
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 
-	r.Body = ioutil.NopCloser(strings.NewReader(new_body_content))
-	r.ContentLength = int64(len(new_body_content))
-	r.Host = p.ollamaTarget.Host
-
-	p.ollamaProxy.ServeHTTP(w, r)
+	p.forwardToProvider(w, r, p.ollamaTarget, j)
 }
 
 func (p *Proxy) handleOllamaChat(w http.ResponseWriter, r *http.Request, philter_endpoint string, context string, documentId string, policyName string, audit *AuditEntry) {
@@ -385,13 +471,12 @@ func (p *Proxy) handleOllamaChat(w http.ResponseWriter, r *http.Request, philter
 	}
 
 	j, err := json.Marshal(o)
-	new_body_content := string(j[:])
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 
-	r.Body = ioutil.NopCloser(strings.NewReader(new_body_content))
-	r.ContentLength = int64(len(new_body_content))
-	r.Host = p.ollamaTarget.Host
-
-	p.ollamaProxy.ServeHTTP(w, r)
+	p.forwardToProvider(w, r, p.ollamaTarget, j)
 }
 
 func (p *Proxy) handleGeminiNative(w http.ResponseWriter, r *http.Request, philter_endpoint string, context string, documentId string, policyName string, audit *AuditEntry) {
@@ -418,13 +503,12 @@ func (p *Proxy) handleGeminiNative(w http.ResponseWriter, r *http.Request, philt
 	}
 
 	j, err := json.Marshal(g)
-	new_body_content := string(j[:])
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 
-	r.Body = ioutil.NopCloser(strings.NewReader(new_body_content))
-	r.ContentLength = int64(len(new_body_content))
-	r.Host = p.geminiTarget.Host
-
-	p.geminiProxy.ServeHTTP(w, r)
+	p.forwardToProvider(w, r, p.geminiTarget, j)
 }
 
 func (p *Proxy) handleOpenAI(w http.ResponseWriter, r *http.Request, philter_endpoint string, context string, documentId string, policyName string, audit *AuditEntry) {
@@ -449,13 +533,12 @@ func (p *Proxy) handleOpenAI(w http.ResponseWriter, r *http.Request, philter_end
 	}
 
 	j, err := json.Marshal(o)
-	new_body_content := string(j[:])
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 
-	r.Body = ioutil.NopCloser(strings.NewReader(new_body_content))
-	r.ContentLength = int64(len(new_body_content))
-	r.Host = p.openaiTarget.Host
-
-	p.openaiProxy.ServeHTTP(w, r)
+	p.forwardToProvider(w, r, p.openaiTarget, j)
 }
 
 func (p *Proxy) handleAnthropic(w http.ResponseWriter, r *http.Request, philter_endpoint string, context string, documentId string, policyName string, audit *AuditEntry) {
@@ -501,13 +584,12 @@ func (p *Proxy) handleAnthropic(w http.ResponseWriter, r *http.Request, philter_
 	}
 
 	j, err := json.Marshal(a)
-	new_body_content := string(j[:])
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 
-	r.Body = ioutil.NopCloser(strings.NewReader(new_body_content))
-	r.ContentLength = int64(len(new_body_content))
-	r.Host = p.anthropicTarget.Host
-
-	p.anthropicProxy.ServeHTTP(w, r)
+	p.forwardToProvider(w, r, p.anthropicTarget, j)
 }
 
 func getEnv(key, fallback string) string {
@@ -585,24 +667,10 @@ func main() {
 		panic(err)
 	}
 
-	openaiProxy := httputil.NewSingleHostReverseProxy(openaiTarget)
-	openaiProxy.Transport = &http.Transport{
-		TLSClientConfig: providerTLSConfig,
-	}
-
-	anthropicProxy := httputil.NewSingleHostReverseProxy(anthropicTarget)
-	anthropicProxy.Transport = &http.Transport{
-		TLSClientConfig: providerTLSConfig,
-	}
-
-	geminiProxy := httputil.NewSingleHostReverseProxy(geminiTarget)
-	geminiProxy.Transport = &http.Transport{
-		TLSClientConfig: providerTLSConfig,
-	}
-
-	ollamaProxy := httputil.NewSingleHostReverseProxy(ollamaTarget)
-	ollamaProxy.Transport = &http.Transport{
-		TLSClientConfig: providerTLSConfig,
+	providerClient := &http.Client{
+		Transport: &http.Transport{
+			TLSClientConfig: providerTLSConfig,
+		},
 	}
 
 	p := &Proxy{
@@ -610,10 +678,7 @@ func main() {
 		anthropicTarget: anthropicTarget,
 		geminiTarget:    geminiTarget,
 		ollamaTarget:    ollamaTarget,
-		openaiProxy:     openaiProxy,
-		anthropicProxy:  anthropicProxy,
-		geminiProxy:     geminiProxy,
-		ollamaProxy:     ollamaProxy,
+		providerClient:  providerClient,
 		philterClient:   philterClient,
 		auditLogger:     auditLogger,
 	}
