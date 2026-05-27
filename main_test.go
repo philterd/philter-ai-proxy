@@ -27,53 +27,12 @@ import (
 	"time"
 )
 
-func TestGetEnv(t *testing.T) {
-	os.Setenv("TEST_VAR", "value")
-	defer os.Unsetenv("TEST_VAR")
-
-	if val := getEnv("TEST_VAR", "fallback"); val != "value" {
-		t.Errorf("Expected 'value', got '%s'", val)
+func testConfig(philterEndpoint string) *Config {
+	cfg := defaultConfig()
+	if philterEndpoint != "" {
+		cfg.Philter.Endpoint = philterEndpoint
 	}
-
-	if val := getEnv("NON_EXISTENT", "fallback"); val != "fallback" {
-		t.Errorf("Expected 'fallback', got '%s'", val)
-	}
-}
-
-func TestGetBoolEnv(t *testing.T) {
-	defer os.Unsetenv("TEST_BOOL")
-
-	if val := getBoolEnv("TEST_BOOL_UNSET", true); val != true {
-		t.Errorf("Expected true for missing env var with default true, got %v", val)
-	}
-	if val := getBoolEnv("TEST_BOOL_UNSET", false); val != false {
-		t.Errorf("Expected false for missing env var with default false, got %v", val)
-	}
-
-	os.Setenv("TEST_BOOL", "true")
-	if val := getBoolEnv("TEST_BOOL", false); val != true {
-		t.Errorf("Expected true for 'true', got %v", val)
-	}
-
-	os.Setenv("TEST_BOOL", "TRUE")
-	if val := getBoolEnv("TEST_BOOL", false); val != true {
-		t.Errorf("Expected true for 'TRUE', got %v", val)
-	}
-
-	os.Setenv("TEST_BOOL", "1")
-	if val := getBoolEnv("TEST_BOOL", false); val != true {
-		t.Errorf("Expected true for '1', got %v", val)
-	}
-
-	os.Setenv("TEST_BOOL", "false")
-	if val := getBoolEnv("TEST_BOOL", true); val != false {
-		t.Errorf("Expected false for 'false', got %v", val)
-	}
-
-	os.Setenv("TEST_BOOL", "0")
-	if val := getBoolEnv("TEST_BOOL", true); val != false {
-		t.Errorf("Expected false for '0', got %v", val)
-	}
+	return cfg
 }
 
 func TestBuildTLSConfig_VerifyEnabled(t *testing.T) {
@@ -224,15 +183,12 @@ func TestFilter(t *testing.T) {
 	}
 }
 
-func TestProxy_ServeHTTP_CustomEnv(t *testing.T) {
+func TestProxy_ServeHTTP_CustomConfig(t *testing.T) {
 	// Mock Philter
 	philterServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		q := r.URL.Query()
 		if q.Get("c") != "custom-context" {
 			t.Errorf("Expected context 'custom-context', got '%s'", q.Get("c"))
-		}
-		if q.Get("d") != "custom-docid" {
-			t.Errorf("Expected docid 'custom-docid', got '%s'", q.Get("d"))
 		}
 		if q.Get("p") != "custom-policy" {
 			t.Errorf("Expected policy 'custom-policy', got '%s'", q.Get("p"))
@@ -240,15 +196,6 @@ func TestProxy_ServeHTTP_CustomEnv(t *testing.T) {
 		w.Write(explainJSON("REDACTED", "doc-id", nil))
 	}))
 	defer philterServer.Close()
-
-	os.Setenv("PHILTER_ENDPOINT", philterServer.URL)
-	os.Setenv("PHILTER_CONTEXT", "custom-context")
-	os.Setenv("PHILTER_DOCUMENT_ID", "custom-docid")
-	os.Setenv("PHILTER_POLICY_NAME", "custom-policy")
-	defer os.Unsetenv("PHILTER_ENDPOINT")
-	defer os.Unsetenv("PHILTER_CONTEXT")
-	defer os.Unsetenv("PHILTER_DOCUMENT_ID")
-	defer os.Unsetenv("PHILTER_POLICY_NAME")
 
 	// Mock OpenAI
 	openaiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -262,11 +209,16 @@ func TestProxy_ServeHTTP_CustomEnv(t *testing.T) {
 	}))
 	defer openaiServer.Close()
 
+	cfg := testConfig(philterServer.URL)
+	cfg.Defaults.Policy = "custom-policy"
+	cfg.Defaults.Context = "custom-context"
+
 	openaiURL, _ := url.Parse(openaiServer.URL)
 	proxy := &Proxy{
-		openaiTarget:   openaiURL,
-		providerClient: http.DefaultClient,
-		philterClient:  http.DefaultClient,
+		config:        cfg,
+		openaiTarget:  openaiURL,
+		openaiClient:  http.DefaultClient,
+		philterClient: http.DefaultClient,
 	}
 
 	reqBody := `{"model": "gpt-3.5-turbo", "messages": [{"role": "user", "content": "secret"}]}`
@@ -296,10 +248,6 @@ func TestProxy_ServeHTTP_RandomUUID(t *testing.T) {
 	}))
 	defer philterServer.Close()
 
-	os.Setenv("PHILTER_ENDPOINT", philterServer.URL)
-	os.Unsetenv("PHILTER_DOCUMENT_ID")
-	defer os.Unsetenv("PHILTER_ENDPOINT")
-
 	// Mock OpenAI
 	openaiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -308,9 +256,10 @@ func TestProxy_ServeHTTP_RandomUUID(t *testing.T) {
 
 	openaiURL, _ := url.Parse(openaiServer.URL)
 	proxy := &Proxy{
-		openaiTarget:   openaiURL,
-		providerClient: http.DefaultClient,
-		philterClient:  http.DefaultClient,
+		config:         testConfig(philterServer.URL),
+		openaiTarget: openaiURL,
+		openaiClient: http.DefaultClient,
+		philterClient: http.DefaultClient,
 	}
 
 	reqBody := `{"model": "gpt-3.5-turbo", "messages": [{"role": "user", "content": "secret"}]}`
@@ -336,8 +285,7 @@ func TestProxy_ServeHTTP_OpenAI(t *testing.T) {
 		}
 	}))
 	defer philterServer.Close()
-	os.Setenv("PHILTER_ENDPOINT", philterServer.URL)
-	defer os.Unsetenv("PHILTER_ENDPOINT")
+	philterURL := philterServer.URL
 
 	// Mock OpenAI
 	openaiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -355,9 +303,10 @@ func TestProxy_ServeHTTP_OpenAI(t *testing.T) {
 	openaiURL, _ := url.Parse(openaiServer.URL)
 	// Re-initialize proxy correctly for testing
 	proxy := &Proxy{
-		openaiTarget:   openaiURL,
-		providerClient: http.DefaultClient,
-		philterClient:  http.DefaultClient,
+		config:         testConfig(philterURL),
+		openaiTarget: openaiURL,
+		openaiClient: http.DefaultClient,
+		philterClient: http.DefaultClient,
 	}
 
 	reqBody := `{"model": "gpt-3.5-turbo", "messages": [{"role": "user", "content": "Hello John Smith"}]}`
@@ -383,8 +332,7 @@ func TestProxy_ServeHTTP_Anthropic(t *testing.T) {
 		}
 	}))
 	defer philterServer.Close()
-	os.Setenv("PHILTER_ENDPOINT", philterServer.URL)
-	defer os.Unsetenv("PHILTER_ENDPOINT")
+	philterURL := philterServer.URL
 
 	// Mock Anthropic
 	anthropicServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -403,8 +351,9 @@ func TestProxy_ServeHTTP_Anthropic(t *testing.T) {
 
 	anthropicURL, _ := url.Parse(anthropicServer.URL)
 	proxy := &Proxy{
+		config:          testConfig(philterURL),
 		anthropicTarget: anthropicURL,
-		providerClient:  http.DefaultClient,
+		anthropicClient: http.DefaultClient,
 		philterClient:   http.DefaultClient,
 	}
 
@@ -430,8 +379,7 @@ func TestProxy_ServeHTTP_Anthropic_Complex(t *testing.T) {
 		}
 	}))
 	defer philterServer.Close()
-	os.Setenv("PHILTER_ENDPOINT", philterServer.URL)
-	defer os.Unsetenv("PHILTER_ENDPOINT")
+	philterURL := philterServer.URL
 
 	// Mock Anthropic
 	anthropicServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -452,8 +400,9 @@ func TestProxy_ServeHTTP_Anthropic_Complex(t *testing.T) {
 
 	anthropicURL, _ := url.Parse(anthropicServer.URL)
 	proxy := &Proxy{
+		config:          testConfig(philterURL),
 		anthropicTarget: anthropicURL,
-		providerClient:  http.DefaultClient,
+		anthropicClient: http.DefaultClient,
 		philterClient:   http.DefaultClient,
 	}
 
@@ -479,8 +428,7 @@ func TestProxy_ServeHTTP_Anthropic_System(t *testing.T) {
 		}
 	}))
 	defer philterServer.Close()
-	os.Setenv("PHILTER_ENDPOINT", philterServer.URL)
-	defer os.Unsetenv("PHILTER_ENDPOINT")
+	philterURL := philterServer.URL
 
 	// Mock Anthropic
 	anthropicServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -498,8 +446,9 @@ func TestProxy_ServeHTTP_Anthropic_System(t *testing.T) {
 
 	anthropicURL, _ := url.Parse(anthropicServer.URL)
 	proxy := &Proxy{
+		config:          testConfig(philterURL),
 		anthropicTarget: anthropicURL,
-		providerClient:  http.DefaultClient,
+		anthropicClient: http.DefaultClient,
 		philterClient:   http.DefaultClient,
 	}
 
@@ -525,8 +474,7 @@ func TestProxy_ServeHTTP_Gemini(t *testing.T) {
 		}
 	}))
 	defer philterServer.Close()
-	os.Setenv("PHILTER_ENDPOINT", philterServer.URL)
-	defer os.Unsetenv("PHILTER_ENDPOINT")
+	philterURL := philterServer.URL
 
 	// Mock Gemini
 	geminiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -545,9 +493,10 @@ func TestProxy_ServeHTTP_Gemini(t *testing.T) {
 
 	geminiURL, _ := url.Parse(geminiServer.URL)
 	proxy := &Proxy{
-		geminiTarget:   geminiURL,
-		providerClient: http.DefaultClient,
-		philterClient:  http.DefaultClient,
+		config:         testConfig(philterURL),
+		geminiTarget: geminiURL,
+		geminiClient: http.DefaultClient,
+		philterClient: http.DefaultClient,
 	}
 
 	reqBody := `{"contents": [{"parts": [{"text": "John Smith"}]}]}`
@@ -559,104 +508,6 @@ func TestProxy_ServeHTTP_Gemini(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Errorf("Expected status 200, got %d", w.Code)
 	}
-}
-
-func TestProxy_ServeHTTP_DefaultPolicy(t *testing.T) {
-	// Mock Philter
-	philterServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		q := r.URL.Query()
-		if q.Get("p") != "default" {
-			t.Errorf("Expected policy 'default', got '%s'", q.Get("p"))
-		}
-		w.Write(explainJSON("REDACTED", "doc-id", nil))
-	}))
-	defer philterServer.Close()
-
-	os.Setenv("PHILTER_ENDPOINT", philterServer.URL)
-	os.Unsetenv("PHILTER_POLICY_NAME")
-	defer os.Unsetenv("PHILTER_ENDPOINT")
-
-	// Mock OpenAI
-	openaiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer openaiServer.Close()
-
-	openaiURL, _ := url.Parse(openaiServer.URL)
-	proxy := &Proxy{
-		openaiTarget:   openaiURL,
-		providerClient: http.DefaultClient,
-		philterClient:  http.DefaultClient,
-	}
-
-	reqBody := `{"model": "gpt-3.5-turbo", "messages": [{"role": "user", "content": "secret"}]}`
-	req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(reqBody))
-	w := httptest.NewRecorder()
-
-	proxy.ServeHTTP(w, req)
-
-	if w.Code != http.StatusOK {
-		t.Errorf("Expected status 200, got %d", w.Code)
-	}
-}
-
-func TestProxy_ServeHTTP_DefaultContext(t *testing.T) {
-	// Mock Philter
-	philterServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		q := r.URL.Query()
-		if q.Get("c") != "none" {
-			t.Errorf("Expected context 'none', got '%s'", q.Get("c"))
-		}
-		w.Write(explainJSON("REDACTED", "doc-id", nil))
-	}))
-	defer philterServer.Close()
-
-	os.Setenv("PHILTER_ENDPOINT", philterServer.URL)
-	os.Unsetenv("PHILTER_CONTEXT")
-	defer os.Unsetenv("PHILTER_ENDPOINT")
-
-	// Mock OpenAI
-	openaiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer openaiServer.Close()
-
-	openaiURL, _ := url.Parse(openaiServer.URL)
-	proxy := &Proxy{
-		openaiTarget:   openaiURL,
-		providerClient: http.DefaultClient,
-		philterClient:  http.DefaultClient,
-	}
-
-	reqBody := `{"model": "gpt-3.5-turbo", "messages": [{"role": "user", "content": "secret"}]}`
-	req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(reqBody))
-	w := httptest.NewRecorder()
-
-	proxy.ServeHTTP(w, req)
-
-	if w.Code != http.StatusOK {
-		t.Errorf("Expected status 200, got %d", w.Code)
-	}
-}
-
-func TestProxy_ServeHTTP_DefaultEndpoint(t *testing.T) {
-	// This test is a bit tricky because we can't easily mock https://localhost:8080
-	// without changing the code to allow overriding the endpoint for testing
-	// but the code already uses getEnv, so we can just verify the logic if we could.
-	// Since we already have TestGetEnv, we know getEnv works.
-	// To truly test this, we'd need to NOT set PHILTER_ENDPOINT and see if it tries to connect to localhost:8080.
-	// But that would fail if nothing is listening there.
-
-	// Instead, let's just ensure that if PHILTER_ENDPOINT is NOT set, it doesn't crash
-	// and we can potentially check the logs if we capture them.
-
-	// Actually, the best way to verify this is to check if it uses the default when env is empty.
-	os.Unsetenv("PHILTER_ENDPOINT")
-
-	// We can't easily verify it reached localhost:8080 without a listener,
-	// and we can't easily start a listener on 8080 if it's already in use.
-
-	// Let's just rely on the fact that we updated the code and TestGetEnv covers the logic.
 }
 
 func TestProxy_ServeHTTP_Health(t *testing.T) {
@@ -687,8 +538,7 @@ func TestProxy_ServeHTTP_OllamaGenerate(t *testing.T) {
 		}
 	}))
 	defer philterServer.Close()
-	os.Setenv("PHILTER_ENDPOINT", philterServer.URL)
-	defer os.Unsetenv("PHILTER_ENDPOINT")
+	philterURL := philterServer.URL
 
 	// Mock Ollama
 	ollamaServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -710,9 +560,10 @@ func TestProxy_ServeHTTP_OllamaGenerate(t *testing.T) {
 
 	ollamaURL, _ := url.Parse(ollamaServer.URL)
 	proxy := &Proxy{
-		ollamaTarget:   ollamaURL,
-		providerClient: http.DefaultClient,
-		philterClient:  http.DefaultClient,
+		config:         testConfig(philterURL),
+		ollamaTarget: ollamaURL,
+		ollamaClient: http.DefaultClient,
+		philterClient: http.DefaultClient,
 	}
 
 	reqBody := `{"model": "llama3", "prompt": "John Smith", "system": "John Smith"}`
@@ -737,8 +588,7 @@ func TestProxy_ServeHTTP_OllamaChat(t *testing.T) {
 		}
 	}))
 	defer philterServer.Close()
-	os.Setenv("PHILTER_ENDPOINT", philterServer.URL)
-	defer os.Unsetenv("PHILTER_ENDPOINT")
+	philterURL := philterServer.URL
 
 	// Mock Ollama
 	ollamaServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -757,9 +607,10 @@ func TestProxy_ServeHTTP_OllamaChat(t *testing.T) {
 
 	ollamaURL, _ := url.Parse(ollamaServer.URL)
 	proxy := &Proxy{
-		ollamaTarget:   ollamaURL,
-		providerClient: http.DefaultClient,
-		philterClient:  http.DefaultClient,
+		config:         testConfig(philterURL),
+		ollamaTarget: ollamaURL,
+		ollamaClient: http.DefaultClient,
+		philterClient: http.DefaultClient,
 	}
 
 	reqBody := `{"model": "llama3", "messages": [{"role": "user", "content": "John Smith"}]}`
@@ -778,8 +629,7 @@ func TestStreaming_OpenAI_SSE(t *testing.T) {
 		w.Write(explainJSON("REDACTED", "doc-id", nil))
 	}))
 	defer philterServer.Close()
-	os.Setenv("PHILTER_ENDPOINT", philterServer.URL)
-	defer os.Unsetenv("PHILTER_ENDPOINT")
+	philterURL := philterServer.URL
 
 	chunks := []string{
 		"data: {\"choices\":[{\"delta\":{\"content\":\"Hello\"}}]}\n\n",
@@ -801,9 +651,10 @@ func TestStreaming_OpenAI_SSE(t *testing.T) {
 
 	openaiURL, _ := url.Parse(openaiServer.URL)
 	proxy := &Proxy{
-		openaiTarget:   openaiURL,
-		providerClient: http.DefaultClient,
-		philterClient:  http.DefaultClient,
+		config:         testConfig(philterURL),
+		openaiTarget: openaiURL,
+		openaiClient: http.DefaultClient,
+		philterClient: http.DefaultClient,
 	}
 
 	reqBody := `{"model": "gpt-4", "messages": [{"role": "user", "content": "secret"}], "stream": true}`
@@ -831,8 +682,7 @@ func TestStreaming_Anthropic_SSE(t *testing.T) {
 		w.Write(explainJSON("REDACTED", "doc-id", nil))
 	}))
 	defer philterServer.Close()
-	os.Setenv("PHILTER_ENDPOINT", philterServer.URL)
-	defer os.Unsetenv("PHILTER_ENDPOINT")
+	philterURL := philterServer.URL
 
 	chunks := []string{
 		"event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"delta\":{\"type\":\"text_delta\",\"text\":\"Hello\"}}\n\n",
@@ -853,8 +703,9 @@ func TestStreaming_Anthropic_SSE(t *testing.T) {
 
 	anthropicURL, _ := url.Parse(anthropicServer.URL)
 	proxy := &Proxy{
+		config:          testConfig(philterURL),
 		anthropicTarget: anthropicURL,
-		providerClient:  http.DefaultClient,
+		anthropicClient: http.DefaultClient,
 		philterClient:   http.DefaultClient,
 	}
 
@@ -880,8 +731,7 @@ func TestStreaming_Gemini_Chunked(t *testing.T) {
 		w.Write(explainJSON("REDACTED", "doc-id", nil))
 	}))
 	defer philterServer.Close()
-	os.Setenv("PHILTER_ENDPOINT", philterServer.URL)
-	defer os.Unsetenv("PHILTER_ENDPOINT")
+	philterURL := philterServer.URL
 
 	chunks := []string{
 		"[{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"Hello\"}]}}]}\n",
@@ -902,9 +752,10 @@ func TestStreaming_Gemini_Chunked(t *testing.T) {
 
 	geminiURL, _ := url.Parse(geminiServer.URL)
 	proxy := &Proxy{
-		geminiTarget:   geminiURL,
-		providerClient: http.DefaultClient,
-		philterClient:  http.DefaultClient,
+		config:         testConfig(philterURL),
+		geminiTarget: geminiURL,
+		geminiClient: http.DefaultClient,
+		philterClient: http.DefaultClient,
 	}
 
 	reqBody := `{"contents": [{"parts": [{"text": "secret"}]}]}`
@@ -929,8 +780,7 @@ func TestStreaming_Ollama_NDJSON(t *testing.T) {
 		w.Write(explainJSON("REDACTED", "doc-id", nil))
 	}))
 	defer philterServer.Close()
-	os.Setenv("PHILTER_ENDPOINT", philterServer.URL)
-	defer os.Unsetenv("PHILTER_ENDPOINT")
+	philterURL := philterServer.URL
 
 	chunks := []string{
 		"{\"model\":\"llama3\",\"response\":\"Hello\"}\n",
@@ -951,9 +801,10 @@ func TestStreaming_Ollama_NDJSON(t *testing.T) {
 
 	ollamaURL, _ := url.Parse(ollamaServer.URL)
 	proxy := &Proxy{
-		ollamaTarget:   ollamaURL,
-		providerClient: http.DefaultClient,
-		philterClient:  http.DefaultClient,
+		config:         testConfig(philterURL),
+		ollamaTarget: ollamaURL,
+		ollamaClient: http.DefaultClient,
+		philterClient: http.DefaultClient,
 	}
 
 	reqBody := `{"model": "llama3", "messages": [{"role": "user", "content": "secret"}]}`
@@ -978,8 +829,7 @@ func TestStreaming_HeadersPreserved(t *testing.T) {
 		w.Write(explainJSON("REDACTED", "doc-id", nil))
 	}))
 	defer philterServer.Close()
-	os.Setenv("PHILTER_ENDPOINT", philterServer.URL)
-	defer os.Unsetenv("PHILTER_ENDPOINT")
+	philterURL := philterServer.URL
 
 	openaiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer test-key" {
@@ -994,9 +844,10 @@ func TestStreaming_HeadersPreserved(t *testing.T) {
 
 	openaiURL, _ := url.Parse(openaiServer.URL)
 	proxy := &Proxy{
-		openaiTarget:   openaiURL,
-		providerClient: http.DefaultClient,
-		philterClient:  http.DefaultClient,
+		config:         testConfig(philterURL),
+		openaiTarget: openaiURL,
+		openaiClient: http.DefaultClient,
+		philterClient: http.DefaultClient,
 	}
 
 	reqBody := `{"model": "gpt-4", "messages": [{"role": "user", "content": "secret"}], "stream": true}`
@@ -1120,8 +971,7 @@ func TestAuditLog_OpenAI_Integration(t *testing.T) {
 		w.Write(explainJSON("REDACTED", "test-doc-id", []Span{{FilterType: "NER_ENTITY"}}))
 	}))
 	defer philterServer.Close()
-	os.Setenv("PHILTER_ENDPOINT", philterServer.URL)
-	defer os.Unsetenv("PHILTER_ENDPOINT")
+	philterURL := philterServer.URL
 
 	openaiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -1130,10 +980,11 @@ func TestAuditLog_OpenAI_Integration(t *testing.T) {
 
 	openaiURL, _ := url.Parse(openaiServer.URL)
 	proxy := &Proxy{
-		openaiTarget:   openaiURL,
-		providerClient: http.DefaultClient,
-		philterClient:  http.DefaultClient,
-		auditLogger:   auditLogger,
+		config:         testConfig(philterURL),
+		openaiTarget: openaiURL,
+		openaiClient: http.DefaultClient,
+		philterClient: http.DefaultClient,
+		auditLogger:    auditLogger,
 	}
 
 	reqBody := `{"model": "gpt-4", "messages": [{"role": "user", "content": "Hello John Smith"}]}`
@@ -1187,8 +1038,7 @@ func TestAuditLog_Disabled(t *testing.T) {
 		w.Write(explainJSON("REDACTED", "doc-id", nil))
 	}))
 	defer philterServer.Close()
-	os.Setenv("PHILTER_ENDPOINT", philterServer.URL)
-	defer os.Unsetenv("PHILTER_ENDPOINT")
+	philterURL := philterServer.URL
 
 	openaiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -1197,10 +1047,11 @@ func TestAuditLog_Disabled(t *testing.T) {
 
 	openaiURL, _ := url.Parse(openaiServer.URL)
 	proxy := &Proxy{
-		openaiTarget:   openaiURL,
-		providerClient: http.DefaultClient,
-		philterClient:  http.DefaultClient,
-		auditLogger:   nil,
+		config:         testConfig(philterURL),
+		openaiTarget: openaiURL,
+		openaiClient: http.DefaultClient,
+		philterClient: http.DefaultClient,
+		auditLogger:    nil,
 	}
 
 	reqBody := `{"model": "gpt-4", "messages": [{"role": "user", "content": "secret"}]}`

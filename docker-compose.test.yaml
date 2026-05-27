@@ -13,8 +13,7 @@ services:
       - "8080:8080"
     depends_on:
       - philter
+    volumes:
+      - ./config.test.yaml:/app/config.yaml:ro
     environment:
-      - PHILTER_ENDPOINT=http://philter:8080
-      - PHILTER_PROXY_PORT=8080
-      - PHILTER_PROXY_CERT_FILE=cert.pem
-      - PHILTER_PROXY_KEY_FILE=key.pem
+      - PHILTER_PROXY_CONFIG=/app/config.yaml

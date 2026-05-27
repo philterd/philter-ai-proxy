@@ -15,6 +15,18 @@ make build
 
 This will create an executable named `philter-ai-proxy`.
 
+## Running
+
+The proxy requires a YAML configuration file. Copy and edit the example config:
+
+```bash
+cp config.example.yaml config.yaml
+# Edit config.yaml with your Philter endpoint and provider settings
+./philter-ai-proxy --config config.yaml
+```
+
+See [Configuration](configuration.md) for the full config reference.
+
 ## Docker
 
 To build a Docker image:
@@ -30,6 +42,8 @@ To start the proxy using Docker Compose:
 ```bash
 docker-compose up --build
 ```
+
+The default `docker-compose.yaml` mounts `config.example.yaml` as the config file. Edit it or replace it with your own config before running.
 
 ## Certificates
 

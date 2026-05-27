@@ -1,0 +1,184 @@
+package main
+
+import (
+	"fmt"
+	"net/url"
+	"os"
+
+	"gopkg.in/yaml.v3"
+)
+
+type ListenConfig struct {
+	Port            int `yaml:"port"`
+	Cert            string `yaml:"cert"`
+	Key             string `yaml:"key"`
+	ShutdownTimeout int    `yaml:"shutdownTimeout"`
+}
+
+type LoggingConfig struct {
+	Enabled bool   `yaml:"enabled"`
+	File    string `yaml:"file"`
+}
+
+type PhilterConfig struct {
+	Endpoint  string `yaml:"endpoint"`
+	TLSVerify *bool  `yaml:"tlsVerify"`
+	CACert    string `yaml:"caCert"`
+}
+
+type ProviderConfig struct {
+	Target    string `yaml:"target"`
+	TLSVerify *bool  `yaml:"tlsVerify"`
+}
+
+type ProvidersConfig struct {
+	OpenAI    ProviderConfig `yaml:"openai"`
+	Anthropic ProviderConfig `yaml:"anthropic"`
+	Gemini    ProviderConfig `yaml:"gemini"`
+	Ollama    ProviderConfig `yaml:"ollama"`
+}
+
+type RouteMatch struct {
+	Header string `yaml:"header"`
+	Value  string `yaml:"value"`
+	Path   string `yaml:"path"`
+	Model  string `yaml:"model"`
+}
+
+type RouteConfig struct {
+	Match   RouteMatch `yaml:"match"`
+	Policy  string     `yaml:"policy"`
+	Context string     `yaml:"context"`
+}
+
+type DefaultsConfig struct {
+	Policy  string `yaml:"policy"`
+	Context string `yaml:"context"`
+}
+
+type Config struct {
+	Listen    ListenConfig    `yaml:"listen"`
+	Logging   LoggingConfig   `yaml:"logging"`
+	Philter   PhilterConfig   `yaml:"philter"`
+	Providers ProvidersConfig `yaml:"providers"`
+	Routes    []RouteConfig   `yaml:"routes"`
+	Defaults  DefaultsConfig  `yaml:"defaults"`
+}
+
+func defaultConfig() *Config {
+	t := true
+	return &Config{
+		Listen: ListenConfig{
+			Port:            8080,
+			Cert:            "cert.pem",
+			Key:             "key.pem",
+			ShutdownTimeout: 30,
+		},
+		Logging: LoggingConfig{
+			Enabled: true,
+		},
+		Philter: PhilterConfig{
+			Endpoint:  "https://localhost:8080",
+			TLSVerify: &t,
+		},
+		Providers: ProvidersConfig{
+			OpenAI:    ProviderConfig{Target: "https://api.openai.com"},
+			Anthropic: ProviderConfig{Target: "https://api.anthropic.com"},
+			Gemini:    ProviderConfig{Target: "https://generativelanguage.googleapis.com"},
+			Ollama:    ProviderConfig{Target: "http://localhost:11434"},
+		},
+		Defaults: DefaultsConfig{
+			Policy:  "default",
+			Context: "none",
+		},
+	}
+}
+
+func loadConfig(path string) (*Config, error) {
+	if path == "" {
+		return nil, fmt.Errorf("config file is required: use --config <path> or set PHILTER_PROXY_CONFIG")
+	}
+
+	cfg := defaultConfig()
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read config file %s: %w", path, err)
+	}
+	if err := yaml.Unmarshal(data, cfg); err != nil {
+		return nil, fmt.Errorf("failed to parse config file %s: %w", path, err)
+	}
+
+	if err := validateConfig(cfg); err != nil {
+		return nil, err
+	}
+
+	return cfg, nil
+}
+
+func validateConfig(cfg *Config) error {
+	targets := map[string]string{
+		"philter.endpoint":    cfg.Philter.Endpoint,
+		"providers.openai":    cfg.Providers.OpenAI.Target,
+		"providers.anthropic": cfg.Providers.Anthropic.Target,
+		"providers.gemini":    cfg.Providers.Gemini.Target,
+		"providers.ollama":    cfg.Providers.Ollama.Target,
+	}
+	for name, target := range targets {
+		if target == "" {
+			return fmt.Errorf("config: %s target is required", name)
+		}
+		if _, err := url.Parse(target); err != nil {
+			return fmt.Errorf("config: %s has invalid URL %q: %w", name, target, err)
+		}
+	}
+
+	if cfg.Listen.Port < 1 || cfg.Listen.Port > 65535 {
+		return fmt.Errorf("config: listen.port %d is out of range (1-65535)", cfg.Listen.Port)
+	}
+
+	for i, route := range cfg.Routes {
+		if route.Match.Header == "" && route.Match.Path == "" && route.Match.Model == "" {
+			return fmt.Errorf("config: route[%d] must have at least one match criterion (header, path, or model)", i)
+		}
+		if route.Match.Header != "" && route.Match.Value == "" {
+			return fmt.Errorf("config: route[%d] specifies header %q but no value", i, route.Match.Header)
+		}
+		if route.Policy == "" {
+			return fmt.Errorf("config: route[%d] must specify a policy", i)
+		}
+	}
+
+	return nil
+}
+
+type resolvedRoute struct {
+	Policy  string
+	Context string
+}
+
+func matchRoute(cfg *Config, path string, model string, headerGetter func(string) string) resolvedRoute {
+	for _, route := range cfg.Routes {
+		if route.Match.Header != "" {
+			if headerGetter(route.Match.Header) != route.Match.Value {
+				continue
+			}
+		}
+		if route.Match.Path != "" {
+			if path != route.Match.Path {
+				continue
+			}
+		}
+		if route.Match.Model != "" {
+			if model != route.Match.Model {
+				continue
+			}
+		}
+		ctx := route.Context
+		if ctx == "" {
+			ctx = cfg.Defaults.Context
+		}
+		return resolvedRoute{Policy: route.Policy, Context: ctx}
+	}
+	return resolvedRoute{Policy: cfg.Defaults.Policy, Context: cfg.Defaults.Context}
+}

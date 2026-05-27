@@ -1,0 +1,50 @@
+listen:
+  port: 8080
+  cert: cert.pem
+  key: key.pem
+  shutdownTimeout: 30
+
+logging:
+  enabled: true
+  # file: /var/log/philter-ai-proxy/audit.log
+
+philter:
+  endpoint: https://philter.internal:8080
+  tlsVerify: true
+  # caCert: /etc/ssl/internal-ca.pem
+
+providers:
+  openai:
+    target: https://api.openai.com
+    # tlsVerify: true
+  anthropic:
+    target: https://api.anthropic.com
+    # tlsVerify: true
+  gemini:
+    target: https://generativelanguage.googleapis.com
+    # tlsVerify: true
+  ollama:
+    target: http://localhost:11434
+    # tlsVerify: true
+
+# Routes select a Philter policy based on request properties.
+# Evaluated in order; first match wins. If no route matches, defaults apply.
+# Match criteria (all specified must match): header+value, path, model.
+routes:
+  # Use HIPAA policy when the client sends this header
+  - match:
+      header: x-philter-policy
+      value: hipaa
+    policy: hipaa-safe-harbor
+    context: healthcare-chatbot
+
+  # Use a specific policy for GPT-4 chat completions
+  - match:
+      path: /v1/chat/completions
+      model: gpt-4
+    policy: general-purpose
+    context: internal-analytics
+
+defaults:
+  policy: default
+  context: none

@@ -1,22 +1,138 @@
 # Configuration
 
-The proxy is configured via environment variables.
+The proxy is configured via a YAML configuration file. The config file is required and must be specified via `--config` flag or `PHILTER_PROXY_CONFIG` environment variable.
 
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `PHILTER_ENDPOINT` | The URL of your Philter instance. | `https://localhost:8080` |
-| `PHILTER_CONTEXT` | The context used for Philter requests. | `none` |
-| `PHILTER_DOCUMENT_ID` | The document ID used for Philter requests. If not set, a random UUID will be used for each request. | (random UUID) |
-| `PHILTER_POLICY_NAME` | The policy name used for Philter requests. | `default` |
-| `PHILTER_TLS_VERIFY` | Enable TLS certificate verification for the Philter backend connection. | `true` |
-| `PHILTER_CA_CERT` | Path to a custom CA certificate (PEM) for the Philter backend connection. Useful when Philter uses a self-signed or internal CA certificate. | (none) |
-| `PROVIDER_TLS_VERIFY` | Enable TLS certificate verification for LLM provider connections (OpenAI, Anthropic, Gemini, Ollama). | `true` |
-| `PHILTER_PROXY_PORT` | The port the proxy will listen on. | `8080` |
-| `PHILTER_PROXY_CERT_FILE` | Path to the TLS certificate file. | `cert.pem` |
-| `PHILTER_PROXY_KEY_FILE` | Path to the TLS private key file. | `key.pem` |
-| `PHILTER_SHUTDOWN_TIMEOUT` | Seconds to wait for in-flight requests to complete during graceful shutdown. | `30` |
-| `PHILTER_LOGGING_ENABLED` | Enable structured audit logging for every proxy request. | `true` |
-| `PHILTER_LOG_FILE` | Path to an additional log output file. When set, logs are written to both stdout and this file. | (none) |
+```bash
+./philter-ai-proxy --config config.yaml
+# or
+PHILTER_PROXY_CONFIG=config.yaml ./philter-ai-proxy
+```
+
+## Example Configuration
+
+```yaml
+listen:
+  port: 8080
+  cert: cert.pem
+  key: key.pem
+  shutdownTimeout: 30
+
+logging:
+  enabled: true
+  # file: /var/log/philter-ai-proxy/audit.log
+
+philter:
+  endpoint: https://philter.internal:8080
+  tlsVerify: true
+  # caCert: /etc/ssl/internal-ca.pem
+
+providers:
+  openai:
+    target: https://api.openai.com
+    # tlsVerify: true
+  anthropic:
+    target: https://api.anthropic.com
+    # tlsVerify: true
+  gemini:
+    target: https://generativelanguage.googleapis.com
+    # tlsVerify: true
+  ollama:
+    target: http://localhost:11434
+    # tlsVerify: true
+
+routes:
+  - match:
+      header: x-philter-policy
+      value: hipaa
+    policy: hipaa-safe-harbor
+    context: healthcare-chatbot
+
+  - match:
+      path: /v1/chat/completions
+      model: gpt-4
+    policy: general-purpose
+    context: internal-analytics
+
+  - match:
+      model: claude-sonnet-4-20250514
+    policy: code-review-policy
+
+defaults:
+  policy: default
+  context: none
+```
+
+## Configuration Reference
+
+### `listen`
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `port` | int | `8080` | Port the proxy listens on |
+| `cert` | string | `cert.pem` | Path to the TLS certificate file |
+| `key` | string | `key.pem` | Path to the TLS private key file |
+| `shutdownTimeout` | int | `30` | Seconds to wait for in-flight requests during graceful shutdown |
+
+### `logging`
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `enabled` | bool | `true` | Enable structured audit logging |
+| `file` | string | (none) | Path to an additional log output file. When set, logs are written to both stdout and this file. |
+
+### `philter`
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `endpoint` | string | `https://localhost:8080` | URL of the Philter instance |
+| `tlsVerify` | bool | `true` | Enable TLS certificate verification for the Philter connection |
+| `caCert` | string | (none) | Path to a custom CA certificate (PEM) for the Philter connection |
+
+### `providers`
+
+Each provider (`openai`, `anthropic`, `gemini`, `ollama`) accepts:
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `target` | string | (provider default) | Target URL for the provider |
+| `tlsVerify` | bool | `true` | Enable TLS certificate verification for this provider |
+
+Default provider targets:
+
+- `openai`: `https://api.openai.com`
+- `anthropic`: `https://api.anthropic.com`
+- `gemini`: `https://generativelanguage.googleapis.com`
+- `ollama`: `http://localhost:11434`
+
+### `routes`
+
+Routes control which **Philter redaction policy and context** are applied to each request. They do not control which LLM provider handles the request — provider routing is determined automatically by the URL path (see [API Reference](api.md) for path-to-provider mapping).
+
+This means a single route can apply across all providers. For example, a route matching the header `x-philter-policy: hipaa` will use the HIPAA policy whether the request is going to OpenAI, Anthropic, Gemini, or Ollama.
+
+Routes are evaluated in order; the first match wins. If no route matches, the `defaults` are used.
+
+Each route has a `match` block with one or more criteria (all specified criteria must match):
+
+| Criterion | Description |
+|-----------|-------------|
+| `header` + `value` | Matches when the request contains the specified header with the specified value |
+| `path` | Matches when the request URL path equals this value |
+| `model` | Matches when the model name in the request body equals this value |
+
+Each route specifies:
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `policy` | Yes | Philter policy name to use for redaction |
+| `context` | No | Philter context to use (falls back to `defaults.context` if not set) |
+
+### `defaults`
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `policy` | string | `default` | Philter policy used when no route matches |
+| `context` | string | `none` | Philter context used when no route matches (or when a matched route has no context) |
 
 ## Audit Logging
 
@@ -46,20 +162,6 @@ Every proxy request produces a structured JSON log entry (JSONL) to stdout. All 
 {"time":"2026-01-15T10:30:00Z","level":"INFO","msg":"request","request_id":"a1b2c3d4","direction":"inbound","provider":"openai","model":"gpt-4","policy_name":"default","document_id":"doc-789","fields_redacted":2,"entity_count":3,"entity_types":["NER_ENTITY","SSN"],"redact_latency_ms":45,"client_ip":"10.0.0.1","http_status":200}
 ```
 
-### Configuration
-
-To disable audit logging:
-
-```bash
-export PHILTER_LOGGING_ENABLED=false
-```
-
-To write logs to a file in addition to stdout:
-
-```bash
-export PHILTER_LOG_FILE=/var/log/philter-ai-proxy/audit.log
-```
-
 ### SIEM Integration
 
 The proxy outputs one JSON object per line (JSONL) to stdout, which is the standard format for container-based log collection. Common integrations:
@@ -70,7 +172,7 @@ The proxy outputs one JSON object per line (JSONL) to stdout, which is the stand
 - **Elastic (Filebeat)**: Use the `container` or `log` input with `json.keys_under_root: true` and `json.add_error_key: true`.
 - **AWS CloudWatch**: Container stdout is captured automatically with ECS or EKS. Use CloudWatch Logs Insights to query JSON fields directly.
 
-For file-based collection (non-containerized deployments), set `PHILTER_LOG_FILE` and point your collector at that path.
+For file-based collection (non-containerized deployments), set `logging.file` in the config and point your collector at that path.
 
 ## Streaming
 
@@ -89,32 +191,30 @@ By default, TLS certificate verification is enabled for all outbound connections
 
 ### Philter Backend with Self-Signed Certificate
 
-If your Philter instance uses a self-signed certificate or a certificate from an internal CA, you can provide the CA certificate:
+If your Philter instance uses a self-signed certificate or a certificate from an internal CA, provide the CA certificate in the config:
 
-```bash
-export PHILTER_CA_CERT=/etc/ssl/internal-ca.pem
+```yaml
+philter:
+  endpoint: https://philter.internal:8080
+  caCert: /etc/ssl/internal-ca.pem
 ```
 
 ### Disabling TLS Verification (Development Only)
 
-To disable TLS verification for the Philter backend (e.g., during development):
+To disable TLS verification for the Philter backend:
 
-```bash
-export PHILTER_TLS_VERIFY=false
+```yaml
+philter:
+  tlsVerify: false
 ```
 
-To disable TLS verification for LLM provider connections:
+To disable TLS verification for a specific LLM provider:
 
-```bash
-export PROVIDER_TLS_VERIFY=false
+```yaml
+providers:
+  ollama:
+    target: https://ollama.internal:11434
+    tlsVerify: false
 ```
 
 **Warning:** Disabling TLS verification makes connections vulnerable to man-in-the-middle attacks. Only disable verification in trusted development environments.
-
-## Example
-
-```bash
-export PHILTER_ENDPOINT=https://your-philter-ip:8080
-export PHILTER_PROXY_PORT=8080
-./philter-ai-proxy
-```

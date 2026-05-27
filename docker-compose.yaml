@@ -6,20 +6,7 @@ services:
       dockerfile: Dockerfile
     ports:
       - "8080:8080"
+    volumes:
+      - ./config.example.yaml:/app/config.yaml:ro
     environment:
-      - PHILTER_ENDPOINT=https://your-philter-endpoint:8080
-      #- PHILTER_CONTEXT=context
-      #- PHILTER_DOCUMENT_ID=docid
-      #- PHILTER_POLICY_NAME=default
-      - PHILTER_PROXY_PORT=8080
-      - PHILTER_PROXY_CERT_FILE=cert.pem
-      - PHILTER_PROXY_KEY_FILE=key.pem
-      #- PHILTER_TLS_VERIFY=true
-      #- PHILTER_CA_CERT=/path/to/ca.pem
-      #- PROVIDER_TLS_VERIFY=true
-      #- PHILTER_SHUTDOWN_TIMEOUT=30
-      #- PHILTER_LOGGING_ENABLED=true
-      #- PHILTER_LOG_FILE=/var/log/audit.json
-      # - OPENAI_API_KEY=${OPENAI_API_KEY}
-      # - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
-      # - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - PHILTER_PROXY_CONFIG=/app/config.yaml

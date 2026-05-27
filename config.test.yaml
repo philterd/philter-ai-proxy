@@ -1,0 +1,26 @@
+listen:
+  port: 8080
+  cert: cert.pem
+  key: key.pem
+  shutdownTimeout: 30
+
+logging:
+  enabled: true
+
+philter:
+  endpoint: http://philter:8080
+  tlsVerify: false
+
+providers:
+  openai:
+    target: https://api.openai.com
+  anthropic:
+    target: https://api.anthropic.com
+  gemini:
+    target: https://generativelanguage.googleapis.com
+  ollama:
+    target: http://localhost:11434
+
+defaults:
+  policy: default
+  context: none
