@@ -1,22 +1,29 @@
 package main
 
 import (
+	"bytes"
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/json"
 	"encoding/pem"
+	"fmt"
 	"io/ioutil"
 	"log"
+	"log/slog"
 	"math/big"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/http/httputil"
 	"net/url"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -171,10 +178,21 @@ func TestBuildTLSConfig_InvalidCAPEM(t *testing.T) {
 	}
 }
 
+func explainJSON(filteredText, docID string, spans []Span) []byte {
+	resp := ExplainResponse{
+		FilteredText: filteredText,
+		Context:      "none",
+		DocumentId:   docID,
+		Explanation:  Explanation{AppliedSpans: spans},
+	}
+	b, _ := json.Marshal(resp)
+	return b
+}
+
 func TestFilter(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/filter" {
-			t.Errorf("Expected path /api/filter, got %s", r.URL.Path)
+		if r.URL.Path != "/api/explain" {
+			t.Errorf("Expected path /api/explain, got %s", r.URL.Path)
 		}
 		if r.Method != "POST" {
 			t.Errorf("Expected POST method, got %s", r.Method)
@@ -185,8 +203,9 @@ func TestFilter(t *testing.T) {
 			t.Errorf("Query parameters mismatch: %v", q)
 		}
 
-		w.Header().Set("x-document-id", "test-doc-id")
-		w.Write([]byte("filtered text"))
+		w.Write(explainJSON("filtered text", "test-doc-id", []Span{
+			{FilterType: "NER_ENTITY", Confidence: 0.95},
+		}))
 	}))
 	defer server.Close()
 
@@ -197,6 +216,12 @@ func TestFilter(t *testing.T) {
 	}
 	if resp.DocumentId != "test-doc-id" {
 		t.Errorf("Expected 'test-doc-id', got '%s'", resp.DocumentId)
+	}
+	if resp.EntityCount != 1 {
+		t.Errorf("Expected EntityCount 1, got %d", resp.EntityCount)
+	}
+	if len(resp.EntityTypes) != 1 || resp.EntityTypes[0] != "NER_ENTITY" {
+		t.Errorf("Expected EntityTypes [NER_ENTITY], got %v", resp.EntityTypes)
 	}
 }
 
@@ -213,7 +238,7 @@ func TestProxy_ServeHTTP_CustomEnv(t *testing.T) {
 		if q.Get("p") != "custom-policy" {
 			t.Errorf("Expected policy 'custom-policy', got '%s'", q.Get("p"))
 		}
-		w.Write([]byte("REDACTED"))
+		w.Write(explainJSON("REDACTED", "doc-id", nil))
 	}))
 	defer philterServer.Close()
 
@@ -268,7 +293,7 @@ func TestProxy_ServeHTTP_RandomUUID(t *testing.T) {
 		if len(docId) != 36 {
 			t.Errorf("Expected UUID of length 36, got '%s' (length %d)", docId, len(docId))
 		}
-		w.Write([]byte("REDACTED"))
+		w.Write(explainJSON("REDACTED", "doc-id", nil))
 	}))
 	defer philterServer.Close()
 
@@ -306,9 +331,9 @@ func TestProxy_ServeHTTP_OpenAI(t *testing.T) {
 		body, _ := ioutil.ReadAll(r.Body)
 		log.Printf("Philter received: %s", string(body))
 		if string(body) == "John Smith" || string(body) == "Hello John Smith" {
-			w.Write([]byte("Hello REDACTED"))
+			w.Write(explainJSON("Hello REDACTED", "doc-id", []Span{{FilterType: "NER_ENTITY"}}))
 		} else {
-			w.Write(body)
+			w.Write(explainJSON(string(body), "doc-id", nil))
 		}
 	}))
 	defer philterServer.Close()
@@ -353,9 +378,9 @@ func TestProxy_ServeHTTP_Anthropic(t *testing.T) {
 		body, _ := ioutil.ReadAll(r.Body)
 		log.Printf("Philter received: %s", string(body))
 		if string(body) == "John Smith" || string(body) == "Hello John Smith" {
-			w.Write([]byte("Hello REDACTED"))
+			w.Write(explainJSON("Hello REDACTED", "doc-id", []Span{{FilterType: "NER_ENTITY"}}))
 		} else {
-			w.Write(body)
+			w.Write(explainJSON(string(body), "doc-id", nil))
 		}
 	}))
 	defer philterServer.Close()
@@ -400,9 +425,9 @@ func TestProxy_ServeHTTP_Anthropic_Complex(t *testing.T) {
 	philterServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := ioutil.ReadAll(r.Body)
 		if string(body) == "Hello John Smith" {
-			w.Write([]byte("Hello REDACTED"))
+			w.Write(explainJSON("Hello REDACTED", "doc-id", []Span{{FilterType: "NER_ENTITY"}}))
 		} else {
-			w.Write(body)
+			w.Write(explainJSON(string(body), "doc-id", nil))
 		}
 	}))
 	defer philterServer.Close()
@@ -449,9 +474,9 @@ func TestProxy_ServeHTTP_Anthropic_System(t *testing.T) {
 	philterServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := ioutil.ReadAll(r.Body)
 		if string(body) == "Hello John Smith" {
-			w.Write([]byte("Hello REDACTED"))
+			w.Write(explainJSON("Hello REDACTED", "doc-id", []Span{{FilterType: "NER_ENTITY"}}))
 		} else {
-			w.Write(body)
+			w.Write(explainJSON(string(body), "doc-id", nil))
 		}
 	}))
 	defer philterServer.Close()
@@ -495,9 +520,9 @@ func TestProxy_ServeHTTP_Gemini(t *testing.T) {
 	philterServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := ioutil.ReadAll(r.Body)
 		if string(body) == "John Smith" {
-			w.Write([]byte("REDACTED"))
+			w.Write(explainJSON("REDACTED", "doc-id", []Span{{FilterType: "NER_ENTITY"}}))
 		} else {
-			w.Write(body)
+			w.Write(explainJSON(string(body), "doc-id", nil))
 		}
 	}))
 	defer philterServer.Close()
@@ -544,7 +569,7 @@ func TestProxy_ServeHTTP_DefaultPolicy(t *testing.T) {
 		if q.Get("p") != "default" {
 			t.Errorf("Expected policy 'default', got '%s'", q.Get("p"))
 		}
-		w.Write([]byte("REDACTED"))
+		w.Write(explainJSON("REDACTED", "doc-id", nil))
 	}))
 	defer philterServer.Close()
 
@@ -583,7 +608,7 @@ func TestProxy_ServeHTTP_DefaultContext(t *testing.T) {
 		if q.Get("c") != "none" {
 			t.Errorf("Expected context 'none', got '%s'", q.Get("c"))
 		}
-		w.Write([]byte("REDACTED"))
+		w.Write(explainJSON("REDACTED", "doc-id", nil))
 	}))
 	defer philterServer.Close()
 
@@ -657,9 +682,9 @@ func TestProxy_ServeHTTP_OllamaGenerate(t *testing.T) {
 	philterServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := ioutil.ReadAll(r.Body)
 		if string(body) == "John Smith" {
-			w.Write([]byte("REDACTED"))
+			w.Write(explainJSON("REDACTED", "doc-id", []Span{{FilterType: "NER_ENTITY"}}))
 		} else {
-			w.Write(body)
+			w.Write(explainJSON(string(body), "doc-id", nil))
 		}
 	}))
 	defer philterServer.Close()
@@ -707,9 +732,9 @@ func TestProxy_ServeHTTP_OllamaChat(t *testing.T) {
 	philterServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := ioutil.ReadAll(r.Body)
 		if string(body) == "John Smith" {
-			w.Write([]byte("REDACTED"))
+			w.Write(explainJSON("REDACTED", "doc-id", []Span{{FilterType: "NER_ENTITY"}}))
 		} else {
-			w.Write(body)
+			w.Write(explainJSON(string(body), "doc-id", nil))
 		}
 	}))
 	defer philterServer.Close()
@@ -746,5 +771,433 @@ func TestProxy_ServeHTTP_OllamaChat(t *testing.T) {
 
 	if w.Code != http.StatusOK {
 		t.Errorf("Expected status 200, got %d", w.Code)
+	}
+}
+
+func TestEmitAuditLog(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&buf, nil))
+
+	entry := AuditEntry{
+		RequestID:      "req-123",
+		Direction:      "inbound",
+		Provider:       "openai",
+		Model:          "gpt-4",
+		PolicyName:     "default",
+		DocumentID:     "doc-456",
+		FieldsRedacted: 2,
+		EntityCount:    3,
+		EntityTypes:    []string{"NER_ENTITY", "SSN"},
+		RedactLatency:  150 * time.Millisecond,
+		ClientIP:       "10.0.0.1",
+		HTTPStatus:     200,
+	}
+
+	emitAuditLog(logger, entry)
+
+	output := buf.String()
+	if output == "" {
+		t.Fatal("Expected audit log output, got empty string")
+	}
+
+	var logEntry map[string]any
+	if err := json.Unmarshal([]byte(output), &logEntry); err != nil {
+		t.Fatalf("Audit log is not valid JSON: %v", err)
+	}
+
+	checks := map[string]any{
+		"request_id":        "req-123",
+		"direction":         "inbound",
+		"provider":          "openai",
+		"model":             "gpt-4",
+		"policy_name":       "default",
+		"document_id":       "doc-456",
+		"fields_redacted":   float64(2),
+		"entity_count":      float64(3),
+		"redact_latency_ms": float64(150),
+		"client_ip":         "10.0.0.1",
+		"http_status":       float64(200),
+	}
+	for key, expected := range checks {
+		if logEntry[key] != expected {
+			t.Errorf("Expected %s=%v, got %v", key, expected, logEntry[key])
+		}
+	}
+
+	entityTypes, ok := logEntry["entity_types"].([]any)
+	if !ok || len(entityTypes) != 2 {
+		t.Fatalf("Expected entity_types with 2 items, got %v", logEntry["entity_types"])
+	}
+	if entityTypes[0] != "NER_ENTITY" || entityTypes[1] != "SSN" {
+		t.Errorf("Expected entity_types [NER_ENTITY, SSN], got %v", entityTypes)
+	}
+}
+
+func TestEmitAuditLog_NilLogger(t *testing.T) {
+	emitAuditLog(nil, AuditEntry{})
+}
+
+func TestSetupAuditLogger_Enabled(t *testing.T) {
+	logger := setupAuditLogger(true, "")
+	if logger == nil {
+		t.Error("Expected non-nil logger when enabled")
+	}
+}
+
+func TestSetupAuditLogger_Disabled(t *testing.T) {
+	logger := setupAuditLogger(false, "")
+	if logger != nil {
+		t.Error("Expected nil logger when disabled")
+	}
+}
+
+func TestSetupAuditLogger_FileOutput(t *testing.T) {
+	tmpFile, err := os.CreateTemp("", "audit-log-*.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmpFile.Close()
+	defer os.Remove(tmpFile.Name())
+
+	logger := setupAuditLogger(true, tmpFile.Name())
+	if logger == nil {
+		t.Fatal("Expected non-nil logger")
+	}
+
+	logger.Info("test", "key", "value")
+
+	content, err := os.ReadFile(tmpFile.Name())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(content), "\"key\":\"value\"") {
+		t.Errorf("Expected log entry in file, got: %s", string(content))
+	}
+}
+
+func TestAuditLog_OpenAI_Integration(t *testing.T) {
+	var buf bytes.Buffer
+	auditLogger := slog.New(slog.NewJSONHandler(&buf, nil))
+
+	philterServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write(explainJSON("REDACTED", "test-doc-id", []Span{{FilterType: "NER_ENTITY"}}))
+	}))
+	defer philterServer.Close()
+	os.Setenv("PHILTER_ENDPOINT", philterServer.URL)
+	defer os.Unsetenv("PHILTER_ENDPOINT")
+
+	openaiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer openaiServer.Close()
+
+	openaiURL, _ := url.Parse(openaiServer.URL)
+	proxy := &Proxy{
+		openaiTarget:  openaiURL,
+		openaiProxy:   httputil.NewSingleHostReverseProxy(openaiURL),
+		philterClient: http.DefaultClient,
+		auditLogger:   auditLogger,
+	}
+
+	reqBody := `{"model": "gpt-4", "messages": [{"role": "user", "content": "Hello John Smith"}]}`
+	req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(reqBody))
+	req.RemoteAddr = "192.168.1.100:12345"
+	w := httptest.NewRecorder()
+
+	proxy.ServeHTTP(w, req)
+
+	output := buf.String()
+	var logEntry map[string]any
+	if err := json.Unmarshal([]byte(output), &logEntry); err != nil {
+		t.Fatalf("Audit log is not valid JSON: %v\nOutput: %s", err, output)
+	}
+
+	if logEntry["direction"] != "inbound" {
+		t.Errorf("Expected direction 'inbound', got '%v'", logEntry["direction"])
+	}
+	if logEntry["provider"] != "openai" {
+		t.Errorf("Expected provider 'openai', got '%v'", logEntry["provider"])
+	}
+	if logEntry["model"] != "gpt-4" {
+		t.Errorf("Expected model 'gpt-4', got '%v'", logEntry["model"])
+	}
+	if logEntry["fields_redacted"] != float64(1) {
+		t.Errorf("Expected fields_redacted=1, got %v", logEntry["fields_redacted"])
+	}
+	if logEntry["document_id"] != "test-doc-id" {
+		t.Errorf("Expected document_id 'test-doc-id', got '%v'", logEntry["document_id"])
+	}
+	if logEntry["client_ip"] != "192.168.1.100" {
+		t.Errorf("Expected client_ip '192.168.1.100', got '%v'", logEntry["client_ip"])
+	}
+	if logEntry["request_id"] == nil || logEntry["request_id"] == "" {
+		t.Error("Expected non-empty request_id")
+	}
+	if logEntry["http_status"] != float64(200) {
+		t.Errorf("Expected http_status=200, got %v", logEntry["http_status"])
+	}
+	if logEntry["entity_count"] != float64(1) {
+		t.Errorf("Expected entity_count=1, got %v", logEntry["entity_count"])
+	}
+	entityTypes, ok := logEntry["entity_types"].([]any)
+	if !ok || len(entityTypes) != 1 || entityTypes[0] != "NER_ENTITY" {
+		t.Errorf("Expected entity_types=[NER_ENTITY], got %v", logEntry["entity_types"])
+	}
+}
+
+func TestAuditLog_Disabled(t *testing.T) {
+	philterServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write(explainJSON("REDACTED", "doc-id", nil))
+	}))
+	defer philterServer.Close()
+	os.Setenv("PHILTER_ENDPOINT", philterServer.URL)
+	defer os.Unsetenv("PHILTER_ENDPOINT")
+
+	openaiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer openaiServer.Close()
+
+	openaiURL, _ := url.Parse(openaiServer.URL)
+	proxy := &Proxy{
+		openaiTarget:  openaiURL,
+		openaiProxy:   httputil.NewSingleHostReverseProxy(openaiURL),
+		philterClient: http.DefaultClient,
+		auditLogger:   nil,
+	}
+
+	reqBody := `{"model": "gpt-4", "messages": [{"role": "user", "content": "secret"}]}`
+	req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(reqBody))
+	w := httptest.NewRecorder()
+
+	proxy.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("Expected status 200, got %d", w.Code)
+	}
+}
+
+func TestClientIP(t *testing.T) {
+	r := httptest.NewRequest("GET", "/", nil)
+	r.RemoteAddr = "10.0.0.1:1234"
+	if ip := clientIP(r); ip != "10.0.0.1" {
+		t.Errorf("Expected '10.0.0.1', got '%s'", ip)
+	}
+
+	r.Header.Set("X-Forwarded-For", "203.0.113.50, 70.41.3.18")
+	if ip := clientIP(r); ip != "203.0.113.50" {
+		t.Errorf("Expected '203.0.113.50', got '%s'", ip)
+	}
+}
+
+func TestResponseCapture(t *testing.T) {
+	w := httptest.NewRecorder()
+	rc := newResponseCapture(w)
+
+	if rc.statusCode != http.StatusOK {
+		t.Errorf("Expected default status 200, got %d", rc.statusCode)
+	}
+
+	rc.WriteHeader(http.StatusBadGateway)
+	if rc.statusCode != http.StatusBadGateway {
+		t.Errorf("Expected status 502, got %d", rc.statusCode)
+	}
+}
+
+func generateTestTLSCert(t *testing.T) (certFile, keyFile string) {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	template := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject:      pkix.Name{CommonName: "localhost"},
+		NotBefore:    time.Now(),
+		NotAfter:     time.Now().Add(time.Hour),
+		DNSNames:     []string{"localhost"},
+		IPAddresses:  []net.IP{net.IPv4(127, 0, 0, 1)},
+	}
+	certDER, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cf, _ := os.CreateTemp("", "test-cert-*.pem")
+	pem.Encode(cf, &pem.Block{Type: "CERTIFICATE", Bytes: certDER})
+	cf.Close()
+
+	keyBytes, _ := x509.MarshalECPrivateKey(key)
+	kf, _ := os.CreateTemp("", "test-key-*.pem")
+	pem.Encode(kf, &pem.Block{Type: "EC PRIVATE KEY", Bytes: keyBytes})
+	kf.Close()
+
+	return cf.Name(), kf.Name()
+}
+
+func TestGracefulShutdown(t *testing.T) {
+	certFile, keyFile := generateTestTLSCert(t)
+	defer os.Remove(certFile)
+	defer os.Remove(keyFile)
+
+	requestStarted := make(chan struct{})
+	requestCanFinish := make(chan struct{})
+
+	proxy := &Proxy{}
+
+	mux := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/health" {
+			proxy.ServeHTTP(w, r)
+			return
+		}
+		close(requestStarted)
+		<-requestCanFinish
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("done"))
+	})
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := listener.Addr().(*net.TCPAddr).Port
+	listener.Close()
+
+	srv := &http.Server{
+		Addr:    fmt.Sprintf(":%d", port),
+		Handler: mux,
+	}
+
+	go func() {
+		if err := srv.ListenAndServeTLS(certFile, keyFile); err != http.ErrServerClosed {
+			t.Errorf("unexpected server error: %v", err)
+		}
+	}()
+
+	tlsClient := &http.Client{
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		},
+	}
+
+	baseURL := fmt.Sprintf("https://127.0.0.1:%d", port)
+	for i := 0; i < 20; i++ {
+		resp, err := tlsClient.Get(baseURL + "/health")
+		if err == nil {
+			resp.Body.Close()
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	var wg sync.WaitGroup
+	var inflightResp *http.Response
+	var inflightErr error
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		inflightResp, inflightErr = tlsClient.Get(baseURL + "/slow")
+	}()
+
+	<-requestStarted
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	shutdownDone := make(chan error, 1)
+	go func() {
+		shutdownDone <- srv.Shutdown(ctx)
+	}()
+
+	close(requestCanFinish)
+
+	wg.Wait()
+	if inflightErr != nil {
+		t.Fatalf("in-flight request failed: %v", inflightErr)
+	}
+	defer inflightResp.Body.Close()
+	if inflightResp.StatusCode != http.StatusOK {
+		t.Errorf("Expected 200 for in-flight request, got %d", inflightResp.StatusCode)
+	}
+	body, _ := ioutil.ReadAll(inflightResp.Body)
+	if string(body) != "done" {
+		t.Errorf("Expected body 'done', got '%s'", string(body))
+	}
+
+	if err := <-shutdownDone; err != nil {
+		t.Errorf("Shutdown returned error: %v", err)
+	}
+
+	_, err = tlsClient.Get(baseURL + "/health")
+	if err == nil {
+		t.Error("Expected error connecting after shutdown, but request succeeded")
+	}
+}
+
+func TestGracefulShutdown_Timeout(t *testing.T) {
+	certFile, keyFile := generateTestTLSCert(t)
+	defer os.Remove(certFile)
+	defer os.Remove(keyFile)
+
+	requestStarted := make(chan struct{})
+
+	mux := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/health" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		close(requestStarted)
+		time.Sleep(10 * time.Second)
+		w.WriteHeader(http.StatusOK)
+	})
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := listener.Addr().(*net.TCPAddr).Port
+	listener.Close()
+
+	srv := &http.Server{
+		Addr:    fmt.Sprintf(":%d", port),
+		Handler: mux,
+	}
+
+	go func() {
+		srv.ListenAndServeTLS(certFile, keyFile)
+	}()
+
+	tlsClient := &http.Client{
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		},
+	}
+
+	baseURL := fmt.Sprintf("https://127.0.0.1:%d", port)
+	for i := 0; i < 20; i++ {
+		resp, err := tlsClient.Get(baseURL + "/health")
+		if err == nil {
+			resp.Body.Close()
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	go func() {
+		tlsClient.Get(baseURL + "/slow")
+	}()
+
+	<-requestStarted
+
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+
+	err = srv.Shutdown(ctx)
+	if err == nil {
+		t.Error("Expected shutdown timeout error, but got nil")
+	}
+	if err != context.DeadlineExceeded {
+		t.Errorf("Expected DeadlineExceeded, got: %v", err)
 	}
 }

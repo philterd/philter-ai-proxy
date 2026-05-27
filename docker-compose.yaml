@@ -17,6 +17,9 @@ services:
       #- PHILTER_TLS_VERIFY=true
       #- PHILTER_CA_CERT=/path/to/ca.pem
       #- PROVIDER_TLS_VERIFY=true
+      #- PHILTER_SHUTDOWN_TIMEOUT=30
+      #- PHILTER_LOGGING_ENABLED=true
+      #- PHILTER_LOG_FILE=/var/log/audit.json
       # - OPENAI_API_KEY=${OPENAI_API_KEY}
       # - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
       # - GEMINI_API_KEY=${GEMINI_API_KEY}
