@@ -84,6 +84,29 @@ curl https://localhost:8080/api/generate \
   }'
 ```
 
+### OpenAI-Compatible Providers (Mistral, Cohere, vLLM, etc.)
+
+Register any OpenAI-compatible provider under `providers.openaiCompatible` in `config.yaml`:
+
+```yaml
+providers:
+  openaiCompatible:
+    mistral:
+      target: https://api.mistral.ai
+```
+
+Then send requests to `/{name}/v1/...`:
+
+```
+curl https://localhost:8080/mistral/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $MISTRAL_API_KEY" \
+  -d '{
+    "model": "mistral-small-latest",
+    "messages": [{"role": "user", "content": "Whose social security number is 123-45-6789"}]
+  }'
+```
+
 ### Amazon Bedrock
 
 The proxy signs requests to Bedrock using AWS Signature Version 4 — no AWS credentials are required from the client. Set `providers.bedrock.region` in `config.yaml` to enable this provider.

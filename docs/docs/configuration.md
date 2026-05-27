@@ -141,6 +141,32 @@ Default provider targets:
 - `gemini`: `https://generativelanguage.googleapis.com`
 - `ollama`: `http://localhost:11434`
 
+### `providers.openaiCompatible`
+
+Any number of additional OpenAI-compatible providers (Mistral, Cohere, vLLM, LM Studio, etc.) can be registered under `providers.openaiCompatible`. Each entry maps a short **name** to a target URL.
+
+```yaml
+providers:
+  openaiCompatible:
+    mistral:
+      target: https://api.mistral.ai
+    cohere:
+      target: https://api.cohere.com
+    vllm:
+      target: http://vllm.internal:8000
+```
+
+Clients send requests to `/{name}/v1/...` — the proxy strips the prefix and forwards the remainder to the configured target using the same OpenAI handler logic. For example, a request to `/mistral/v1/chat/completions` is forwarded to `https://api.mistral.ai/v1/chat/completions`. The provider label in the audit log is set to the registered name.
+
+Each entry accepts:
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `target` | string | — (required) | Base URL for this provider |
+| `tlsVerify` | bool | `true` | Enable TLS certificate verification for this provider |
+
+**Reserved names**: `v1`, `api`, `model`, and `health` conflict with built-in route prefixes and will be rejected at startup.
+
 ### `providers.bedrock`
 
 Amazon Bedrock is an optional provider. It is enabled by setting `providers.bedrock.region`. When enabled, the proxy accepts requests matching `/model/{modelId}/converse` and forwards them to `https://bedrock-runtime.{region}.amazonaws.com` using AWS Signature Version 4 authentication.

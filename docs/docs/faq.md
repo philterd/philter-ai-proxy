@@ -17,6 +17,7 @@ The proxy supports:
 * Google Gemini
 * Ollama
 * Amazon Bedrock (Converse API)
+* Any OpenAI-compatible provider (Mistral, Cohere, vLLM, LM Studio, etc.) via `providers.openaiCompatible`
 
 Both streaming and non-streaming requests are supported for all providers.
 
@@ -53,6 +54,10 @@ The proxy is configured via a YAML configuration file. Please refer to the [Conf
 ### Is the proxy open source?
 
 Yes, the Philter AI Proxy is licensed under the Apache License, version 2.
+
+### Can I use the proxy with Mistral, Cohere, vLLM, or other OpenAI-compatible providers?
+
+Yes. Register any OpenAI-compatible provider under `providers.openaiCompatible` in the config, giving it a short name and a target URL. Clients send requests to `/{name}/v1/...` (e.g., `/mistral/v1/chat/completions`); the proxy strips the prefix and forwards the standard OpenAI-format request to the configured target after running PII redaction. No changes are needed to route configuration — routes work the same way across all OpenAI-compatible providers. See [Configuration](configuration.md#providersopenaicompatible) for details.
 
 ### How does Bedrock authentication work?
 

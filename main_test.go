@@ -3023,6 +3023,278 @@ func TestProxy_CircuitBreakerOpen_Returns503(t *testing.T) {
 	}
 }
 
+// ── OpenAI-compatible providers ───────────────────────────────────────────────
+
+func newOpenAICompatProxy(philterURL, providerURL, name string) *Proxy {
+	cfg := testConfig(philterURL)
+	cfg.Providers.OpenAICompatible = map[string]ProviderConfig{
+		name: {Target: providerURL},
+	}
+	u, _ := url.Parse(providerURL)
+	return &Proxy{
+		config:  cfg,
+		philter: testPhilterClient(philterURL),
+		openaiCompatibleTargets: map[string]*url.URL{name: u},
+		openaiCompatibleClients: map[string]*http.Client{name: http.DefaultClient},
+	}
+}
+
+func TestOpenAICompat_BasicRedaction(t *testing.T) {
+	philterSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write(explainJSON("REDACTED", "doc-id", []Span{{FilterType: "NER_ENTITY"}}))
+	}))
+	defer philterSrv.Close()
+
+	var receivedPath string
+	var receivedBody []byte
+	providerSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedPath = r.URL.Path
+		receivedBody, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"OK"}}]}`))
+	}))
+	defer providerSrv.Close()
+
+	proxy := newOpenAICompatProxy(philterSrv.URL, providerSrv.URL, "mistral")
+
+	body := `{"model":"mistral-large","messages":[{"role":"user","content":"My SSN is 123-45-6789"}]}`
+	req := httptest.NewRequest("POST", "/mistral/v1/chat/completions", strings.NewReader(body))
+	w := httptest.NewRecorder()
+	proxy.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("Expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	// Path prefix stripped before forwarding
+	if receivedPath != "/v1/chat/completions" {
+		t.Errorf("Expected forwarded path /v1/chat/completions, got %s", receivedPath)
+	}
+	// Content was redacted
+	var forwarded OpenAIRequest
+	json.Unmarshal(receivedBody, &forwarded)
+	var content string
+	json.Unmarshal(forwarded.Messages[0].Content, &content)
+	if content != "REDACTED" {
+		t.Errorf("Expected content REDACTED, got %q", content)
+	}
+}
+
+func TestOpenAICompat_AuditProvider(t *testing.T) {
+	philterSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write(explainJSON("REDACTED", "doc-id", nil))
+	}))
+	defer philterSrv.Close()
+
+	providerSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"OK"}}]}`))
+	}))
+	defer providerSrv.Close()
+
+	var buf strings.Builder
+	proxy := newOpenAICompatProxy(philterSrv.URL, providerSrv.URL, "cohere")
+	proxy.auditLogger = slog.New(slog.NewJSONHandler(&buf, nil))
+
+	req := httptest.NewRequest("POST", "/cohere/v1/chat/completions",
+		strings.NewReader(`{"model":"command-r","messages":[{"role":"user","content":"hello"}]}`))
+	w := httptest.NewRecorder()
+	proxy.ServeHTTP(w, req)
+
+	if !strings.Contains(buf.String(), `"provider":"cohere"`) {
+		t.Errorf("Expected provider=cohere in audit log, got: %s", buf.String())
+	}
+}
+
+func TestOpenAICompat_PhilterError(t *testing.T) {
+	proxy := newOpenAICompatProxy("http://127.0.0.1:1", "http://127.0.0.1:1", "mistral")
+	req := httptest.NewRequest("POST", "/mistral/v1/chat/completions",
+		strings.NewReader(`{"model":"m","messages":[{"role":"user","content":"hello"}]}`))
+	w := httptest.NewRecorder()
+	proxy.ServeHTTP(w, req)
+	if w.Code != http.StatusBadGateway {
+		t.Errorf("Expected 502, got %d", w.Code)
+	}
+}
+
+func TestOpenAICompat_UnknownProviderFallsThrough(t *testing.T) {
+	// /unknown/v1/chat/completions — "unknown" not in openaiCompatible — falls
+	// through to the default OpenAI handler, which will hit 127.0.0.1:1 and 502.
+	proxy := newOpenAICompatProxy("http://127.0.0.1:1", "http://127.0.0.1:1", "mistral")
+	proxy.openaiTarget = mustParseURL("http://127.0.0.1:1")
+	proxy.openaiClient = http.DefaultClient
+
+	req := httptest.NewRequest("POST", "/unknown/v1/chat/completions",
+		strings.NewReader(`{"model":"m","messages":[{"role":"user","content":"hello"}]}`))
+	w := httptest.NewRecorder()
+	proxy.ServeHTTP(w, req)
+	// Philter unreachable → 502 (not a 404 — it fell through to the OpenAI handler)
+	if w.Code != http.StatusBadGateway {
+		t.Errorf("Expected 502 (fell through to OpenAI handler), got %d", w.Code)
+	}
+}
+
+func TestOpenAICompat_RouteMatchingUsesStrippedPath(t *testing.T) {
+	philterSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Verify the policy applied was the route-matched one, not the default.
+		if r.URL.Query().Get("p") != "special-policy" {
+			t.Errorf("Expected policy special-policy, got %s", r.URL.Query().Get("p"))
+		}
+		w.Write(explainJSON("REDACTED", "doc-id", nil))
+	}))
+	defer philterSrv.Close()
+
+	providerSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"OK"}}]}`))
+	}))
+	defer providerSrv.Close()
+
+	proxy := newOpenAICompatProxy(philterSrv.URL, providerSrv.URL, "mistral")
+	proxy.config.Routes = []RouteConfig{
+		{Match: RouteMatch{Path: "/v1/chat/completions"}, Policy: "special-policy"},
+	}
+
+	req := httptest.NewRequest("POST", "/mistral/v1/chat/completions",
+		strings.NewReader(`{"model":"m","messages":[{"role":"user","content":"hello"}]}`))
+	w := httptest.NewRecorder()
+	proxy.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("Expected 200, got %d", w.Code)
+	}
+}
+
+func TestResolveOpenAICompatible(t *testing.T) {
+	u, _ := url.Parse("https://api.mistral.ai")
+	p := &Proxy{
+		openaiCompatibleTargets: map[string]*url.URL{"mistral": u},
+		openaiCompatibleClients: map[string]*http.Client{"mistral": http.DefaultClient},
+	}
+
+	cases := []struct {
+		path    string
+		name    string
+		stripped string
+		ok      bool
+	}{
+		{"/mistral/v1/chat/completions", "mistral", "/v1/chat/completions", true},
+		{"/mistral/v1/models", "mistral", "/v1/models", true},
+		{"/v1/chat/completions", "", "", false},   // no prefix
+		{"/unknown/v1/chat/completions", "", "", false}, // prefix not configured
+		{"/mistral", "", "", false},               // no slash after prefix
+		{"/health", "", "", false},
+	}
+	for _, tc := range cases {
+		name, _, _, stripped, ok := p.resolveOpenAICompatible(tc.path)
+		if ok != tc.ok || name != tc.name || stripped != tc.stripped {
+			t.Errorf("resolveOpenAICompatible(%q) = (%q, %q, %v), want (%q, %q, %v)",
+				tc.path, name, stripped, ok, tc.name, tc.stripped, tc.ok)
+		}
+	}
+}
+
+func TestConfig_OpenAICompatible_Validation(t *testing.T) {
+	// Valid
+	cfg := testConfig("http://127.0.0.1:1")
+	cfg.Providers.OpenAICompatible = map[string]ProviderConfig{
+		"mistral": {Target: "https://api.mistral.ai"},
+	}
+	if err := validateConfig(cfg); err != nil {
+		t.Errorf("Expected valid config, got: %v", err)
+	}
+
+	// Reserved name
+	cfg2 := testConfig("http://127.0.0.1:1")
+	cfg2.Providers.OpenAICompatible = map[string]ProviderConfig{
+		"v1": {Target: "https://example.com"},
+	}
+	if err := validateConfig(cfg2); err == nil {
+		t.Error("Expected error for reserved name 'v1'")
+	}
+
+	// Missing target
+	cfg3 := testConfig("http://127.0.0.1:1")
+	cfg3.Providers.OpenAICompatible = map[string]ProviderConfig{
+		"mistral": {Target: ""},
+	}
+	if err := validateConfig(cfg3); err == nil {
+		t.Error("Expected error for missing target")
+	}
+
+	// Empty name
+	cfg4 := testConfig("http://127.0.0.1:1")
+	cfg4.Providers.OpenAICompatible = map[string]ProviderConfig{
+		"": {Target: "https://example.com"},
+	}
+	if err := validateConfig(cfg4); err == nil {
+		t.Error("Expected error for empty name")
+	}
+
+	// Invalid target URL
+	cfg5 := testConfig("http://127.0.0.1:1")
+	cfg5.Providers.OpenAICompatible = map[string]ProviderConfig{
+		"mistral": {Target: "://bad-url"},
+	}
+	if err := validateConfig(cfg5); err == nil {
+		t.Error("Expected error for invalid target URL")
+	}
+}
+
+func TestOpenAICompat_MultipleProviders(t *testing.T) {
+	philterSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write(explainJSON("REDACTED", "doc-id", nil))
+	}))
+	defer philterSrv.Close()
+
+	var mistralHits, cohereHits int
+	mistralSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mistralHits++
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"mistral"}}]}`))
+	}))
+	defer mistralSrv.Close()
+	cohereSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		cohereHits++
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"cohere"}}]}`))
+	}))
+	defer cohereSrv.Close()
+
+	cfg := testConfig(philterSrv.URL)
+	mistralURL, _ := url.Parse(mistralSrv.URL)
+	cohereURL, _ := url.Parse(cohereSrv.URL)
+	proxy := &Proxy{
+		config:  cfg,
+		philter: testPhilterClient(philterSrv.URL),
+		openaiCompatibleTargets: map[string]*url.URL{
+			"mistral": mistralURL,
+			"cohere":  cohereURL,
+		},
+		openaiCompatibleClients: map[string]*http.Client{
+			"mistral": http.DefaultClient,
+			"cohere":  http.DefaultClient,
+		},
+	}
+
+	body := `{"model":"m","messages":[{"role":"user","content":"hello"}]}`
+
+	req1 := httptest.NewRequest("POST", "/mistral/v1/chat/completions", strings.NewReader(body))
+	proxy.ServeHTTP(httptest.NewRecorder(), req1)
+
+	req2 := httptest.NewRequest("POST", "/cohere/v1/chat/completions", strings.NewReader(body))
+	proxy.ServeHTTP(httptest.NewRecorder(), req2)
+
+	req3 := httptest.NewRequest("POST", "/mistral/v1/chat/completions", strings.NewReader(body))
+	proxy.ServeHTTP(httptest.NewRecorder(), req3)
+
+	if mistralHits != 2 {
+		t.Errorf("Expected 2 requests to mistral, got %d", mistralHits)
+	}
+	if cohereHits != 1 {
+		t.Errorf("Expected 1 request to cohere, got %d", cohereHits)
+	}
+}
+
 // ── Bedrock Converse API ──────────────────────────────────────────────────────
 
 // staticCreds returns a CredentialsProvider that always returns the supplied values.

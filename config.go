@@ -58,11 +58,12 @@ type BedrockConfig struct {
 }
 
 type ProvidersConfig struct {
-	OpenAI    ProviderConfig `yaml:"openai"`
-	Anthropic ProviderConfig `yaml:"anthropic"`
-	Gemini    ProviderConfig `yaml:"gemini"`
-	Ollama    ProviderConfig `yaml:"ollama"`
-	Bedrock   BedrockConfig  `yaml:"bedrock"`
+	OpenAI           ProviderConfig            `yaml:"openai"`
+	Anthropic        ProviderConfig            `yaml:"anthropic"`
+	Gemini           ProviderConfig            `yaml:"gemini"`
+	Ollama           ProviderConfig            `yaml:"ollama"`
+	Bedrock          BedrockConfig             `yaml:"bedrock"`
+	OpenAICompatible map[string]ProviderConfig `yaml:"openaiCompatible"`
 }
 
 type RouteMatch struct {
@@ -219,6 +220,23 @@ func validateConfig(cfg *Config) error {
 
 	if !validOutboundActions[cfg.Defaults.Outbound.Action] {
 		return fmt.Errorf("config: defaults.outbound.action %q is invalid (must be redact, block, or flag)", cfg.Defaults.Outbound.Action)
+	}
+
+	// Reserved path prefixes used by built-in providers.
+	reservedNames := map[string]bool{"v1": true, "api": true, "model": true, "health": true}
+	for name, pc := range cfg.Providers.OpenAICompatible {
+		if name == "" {
+			return fmt.Errorf("config: providers.openaiCompatible has an entry with an empty name")
+		}
+		if reservedNames[name] {
+			return fmt.Errorf("config: providers.openaiCompatible name %q conflicts with a built-in route prefix", name)
+		}
+		if pc.Target == "" {
+			return fmt.Errorf("config: providers.openaiCompatible[%s].target is required", name)
+		}
+		if _, err := url.Parse(pc.Target); err != nil {
+			return fmt.Errorf("config: providers.openaiCompatible[%s] has invalid URL %q: %w", name, pc.Target, err)
+		}
 	}
 
 	return nil

@@ -43,6 +43,13 @@ providers:
     region: us-east-1   # AWS region; omit to disable Bedrock support
     # roleArn: arn:aws:iam::123456789012:role/BedrockProxyRole  # optional: assume this role for Bedrock calls
     # tlsVerify: true
+  # openaiCompatible:
+  #   mistral:
+  #     target: https://api.mistral.ai
+  #   cohere:
+  #     target: https://api.cohere.com
+  #   vllm:
+  #     target: http://vllm.internal:8000
 
 # Routes select a Philter policy based on request properties.
 # Evaluated in order; first match wins. If no route matches, defaults apply.

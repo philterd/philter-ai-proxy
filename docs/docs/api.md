@@ -8,10 +8,10 @@ The proxy inspects and redacts all text-bearing fields in the request body befor
 
 | Provider | Message type | Fields redacted |
 |----------|-------------|-----------------|
-| OpenAI | `role: user` | `content` (string) |
-| OpenAI | `role: system` | `content` (string) |
-| OpenAI | `role: tool` | `content` (string) |
-| OpenAI | `role: assistant` with tool calls | `tool_calls[].function.arguments` — parsed as JSON, string values redacted, re-serialized |
+| OpenAI / OpenAI-compatible | `role: user` | `content` (string) |
+| OpenAI / OpenAI-compatible | `role: system` | `content` (string) |
+| OpenAI / OpenAI-compatible | `role: tool` | `content` (string) |
+| OpenAI / OpenAI-compatible | `role: assistant` with tool calls | `tool_calls[].function.arguments` — parsed as JSON, string values redacted, re-serialized |
 | Anthropic | Top-level | `system` (string) |
 | Anthropic | `text` content block | `text` |
 | Anthropic | `tool_result` content block | `content` (string or nested `text` blocks) |
@@ -32,7 +32,7 @@ By default, provider responses are forwarded to the client without modification.
 
 | Provider | Response fields scanned |
 |----------|------------------------|
-| OpenAI | `choices[].message.content` |
+| OpenAI / OpenAI-compatible | `choices[].message.content` |
 | Anthropic | `content[].text` (where `type == "text"`) |
 | Gemini | `candidates[].content.parts[].text` |
 | Ollama generate | `response` |
@@ -73,6 +73,7 @@ The proxy routes requests based on the URL path:
 | `/api/generate` | Ollama |
 | `/api/chat` | Ollama |
 | `/model/{modelId}/converse` | Amazon Bedrock |
+| `/{name}/v1/...` | OpenAI-compatible (configured via `providers.openaiCompatible`) |
 | `/health` | Health check (no proxying) |
 | All other paths | OpenAI |
 
@@ -178,6 +179,25 @@ The proxy routes requests based on the URL path:
       "inferenceConfig": {"maxTokens": 512}
     }'
   ```
+
+### OpenAI-Compatible Providers
+
+- **URL**: `/{name}/v1/chat/completions` (or any `/{name}/v1/...` path)
+- **Method**: `POST`
+- **Streaming**: Supported. Behaviour is identical to the OpenAI endpoint.
+- **Required configuration**: The provider must be registered under `providers.openaiCompatible` in the config. See [Configuration](configuration.md#providersopenaicompatible) for details.
+- **Example** (Mistral):
+  ```bash
+  curl -k https://localhost:8080/mistral/v1/chat/completions \
+    -H "Content-Type: application/json" \
+    -H "Authorization: Bearer $MISTRAL_API_KEY" \
+    -d '{
+      "model": "mistral-small-latest",
+      "messages": [{"role": "user", "content": "Whose SSN is 123-45-6789?"}]
+    }'
+  ```
+
+The proxy strips the `/{name}` prefix before forwarding, so the provider receives a standard OpenAI-format request. All PII redaction and audit logging applies normally; the `provider` field in the audit log is set to the registered name (e.g., `mistral`).
 
 ### Health Check
 

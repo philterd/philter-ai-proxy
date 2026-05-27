@@ -146,9 +146,11 @@ type Proxy struct {
 	anthropicClient *http.Client
 	geminiClient    *http.Client
 	ollamaClient    *http.Client
-	bedrockClient   *http.Client
-	bedrockRegion   string
-	bedrockCreds    aws.CredentialsProvider
+	bedrockClient            *http.Client
+	bedrockRegion            string
+	bedrockCreds             aws.CredentialsProvider
+	openaiCompatibleTargets  map[string]*url.URL
+	openaiCompatibleClients  map[string]*http.Client
 	philter         *PhilterClient
 	auditLogger     *slog.Logger
 	metrics         *ProxyMetrics
@@ -1024,6 +1026,27 @@ func (p *Proxy) scanBedrockResponse(respBody []byte, ctx, docID, policy, action 
 	return modified, false, nil
 }
 
+// resolveOpenAICompatible checks whether path begins with a configured
+// OpenAI-compatible provider prefix (e.g. /mistral/v1/...). When matched it
+// returns the provider name, its target and HTTP client, and the path with the
+// prefix stripped (e.g. /v1/...).
+func (p *Proxy) resolveOpenAICompatible(path string) (name string, target *url.URL, client *http.Client, stripped string, ok bool) {
+	if len(p.openaiCompatibleTargets) == 0 || !strings.HasPrefix(path, "/") {
+		return
+	}
+	rest := path[1:] // drop leading /
+	slash := strings.Index(rest, "/")
+	if slash < 0 {
+		return
+	}
+	prefix := rest[:slash]
+	target, ok = p.openaiCompatibleTargets[prefix]
+	if !ok {
+		return
+	}
+	return prefix, target, p.openaiCompatibleClients[prefix], path[1+slash:], true
+}
+
 func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	if r.URL.Path == "/health" {
@@ -1043,6 +1066,22 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Strip OpenAI-compatible provider prefix before routing and route matching.
+	// E.g. /mistral/v1/chat/completions → provider "mistral", path /v1/chat/completions.
+	var openaiCompatName string
+	var openaiCompatTarget *url.URL
+	var openaiCompatClient *http.Client
+	if name, tgt, cli, strippedPath, matched := p.resolveOpenAICompatible(r.URL.Path); matched {
+		openaiCompatName = name
+		openaiCompatTarget = tgt
+		openaiCompatClient = cli
+		newURL := *r.URL
+		newURL.Path = strippedPath
+		newR := *r
+		newR.URL = &newURL
+		r = &newR
+	}
+
 	model := extractModel(bodyBytes)
 	route := matchRoute(p.config, r.URL.Path, model, r.Header.Get)
 
@@ -1060,7 +1099,10 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	rc := newResponseCapture(w)
 
-	if strings.HasPrefix(r.URL.Path, "/v1/messages") {
+	if openaiCompatName != "" {
+		audit.Provider = openaiCompatName
+		p.handleOpenAICompatible(rc, r, bodyBytes, philter_context, philter_document_id, philter_policy_name, audit, route.Outbound, openaiCompatTarget, openaiCompatClient, openaiCompatName)
+	} else if strings.HasPrefix(r.URL.Path, "/v1/messages") {
 		audit.Provider = "anthropic"
 		p.handleAnthropic(rc, r, bodyBytes, philter_context, philter_document_id, philter_policy_name, audit, route.Outbound)
 	} else if strings.Contains(strings.ToLower(r.URL.Path), "generatecontent") {
@@ -1226,6 +1268,10 @@ loop:
 }
 
 func (p *Proxy) handleOpenAI(w http.ResponseWriter, r *http.Request, bodyBytes []byte, context string, documentId string, policyName string, audit *AuditEntry, outbound OutboundConfig) {
+	p.handleOpenAICompatible(w, r, bodyBytes, context, documentId, policyName, audit, outbound, p.openaiTarget, p.openaiClient, "openai")
+}
+
+func (p *Proxy) handleOpenAICompatible(w http.ResponseWriter, r *http.Request, bodyBytes []byte, context string, documentId string, policyName string, audit *AuditEntry, outbound OutboundConfig, target *url.URL, client *http.Client, provider string) {
 	var o OpenAIRequest
 	if err := json.Unmarshal(bodyBytes, &o); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -1270,11 +1316,11 @@ func (p *Proxy) handleOpenAI(w http.ResponseWriter, r *http.Request, bodyBytes [
 	}
 
 	if outbound.Enabled {
-		p.forwardWithOutboundScan(w, r, p.openaiTarget, p.openaiClient, j, "openai",
+		p.forwardWithOutboundScan(w, r, target, client, j, provider,
 			context, documentId, policyName, outbound.Action, audit, p.scanOpenAIResponse)
 		return
 	}
-	p.forwardToProvider(w, r, p.openaiTarget, p.openaiClient, j, "openai")
+	p.forwardToProvider(w, r, target, client, j, provider)
 }
 
 func (p *Proxy) handleAnthropic(w http.ResponseWriter, r *http.Request, bodyBytes []byte, context string, documentId string, policyName string, audit *AuditEntry, outbound OutboundConfig) {
@@ -1498,6 +1544,28 @@ func main() {
 		slog.Info("Bedrock provider configured", "region", bedrockRegion)
 	}
 
+	openaiCompatTargets := make(map[string]*url.URL)
+	openaiCompatClients := make(map[string]*http.Client)
+	for name, pc := range cfg.Providers.OpenAICompatible {
+		t, err := url.Parse(pc.Target)
+		if err != nil {
+			slog.Error("Invalid openaiCompatible target URL", "provider", name, "error", err)
+			os.Exit(1)
+		}
+		openaiCompatTargets[name] = t
+		verify := true
+		if pc.TLSVerify != nil {
+			verify = *pc.TLSVerify
+		}
+		tlsCfg, err := buildTLSConfig(!verify, "")
+		if err != nil {
+			slog.Error("OpenAI-compatible provider TLS configuration error", "provider", name, "error", err)
+			os.Exit(1)
+		}
+		openaiCompatClients[name] = &http.Client{Transport: &http.Transport{TLSClientConfig: tlsCfg}}
+		slog.Info("OpenAI-compatible provider configured", "name", name, "target", pc.Target)
+	}
+
 	var proxyMetrics *ProxyMetrics
 	var metricsReg *prometheus.Registry
 	if cfg.Metrics.Enabled {
@@ -1515,12 +1583,14 @@ func main() {
 		anthropicClient: clients[1],
 		geminiClient:    clients[2],
 		ollamaClient:    clients[3],
-		bedrockClient:   bedrockClient,
-		bedrockRegion:   bedrockRegion,
-		bedrockCreds:    bedrockCreds,
-		philter:         philterClient,
-		auditLogger:     auditLogger,
-		metrics:         proxyMetrics,
+		bedrockClient:           bedrockClient,
+		bedrockRegion:           bedrockRegion,
+		bedrockCreds:            bedrockCreds,
+		openaiCompatibleTargets: openaiCompatTargets,
+		openaiCompatibleClients: openaiCompatClients,
+		philter:                 philterClient,
+		auditLogger:             auditLogger,
+		metrics:                 proxyMetrics,
 	}
 
 	port := fmt.Sprintf("%d", cfg.Listen.Port)
