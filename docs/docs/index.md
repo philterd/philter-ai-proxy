@@ -8,7 +8,7 @@ The proxy intercepts requests destined for an LLM provider and sends all text-be
 
 For example, if you send the text `How old is John Smith?`, the proxy will remove `John Smith` before forwarding. The request sent to the provider becomes `How old is {{{REDACTED-entity}}}?`
 
-Redaction covers all message types, including agentic and tool-use workflows:
+Inbound redaction covers all message types, including agentic and tool-use workflows:
 
 | Provider | Fields redacted |
 |----------|-----------------|
@@ -16,5 +16,7 @@ Redaction covers all message types, including agentic and tool-use workflows:
 | Anthropic | `system`, `messages[].content` (`text` and `tool_result` blocks) |
 | Gemini | `contents[].parts[].text`, `contents[].parts[].functionResponse.response` (recursive) |
 | Ollama | `messages[].content`, `prompt`, `system` |
+
+**Outbound response scanning** is also supported on an opt-in basis. When enabled, the LLM's response is scanned through Philter before it reaches the client, guarding against hallucinated or training-data PII in responses. The behaviour when PII is found is configurable: redact it, block the response entirely, or pass it through with a warning log. See [Configuration](configuration.md#outbound) for details.
 
 Every request produces a structured JSON audit log entry with the provider, model, entity types detected, entity count, and other metadata for compliance and debugging. See [Configuration](configuration.md) for details.

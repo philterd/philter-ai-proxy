@@ -22,6 +22,43 @@ The proxy inspects and redacts all text-bearing fields in the request body befor
 
 Fields not in the table (e.g., model names, IDs, non-string values) are forwarded unchanged.
 
+## Response Scanning (Outbound)
+
+By default, provider responses are forwarded to the client without modification. When outbound scanning is enabled for a route, the proxy buffers the provider's response and passes each text field through Philter before returning it to the client.
+
+### Response fields scanned per provider
+
+| Provider | Response fields scanned |
+|----------|------------------------|
+| OpenAI | `choices[].message.content` |
+| Anthropic | `content[].text` (where `type == "text"`) |
+| Gemini | `candidates[].content.parts[].text` |
+| Ollama generate | `response` |
+| Ollama chat | `message.content` |
+
+### Actions
+
+The `outbound.action` setting controls what happens when PII is detected in a response:
+
+| Action | HTTP status | Description |
+|--------|------------|-------------|
+| `redact` (default) | `200` | Detected PII is replaced with Philter's configured token before the response is returned |
+| `block` | `403` | The response is suppressed entirely; the error body below is returned |
+| `flag` | `200` | The original unmodified response is returned; a warning is written to the proxy log |
+
+**Block error response** (`403 Forbidden`):
+```json
+{"error":{"message":"response blocked: PII detected","type":"pii_blocked"}}
+```
+
+### Streaming responses
+
+Outbound scanning applies only to non-streaming responses. When the provider returns a streaming response (`Content-Type: text/event-stream` or `application/x-ndjson`), the proxy skips scanning, logs a warning, and forwards the stream to the client unchanged. Inbound prompt redaction is unaffected.
+
+### Latency
+
+Outbound scanning adds a full Philter round-trip after the provider responds. For latency-sensitive workloads, enable it only on routes where compliance requires it. See [Configuration](configuration.md#outbound) for configuration details.
+
 ## Route Detection
 
 The proxy routes requests based on the URL path:

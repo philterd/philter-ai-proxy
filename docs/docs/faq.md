@@ -23,6 +23,8 @@ Both streaming and non-streaming requests are supported for all providers.
 
 Yes. Streaming responses (SSE for OpenAI/Anthropic, chunked JSON for Gemini, NDJSON for Ollama) are forwarded to the client in real time without buffering. Inbound prompt redaction works identically for streaming and non-streaming requests.
 
+Outbound response scanning is not applied to streaming responses — the stream is forwarded to the client unchanged and a warning is logged. Outbound scanning applies only to non-streaming responses.
+
 ### Is any sensitive data logged?
 
 No. The audit log contains only metadata (provider, model, entity types, counts, latency, etc.). No message content or filtered text is ever logged. Client IP addresses are included, which may be considered personal data under GDPR.
@@ -31,9 +33,21 @@ No. The audit log contains only metadata (provider, model, entity types, counts,
 
 Yes, the proxy requires a running instance of Philter to perform the redaction. You can launch one in your cloud or on-premise. Visit [philterd.ai](https://philterd.ai/philter/) for more information.
 
+### Can the proxy scan LLM responses for PII, not just requests?
+
+Yes. Outbound response scanning is supported on an opt-in basis. When enabled, the proxy buffers the LLM's response, passes it through Philter, and returns the result to the client. The behavior when PII is detected is configurable: `redact` (replace PII tokens), `block` (return HTTP 403), or `flag` (pass through with a warning log).
+
+Outbound scanning is disabled by default because it adds a Philter round-trip after the provider responds. Enable it only on routes where compliance requires it. See [Configuration](configuration.md#outbound) for details.
+
+### Does outbound scanning add latency?
+
+Yes. When outbound scanning is enabled, the proxy must buffer the full provider response and make an additional request to Philter before returning the response to the client. The added latency equals roughly one Philter round-trip (typically low-double-digit milliseconds on local deployments).
+
+Streaming responses are not scanned — they are forwarded immediately — so streaming requests have no outbound latency overhead.
+
 ### How do I configure the proxy?
 
-The proxy is configured via environment variables. Please refer to the [Configuration](configuration.md) page for a list of all available variables.
+The proxy is configured via a YAML configuration file. Please refer to the [Configuration](configuration.md) page for all available settings.
 
 ### Is the proxy open source?
 

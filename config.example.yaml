@@ -35,12 +35,15 @@ providers:
 # Evaluated in order; first match wins. If no route matches, defaults apply.
 # Match criteria (all specified must match): header+value, path, model.
 routes:
-  # Use HIPAA policy when the client sends this header
+  # Use HIPAA policy when the client sends this header; block the response if PII is detected
   - match:
       header: x-philter-policy
       value: hipaa
     policy: hipaa-safe-harbor
     context: healthcare-chatbot
+    outbound:
+      enabled: true
+      action: block
 
   # Use a specific policy for GPT-4 chat completions
   - match:
@@ -52,3 +55,6 @@ routes:
 defaults:
   policy: default
   context: none
+  # outbound:
+  #   enabled: false
+  #   action: redact  # redact (default), block, or flag

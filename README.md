@@ -4,6 +4,8 @@ This project is a proxy for OpenAI, Claude, Gemini, and Ollama that uses [Philte
 
 The proxy works by sending requests destined for OpenAI, Claude, Gemini, or Ollama first to Philter where the sensitive information is redacted per Philter's configuration. The redacted text is then sent to the API. For example, if you send the following text `How old is John Smith?`, the proxy and Philter will remove the text `John Smith` from the request. The redacted request sent to the API will be `How old is REDACTED?`
 
+Outbound response scanning is also supported on an opt-in basis: LLM responses can be scanned through Philter before being returned to the client, guarding against hallucinated or training-data PII in responses. The behavior is configurable per route: redact detected PII, block the response entirely, or pass it through with a warning log.
+
 View the [documentation](http://philterd.github.io/philter-ai-proxy).
 
 ## Running the Proxy

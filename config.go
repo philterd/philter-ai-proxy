@@ -50,15 +50,22 @@ type RouteMatch struct {
 	Model  string `yaml:"model"`
 }
 
+type OutboundConfig struct {
+	Enabled bool   `yaml:"enabled"`
+	Action  string `yaml:"action"` // "redact" (default), "block", or "flag"
+}
+
 type RouteConfig struct {
-	Match   RouteMatch `yaml:"match"`
-	Policy  string     `yaml:"policy"`
-	Context string     `yaml:"context"`
+	Match    RouteMatch     `yaml:"match"`
+	Policy   string         `yaml:"policy"`
+	Context  string         `yaml:"context"`
+	Outbound OutboundConfig `yaml:"outbound"`
 }
 
 type DefaultsConfig struct {
-	Policy  string `yaml:"policy"`
-	Context string `yaml:"context"`
+	Policy   string         `yaml:"policy"`
+	Context  string         `yaml:"context"`
+	Outbound OutboundConfig `yaml:"outbound"`
 }
 
 type Config struct {
@@ -151,6 +158,8 @@ func validateConfig(cfg *Config) error {
 		return fmt.Errorf("config: metrics.port %d is out of range (1-65535)", cfg.Metrics.Port)
 	}
 
+	validOutboundActions := map[string]bool{"redact": true, "block": true, "flag": true, "": true}
+
 	for i, route := range cfg.Routes {
 		if route.Match.Header == "" && route.Match.Path == "" && route.Match.Model == "" {
 			return fmt.Errorf("config: route[%d] must have at least one match criterion (header, path, or model)", i)
@@ -161,14 +170,22 @@ func validateConfig(cfg *Config) error {
 		if route.Policy == "" {
 			return fmt.Errorf("config: route[%d] must specify a policy", i)
 		}
+		if !validOutboundActions[route.Outbound.Action] {
+			return fmt.Errorf("config: route[%d].outbound.action %q is invalid (must be redact, block, or flag)", i, route.Outbound.Action)
+		}
+	}
+
+	if !validOutboundActions[cfg.Defaults.Outbound.Action] {
+		return fmt.Errorf("config: defaults.outbound.action %q is invalid (must be redact, block, or flag)", cfg.Defaults.Outbound.Action)
 	}
 
 	return nil
 }
 
 type resolvedRoute struct {
-	Policy  string
-	Context string
+	Policy   string
+	Context  string
+	Outbound OutboundConfig
 }
 
 func matchRoute(cfg *Config, path string, model string, headerGetter func(string) string) resolvedRoute {
@@ -192,7 +209,7 @@ func matchRoute(cfg *Config, path string, model string, headerGetter func(string
 		if ctx == "" {
 			ctx = cfg.Defaults.Context
 		}
-		return resolvedRoute{Policy: route.Policy, Context: ctx}
+		return resolvedRoute{Policy: route.Policy, Context: ctx, Outbound: route.Outbound}
 	}
-	return resolvedRoute{Policy: cfg.Defaults.Policy, Context: cfg.Defaults.Context}
+	return resolvedRoute{Policy: cfg.Defaults.Policy, Context: cfg.Defaults.Context, Outbound: cfg.Defaults.Outbound}
 }

@@ -497,6 +497,316 @@ func extractModel(body []byte) string {
 	return m.Model
 }
 
+func isStreamingResponse(headers http.Header) bool {
+	ct := headers.Get("Content-Type")
+	return strings.Contains(ct, "text/event-stream") || strings.Contains(ct, "application/x-ndjson")
+}
+
+func writeBufferedResponse(w http.ResponseWriter, statusCode int, headers http.Header, body []byte) {
+	for key, values := range headers {
+		if hopByHopHeaders[key] {
+			continue
+		}
+		if strings.EqualFold(key, "Content-Length") {
+			continue
+		}
+		for _, v := range values {
+			w.Header().Add(key, v)
+		}
+	}
+	w.Header().Set("Content-Length", strconv.Itoa(len(body)))
+	w.WriteHeader(statusCode)
+	w.Write(body)
+}
+
+func (p *Proxy) captureFromProvider(origReq *http.Request, target *url.URL, client *http.Client, body []byte, provider string) (int, http.Header, []byte, error) {
+	targetURL := *target
+	targetURL.Path = origReq.URL.Path
+	targetURL.RawQuery = origReq.URL.RawQuery
+
+	req, err := http.NewRequest(origReq.Method, targetURL.String(), bytes.NewReader(body))
+	if err != nil {
+		return 0, nil, nil, fmt.Errorf("failed to create provider request: %w", err)
+	}
+
+	for key, values := range origReq.Header {
+		if hopByHopHeaders[key] {
+			continue
+		}
+		for _, v := range values {
+			req.Header.Add(key, v)
+		}
+	}
+	req.ContentLength = int64(len(body))
+	req.Host = target.Host
+
+	resp, err := client.Do(req)
+	if err != nil {
+		safeURL := target.Host + origReq.URL.Path
+		if origReq.URL.RawQuery != "" {
+			safeURL += "?" + sanitizeQuery(origReq.URL.RawQuery)
+		}
+		slog.Error("Provider request failed", "error", err, "url", safeURL)
+		if p.metrics != nil {
+			p.metrics.upstreamErrors.WithLabelValues(provider, "502").Inc()
+		}
+		return 0, nil, nil, fmt.Errorf("provider request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if p.metrics != nil && resp.StatusCode >= 400 {
+		p.metrics.upstreamErrors.WithLabelValues(provider, strconv.Itoa(resp.StatusCode)).Inc()
+	}
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return 0, nil, nil, fmt.Errorf("failed to read provider response: %w", err)
+	}
+
+	return resp.StatusCode, resp.Header, respBody, nil
+}
+
+// outboundScanText runs a single text value through Philter and applies the configured action.
+// Returns (resultText, blocked, error). blocked=true means the response should be blocked entirely.
+func (p *Proxy) outboundScanText(text, endpoint, ctx, docID, policy, action string, audit *AuditEntry) (string, bool, error) {
+	if text == "" {
+		return text, false, nil
+	}
+	fr, err := Filter(p.philterClient, endpoint, text, ctx, docID, policy)
+	if err != nil {
+		return "", false, err
+	}
+	audit.recordFilterResult(fr)
+
+	switch action {
+	case "block":
+		if fr.EntityCount > 0 {
+			return "", true, nil
+		}
+		return text, false, nil
+	case "flag":
+		if fr.EntityCount > 0 {
+			slog.Warn("PII detected in outbound response", "entity_count", fr.EntityCount, "entity_types", fr.EntityTypes, "document_id", docID)
+		}
+		return text, false, nil
+	default: // "redact" or ""
+		return fr.FilteredText, false, nil
+	}
+}
+
+type responseScanner func([]byte, string, string, string, string, string, *AuditEntry) ([]byte, bool, error)
+
+func (p *Proxy) forwardWithOutboundScan(
+	w http.ResponseWriter, r *http.Request,
+	target *url.URL, client *http.Client, body []byte, provider string,
+	endpoint, philterCtx, docID, policy, action string,
+	audit *AuditEntry,
+	scanner responseScanner,
+) {
+	statusCode, respHeaders, respBody, err := p.captureFromProvider(r, target, client, body, provider)
+	if err != nil {
+		http.Error(w, "provider request failed", http.StatusBadGateway)
+		return
+	}
+
+	outboundAudit := &AuditEntry{
+		RequestID:  audit.RequestID,
+		Direction:  "outbound",
+		Provider:   audit.Provider,
+		Model:      audit.Model,
+		PolicyName: audit.PolicyName,
+		DocumentID: audit.DocumentID,
+		ClientIP:   audit.ClientIP,
+		HTTPStatus: statusCode,
+	}
+
+	if statusCode >= 200 && statusCode < 300 && !isStreamingResponse(respHeaders) {
+		modified, blocked, scanErr := scanner(respBody, endpoint, philterCtx, docID, policy, action, outboundAudit)
+		if scanErr != nil {
+			outboundAudit.HTTPStatus = http.StatusBadGateway
+			emitAuditLog(p.auditLogger, *outboundAudit)
+			p.philterError(w, scanErr)
+			return
+		}
+		if blocked {
+			outboundAudit.HTTPStatus = http.StatusForbidden
+			emitAuditLog(p.auditLogger, *outboundAudit)
+			w.Header().Set("Content-Type", "application/json")
+			http.Error(w, `{"error":{"message":"response blocked: PII detected","type":"pii_blocked"}}`, http.StatusForbidden)
+			return
+		}
+		respBody = modified
+	} else if isStreamingResponse(respHeaders) {
+		slog.Warn("Outbound scanning skipped for streaming response", "provider", provider, "document_id", docID)
+	}
+
+	emitAuditLog(p.auditLogger, *outboundAudit)
+	writeBufferedResponse(w, statusCode, respHeaders, respBody)
+}
+
+func (p *Proxy) scanOpenAIResponse(respBody []byte, endpoint, ctx, docID, policy, action string, audit *AuditEntry) ([]byte, bool, error) {
+	var resp map[string]interface{}
+	if err := json.Unmarshal(respBody, &resp); err != nil {
+		return respBody, false, nil
+	}
+	choices, _ := resp["choices"].([]interface{})
+	for _, choice := range choices {
+		choiceMap, ok := choice.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		message, ok := choiceMap["message"].(map[string]interface{})
+		if !ok {
+			continue
+		}
+		content, ok := message["content"].(string)
+		if !ok || content == "" {
+			continue
+		}
+		result, blocked, err := p.outboundScanText(content, endpoint, ctx, docID, policy, action, audit)
+		if err != nil {
+			return nil, false, err
+		}
+		if blocked {
+			return nil, true, nil
+		}
+		message["content"] = result
+	}
+	modified, err := json.Marshal(resp)
+	if err != nil {
+		return respBody, false, nil
+	}
+	return modified, false, nil
+}
+
+func (p *Proxy) scanAnthropicResponse(respBody []byte, endpoint, ctx, docID, policy, action string, audit *AuditEntry) ([]byte, bool, error) {
+	var resp map[string]interface{}
+	if err := json.Unmarshal(respBody, &resp); err != nil {
+		return respBody, false, nil
+	}
+	content, _ := resp["content"].([]interface{})
+	for _, block := range content {
+		blockMap, ok := block.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		if blockMap["type"] != "text" {
+			continue
+		}
+		text, ok := blockMap["text"].(string)
+		if !ok || text == "" {
+			continue
+		}
+		result, blocked, err := p.outboundScanText(text, endpoint, ctx, docID, policy, action, audit)
+		if err != nil {
+			return nil, false, err
+		}
+		if blocked {
+			return nil, true, nil
+		}
+		blockMap["text"] = result
+	}
+	modified, err := json.Marshal(resp)
+	if err != nil {
+		return respBody, false, nil
+	}
+	return modified, false, nil
+}
+
+func (p *Proxy) scanGeminiResponse(respBody []byte, endpoint, ctx, docID, policy, action string, audit *AuditEntry) ([]byte, bool, error) {
+	var resp map[string]interface{}
+	if err := json.Unmarshal(respBody, &resp); err != nil {
+		return respBody, false, nil
+	}
+	candidates, _ := resp["candidates"].([]interface{})
+	for _, candidate := range candidates {
+		candidateMap, ok := candidate.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		contentMap, ok := candidateMap["content"].(map[string]interface{})
+		if !ok {
+			continue
+		}
+		parts, _ := contentMap["parts"].([]interface{})
+		for _, part := range parts {
+			partMap, ok := part.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			text, ok := partMap["text"].(string)
+			if !ok || text == "" {
+				continue
+			}
+			result, blocked, err := p.outboundScanText(text, endpoint, ctx, docID, policy, action, audit)
+			if err != nil {
+				return nil, false, err
+			}
+			if blocked {
+				return nil, true, nil
+			}
+			partMap["text"] = result
+		}
+	}
+	modified, err := json.Marshal(resp)
+	if err != nil {
+		return respBody, false, nil
+	}
+	return modified, false, nil
+}
+
+func (p *Proxy) scanOllamaGenerateResponse(respBody []byte, endpoint, ctx, docID, policy, action string, audit *AuditEntry) ([]byte, bool, error) {
+	var resp map[string]interface{}
+	if err := json.Unmarshal(respBody, &resp); err != nil {
+		return respBody, false, nil
+	}
+	response, ok := resp["response"].(string)
+	if !ok || response == "" {
+		return respBody, false, nil
+	}
+	result, blocked, err := p.outboundScanText(response, endpoint, ctx, docID, policy, action, audit)
+	if err != nil {
+		return nil, false, err
+	}
+	if blocked {
+		return nil, true, nil
+	}
+	resp["response"] = result
+	modified, err := json.Marshal(resp)
+	if err != nil {
+		return respBody, false, nil
+	}
+	return modified, false, nil
+}
+
+func (p *Proxy) scanOllamaChatResponse(respBody []byte, endpoint, ctx, docID, policy, action string, audit *AuditEntry) ([]byte, bool, error) {
+	var resp map[string]interface{}
+	if err := json.Unmarshal(respBody, &resp); err != nil {
+		return respBody, false, nil
+	}
+	message, ok := resp["message"].(map[string]interface{})
+	if !ok {
+		return respBody, false, nil
+	}
+	content, ok := message["content"].(string)
+	if !ok || content == "" {
+		return respBody, false, nil
+	}
+	result, blocked, err := p.outboundScanText(content, endpoint, ctx, docID, policy, action, audit)
+	if err != nil {
+		return nil, false, err
+	}
+	if blocked {
+		return nil, true, nil
+	}
+	message["content"] = result
+	modified, err := json.Marshal(resp)
+	if err != nil {
+		return respBody, false, nil
+	}
+	return modified, false, nil
+}
+
 func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	if r.URL.Path == "/health" {
@@ -536,19 +846,19 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	if strings.HasPrefix(r.URL.Path, "/v1/messages") {
 		audit.Provider = "anthropic"
-		p.handleAnthropic(rc, r, bodyBytes, philter_endpoint, philter_context, philter_document_id, philter_policy_name, audit)
+		p.handleAnthropic(rc, r, bodyBytes, philter_endpoint, philter_context, philter_document_id, philter_policy_name, audit, route.Outbound)
 	} else if strings.Contains(strings.ToLower(r.URL.Path), "generatecontent") {
 		audit.Provider = "gemini"
-		p.handleGeminiNative(rc, r, bodyBytes, philter_endpoint, philter_context, philter_document_id, philter_policy_name, audit)
+		p.handleGeminiNative(rc, r, bodyBytes, philter_endpoint, philter_context, philter_document_id, philter_policy_name, audit, route.Outbound)
 	} else if r.URL.Path == "/api/generate" {
 		audit.Provider = "ollama"
-		p.handleOllamaGenerate(rc, r, bodyBytes, philter_endpoint, philter_context, philter_document_id, philter_policy_name, audit)
+		p.handleOllamaGenerate(rc, r, bodyBytes, philter_endpoint, philter_context, philter_document_id, philter_policy_name, audit, route.Outbound)
 	} else if r.URL.Path == "/api/chat" {
 		audit.Provider = "ollama"
-		p.handleOllamaChat(rc, r, bodyBytes, philter_endpoint, philter_context, philter_document_id, philter_policy_name, audit)
+		p.handleOllamaChat(rc, r, bodyBytes, philter_endpoint, philter_context, philter_document_id, philter_policy_name, audit, route.Outbound)
 	} else {
 		audit.Provider = "openai"
-		p.handleOpenAI(rc, r, bodyBytes, philter_endpoint, philter_context, philter_document_id, philter_policy_name, audit)
+		p.handleOpenAI(rc, r, bodyBytes, philter_endpoint, philter_context, philter_document_id, philter_policy_name, audit, route.Outbound)
 	}
 
 	audit.HTTPStatus = rc.statusCode
@@ -568,7 +878,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (p *Proxy) handleOllamaGenerate(w http.ResponseWriter, r *http.Request, bodyBytes []byte, philter_endpoint string, context string, documentId string, policyName string, audit *AuditEntry) {
+func (p *Proxy) handleOllamaGenerate(w http.ResponseWriter, r *http.Request, bodyBytes []byte, philter_endpoint string, context string, documentId string, policyName string, audit *AuditEntry, outbound OutboundConfig) {
 	var o OllamaGenerateRequest
 	if err := json.Unmarshal(bodyBytes, &o); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -603,10 +913,15 @@ func (p *Proxy) handleOllamaGenerate(w http.ResponseWriter, r *http.Request, bod
 		return
 	}
 
+	if outbound.Enabled {
+		p.forwardWithOutboundScan(w, r, p.ollamaTarget, p.ollamaClient, j, "ollama",
+			philter_endpoint, context, documentId, policyName, outbound.Action, audit, p.scanOllamaGenerateResponse)
+		return
+	}
 	p.forwardToProvider(w, r, p.ollamaTarget, p.ollamaClient, j, "ollama")
 }
 
-func (p *Proxy) handleOllamaChat(w http.ResponseWriter, r *http.Request, bodyBytes []byte, philter_endpoint string, context string, documentId string, policyName string, audit *AuditEntry) {
+func (p *Proxy) handleOllamaChat(w http.ResponseWriter, r *http.Request, bodyBytes []byte, philter_endpoint string, context string, documentId string, policyName string, audit *AuditEntry, outbound OutboundConfig) {
 	var o OllamaChatRequest
 	if err := json.Unmarshal(bodyBytes, &o); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -631,10 +946,15 @@ func (p *Proxy) handleOllamaChat(w http.ResponseWriter, r *http.Request, bodyByt
 		return
 	}
 
+	if outbound.Enabled {
+		p.forwardWithOutboundScan(w, r, p.ollamaTarget, p.ollamaClient, j, "ollama",
+			philter_endpoint, context, documentId, policyName, outbound.Action, audit, p.scanOllamaChatResponse)
+		return
+	}
 	p.forwardToProvider(w, r, p.ollamaTarget, p.ollamaClient, j, "ollama")
 }
 
-func (p *Proxy) handleGeminiNative(w http.ResponseWriter, r *http.Request, bodyBytes []byte, philter_endpoint string, context string, documentId string, policyName string, audit *AuditEntry) {
+func (p *Proxy) handleGeminiNative(w http.ResponseWriter, r *http.Request, bodyBytes []byte, philter_endpoint string, context string, documentId string, policyName string, audit *AuditEntry, outbound OutboundConfig) {
 	var g GeminiRequest
 	if err := json.Unmarshal(bodyBytes, &g); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -674,10 +994,15 @@ loop:
 		return
 	}
 
+	if outbound.Enabled {
+		p.forwardWithOutboundScan(w, r, p.geminiTarget, p.geminiClient, j, "gemini",
+			philter_endpoint, context, documentId, policyName, outbound.Action, audit, p.scanGeminiResponse)
+		return
+	}
 	p.forwardToProvider(w, r, p.geminiTarget, p.geminiClient, j, "gemini")
 }
 
-func (p *Proxy) handleOpenAI(w http.ResponseWriter, r *http.Request, bodyBytes []byte, philter_endpoint string, context string, documentId string, policyName string, audit *AuditEntry) {
+func (p *Proxy) handleOpenAI(w http.ResponseWriter, r *http.Request, bodyBytes []byte, philter_endpoint string, context string, documentId string, policyName string, audit *AuditEntry, outbound OutboundConfig) {
 	var o OpenAIRequest
 	if err := json.Unmarshal(bodyBytes, &o); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -721,10 +1046,15 @@ func (p *Proxy) handleOpenAI(w http.ResponseWriter, r *http.Request, bodyBytes [
 		return
 	}
 
+	if outbound.Enabled {
+		p.forwardWithOutboundScan(w, r, p.openaiTarget, p.openaiClient, j, "openai",
+			philter_endpoint, context, documentId, policyName, outbound.Action, audit, p.scanOpenAIResponse)
+		return
+	}
 	p.forwardToProvider(w, r, p.openaiTarget, p.openaiClient, j, "openai")
 }
 
-func (p *Proxy) handleAnthropic(w http.ResponseWriter, r *http.Request, bodyBytes []byte, philter_endpoint string, context string, documentId string, policyName string, audit *AuditEntry) {
+func (p *Proxy) handleAnthropic(w http.ResponseWriter, r *http.Request, bodyBytes []byte, philter_endpoint string, context string, documentId string, policyName string, audit *AuditEntry, outbound OutboundConfig) {
 	var a AnthropicRequest
 	if err := json.Unmarshal(bodyBytes, &a); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -816,6 +1146,11 @@ msgloop:
 		return
 	}
 
+	if outbound.Enabled {
+		p.forwardWithOutboundScan(w, r, p.anthropicTarget, p.anthropicClient, j, "anthropic",
+			philter_endpoint, context, documentId, policyName, outbound.Action, audit, p.scanAnthropicResponse)
+		return
+	}
 	p.forwardToProvider(w, r, p.anthropicTarget, p.anthropicClient, j, "anthropic")
 }
 

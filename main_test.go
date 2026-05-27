@@ -2268,3 +2268,465 @@ func mustParseURL(s string) *url.URL {
 	}
 	return u
 }
+
+// ── outbound scanning ─────────────────────────────────────────────────────────
+
+// newOutboundProxy creates a proxy with a specific provider configured for outbound scanning.
+func newOutboundProxy(philterURL, providerURL, provider string, action string) *Proxy {
+	outbound := OutboundConfig{Enabled: true, Action: action}
+	cfg := testConfig(philterURL)
+	cfg.Defaults.Outbound = outbound
+	u, _ := url.Parse(providerURL)
+	p := &Proxy{
+		config:        cfg,
+		philterClient: http.DefaultClient,
+	}
+	switch provider {
+	case "openai":
+		p.openaiTarget = u
+		p.openaiClient = http.DefaultClient
+	case "anthropic":
+		p.anthropicTarget = u
+		p.anthropicClient = http.DefaultClient
+	case "gemini":
+		p.geminiTarget = u
+		p.geminiClient = http.DefaultClient
+	case "ollama":
+		p.ollamaTarget = u
+		p.ollamaClient = http.DefaultClient
+	}
+	return p
+}
+
+// philterRedact returns a Philter mock that redacts the body using the given replacement.
+func philterRedact(replacement string) *httptest.Server {
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := ioutil.ReadAll(r.Body)
+		_ = body
+		w.Write(explainJSON(replacement, "doc-out", []Span{{FilterType: "NER_ENTITY", Confidence: 0.9}}))
+	}))
+}
+
+// philterClean returns a Philter mock that finds no PII.
+func philterClean() *httptest.Server {
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := ioutil.ReadAll(r.Body)
+		text := string(body)
+		w.Write(explainJSON(text, "doc-out", nil))
+	}))
+}
+
+func TestOutbound_OpenAI_Redact(t *testing.T) {
+	philter := philterRedact("[REDACTED]")
+	defer philter.Close()
+
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"Hello John Doe"}}]}`))
+	}))
+	defer provider.Close()
+
+	proxy := newOutboundProxy(philter.URL, provider.URL, "openai", "redact")
+
+	reqBody := `{"model":"gpt-4","messages":[{"role":"user","content":"hi"}]}`
+	req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(reqBody))
+	w := httptest.NewRecorder()
+	proxy.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("Expected 200, got %d", w.Code)
+	}
+	var resp map[string]interface{}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("Response is not JSON: %v", err)
+	}
+	choices := resp["choices"].([]interface{})
+	msg := choices[0].(map[string]interface{})["message"].(map[string]interface{})
+	if msg["content"] != "[REDACTED]" {
+		t.Errorf("Expected redacted content, got %v", msg["content"])
+	}
+}
+
+func TestOutbound_OpenAI_Block(t *testing.T) {
+	philter := philterRedact("[REDACTED]")
+	defer philter.Close()
+
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"SSN: 123-45-6789"}}]}`))
+	}))
+	defer provider.Close()
+
+	proxy := newOutboundProxy(philter.URL, provider.URL, "openai", "block")
+
+	reqBody := `{"model":"gpt-4","messages":[{"role":"user","content":"hi"}]}`
+	req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(reqBody))
+	w := httptest.NewRecorder()
+	proxy.ServeHTTP(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Errorf("Expected 403 when blocking PII, got %d", w.Code)
+	}
+}
+
+func TestOutbound_OpenAI_Block_NoMatch(t *testing.T) {
+	philter := philterClean()
+	defer philter.Close()
+
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"Hello!"}}]}`))
+	}))
+	defer provider.Close()
+
+	proxy := newOutboundProxy(philter.URL, provider.URL, "openai", "block")
+
+	reqBody := `{"model":"gpt-4","messages":[{"role":"user","content":"hi"}]}`
+	req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(reqBody))
+	w := httptest.NewRecorder()
+	proxy.ServeHTTP(w, req)
+
+	// No PII found, so block action passes through
+	if w.Code != http.StatusOK {
+		t.Errorf("Expected 200 (no PII matched), got %d", w.Code)
+	}
+}
+
+func TestOutbound_OpenAI_Flag(t *testing.T) {
+	philter := philterRedact("[REDACTED]")
+	defer philter.Close()
+
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"SSN: 123-45-6789"}}]}`))
+	}))
+	defer provider.Close()
+
+	proxy := newOutboundProxy(philter.URL, provider.URL, "openai", "flag")
+
+	reqBody := `{"model":"gpt-4","messages":[{"role":"user","content":"hi"}]}`
+	req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(reqBody))
+	w := httptest.NewRecorder()
+	proxy.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("Expected 200 for flag action, got %d", w.Code)
+	}
+	// Content should be original (unredacted)
+	var resp map[string]interface{}
+	json.Unmarshal(w.Body.Bytes(), &resp)
+	choices := resp["choices"].([]interface{})
+	msg := choices[0].(map[string]interface{})["message"].(map[string]interface{})
+	if msg["content"] != "SSN: 123-45-6789" {
+		t.Errorf("Expected original content for flag action, got %v", msg["content"])
+	}
+}
+
+func TestOutbound_Anthropic_Redact(t *testing.T) {
+	philter := philterRedact("[REDACTED]")
+	defer philter.Close()
+
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"content":[{"type":"text","text":"Hello John Doe"}],"role":"assistant"}`))
+	}))
+	defer provider.Close()
+
+	proxy := newOutboundProxy(philter.URL, provider.URL, "anthropic", "redact")
+
+	reqBody := `{"model":"claude-3","messages":[{"role":"user","content":"hi"}]}`
+	req := httptest.NewRequest("POST", "/v1/messages", strings.NewReader(reqBody))
+	w := httptest.NewRecorder()
+	proxy.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("Expected 200, got %d", w.Code)
+	}
+	var resp map[string]interface{}
+	json.Unmarshal(w.Body.Bytes(), &resp)
+	content := resp["content"].([]interface{})
+	block := content[0].(map[string]interface{})
+	if block["text"] != "[REDACTED]" {
+		t.Errorf("Expected redacted text, got %v", block["text"])
+	}
+}
+
+func TestOutbound_Gemini_Redact(t *testing.T) {
+	philter := philterRedact("[REDACTED]")
+	defer philter.Close()
+
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"candidates":[{"content":{"parts":[{"text":"Hello John Doe"}],"role":"model"}}]}`))
+	}))
+	defer provider.Close()
+
+	proxy := newOutboundProxy(philter.URL, provider.URL, "gemini", "redact")
+
+	reqBody := `{"contents":[{"parts":[{"text":"hi"}]}]}`
+	req := httptest.NewRequest("POST", "/v1beta/models/gemini-pro:generateContent", strings.NewReader(reqBody))
+	w := httptest.NewRecorder()
+	proxy.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("Expected 200, got %d", w.Code)
+	}
+	var resp map[string]interface{}
+	json.Unmarshal(w.Body.Bytes(), &resp)
+	candidates := resp["candidates"].([]interface{})
+	parts := candidates[0].(map[string]interface{})["content"].(map[string]interface{})["parts"].([]interface{})
+	if parts[0].(map[string]interface{})["text"] != "[REDACTED]" {
+		t.Errorf("Expected redacted text, got %v", parts[0])
+	}
+}
+
+func TestOutbound_OllamaGenerate_Redact(t *testing.T) {
+	philter := philterRedact("[REDACTED]")
+	defer philter.Close()
+
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"model":"llama3","response":"Hello John Doe","done":true}`))
+	}))
+	defer provider.Close()
+
+	proxy := newOutboundProxy(philter.URL, provider.URL, "ollama", "redact")
+
+	reqBody := `{"model":"llama3","prompt":"hi"}`
+	req := httptest.NewRequest("POST", "/api/generate", strings.NewReader(reqBody))
+	w := httptest.NewRecorder()
+	proxy.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("Expected 200, got %d", w.Code)
+	}
+	var resp map[string]interface{}
+	json.Unmarshal(w.Body.Bytes(), &resp)
+	if resp["response"] != "[REDACTED]" {
+		t.Errorf("Expected redacted response, got %v", resp["response"])
+	}
+}
+
+func TestOutbound_OllamaChat_Redact(t *testing.T) {
+	philter := philterRedact("[REDACTED]")
+	defer philter.Close()
+
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"model":"llama3","message":{"role":"assistant","content":"Hello John Doe"},"done":true}`))
+	}))
+	defer provider.Close()
+
+	proxy := newOutboundProxy(philter.URL, provider.URL, "ollama", "redact")
+
+	reqBody := `{"model":"llama3","messages":[{"role":"user","content":"hi"}]}`
+	req := httptest.NewRequest("POST", "/api/chat", strings.NewReader(reqBody))
+	w := httptest.NewRecorder()
+	proxy.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("Expected 200, got %d", w.Code)
+	}
+	var resp map[string]interface{}
+	json.Unmarshal(w.Body.Bytes(), &resp)
+	msg := resp["message"].(map[string]interface{})
+	if msg["content"] != "[REDACTED]" {
+		t.Errorf("Expected redacted content, got %v", msg["content"])
+	}
+}
+
+func TestOutbound_Streaming_Passthrough(t *testing.T) {
+	// When provider returns SSE, outbound scanning is skipped and response passes through.
+	philter := philterRedact("[REDACTED]")
+	defer philter.Close()
+
+	sseBody := "data: {\"choices\":[{\"delta\":{\"content\":\"John Doe\"}}]}\n\ndata: [DONE]\n\n"
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(sseBody))
+	}))
+	defer provider.Close()
+
+	proxy := newOutboundProxy(philter.URL, provider.URL, "openai", "redact")
+
+	reqBody := `{"model":"gpt-4","messages":[{"role":"user","content":"hi"}],"stream":true}`
+	req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(reqBody))
+	w := httptest.NewRecorder()
+	proxy.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("Expected 200, got %d", w.Code)
+	}
+	// Streaming response passes through unredacted
+	if !strings.Contains(w.Body.String(), "John Doe") {
+		t.Errorf("Expected streaming body to pass through unmodified, got: %s", w.Body.String())
+	}
+}
+
+func TestOutbound_PhilterError(t *testing.T) {
+	// Philter is unreachable during outbound scan — should return 502.
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"Hello John"}}]}`))
+	}))
+	defer provider.Close()
+
+	// Philter responds OK for inbound (first call) then becomes unreachable.
+	callCount := 0
+	philterServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		callCount++
+		if callCount == 1 {
+			// inbound scan succeeds
+			w.Write(explainJSON("hi", "doc", nil))
+		} else {
+			// outbound scan fails
+			w.WriteHeader(http.StatusInternalServerError)
+			w.Write([]byte("not json"))
+		}
+	}))
+	defer philterServer.Close()
+
+	proxy := newOutboundProxy(philterServer.URL, provider.URL, "openai", "redact")
+
+	reqBody := `{"model":"gpt-4","messages":[{"role":"user","content":"hi"}]}`
+	req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(reqBody))
+	w := httptest.NewRecorder()
+	proxy.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadGateway {
+		t.Errorf("Expected 502 on outbound Philter error, got %d", w.Code)
+	}
+}
+
+func TestOutbound_AuditLog(t *testing.T) {
+	var buf bytes.Buffer
+	auditLogger := slog.New(slog.NewJSONHandler(&buf, nil))
+
+	philter := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write(explainJSON("[REDACTED]", "doc-out", []Span{{FilterType: "NER_ENTITY", Confidence: 0.9}}))
+	}))
+	defer philter.Close()
+
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"Hello John"}}]}`))
+	}))
+	defer provider.Close()
+
+	cfg := testConfig(philter.URL)
+	cfg.Defaults.Outbound = OutboundConfig{Enabled: true, Action: "redact"}
+	proxy := &Proxy{
+		config:        cfg,
+		philterClient: http.DefaultClient,
+		openaiTarget:  mustParseURL(provider.URL),
+		openaiClient:  http.DefaultClient,
+		auditLogger:   auditLogger,
+	}
+
+	reqBody := `{"model":"gpt-4","messages":[{"role":"user","content":"hello"}]}`
+	req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(reqBody))
+	w := httptest.NewRecorder()
+	proxy.ServeHTTP(w, req)
+
+	// Parse all log lines (inbound + outbound)
+	lines := strings.Split(strings.TrimSpace(buf.String()), "\n")
+	if len(lines) < 2 {
+		t.Fatalf("Expected at least 2 audit log lines, got %d: %s", len(lines), buf.String())
+	}
+
+	// Find outbound entry
+	var outboundEntry map[string]interface{}
+	for _, line := range lines {
+		var entry map[string]interface{}
+		if err := json.Unmarshal([]byte(line), &entry); err != nil {
+			continue
+		}
+		if entry["direction"] == "outbound" {
+			outboundEntry = entry
+			break
+		}
+	}
+	if outboundEntry == nil {
+		t.Fatal("No outbound audit log entry found")
+	}
+	if outboundEntry["provider"] != "openai" {
+		t.Errorf("Expected provider 'openai', got %v", outboundEntry["provider"])
+	}
+	if outboundEntry["http_status"] != float64(200) {
+		t.Errorf("Expected http_status=200, got %v", outboundEntry["http_status"])
+	}
+}
+
+func TestOutbound_Disabled_NoScan(t *testing.T) {
+	// When outbound scanning is disabled, response is forwarded as-is.
+	philter := philterClean()
+	defer philter.Close()
+
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"John Doe"}}]}`))
+	}))
+	defer provider.Close()
+
+	// Default proxy has outbound disabled
+	proxy, _ := newTestProxy(philter.URL, provider.URL, "openai")
+
+	reqBody := `{"model":"gpt-4","messages":[{"role":"user","content":"hi"}]}`
+	req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(reqBody))
+	w := httptest.NewRecorder()
+	proxy.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("Expected 200, got %d", w.Code)
+	}
+	// Content flows through unmodified
+	if !strings.Contains(w.Body.String(), "John Doe") {
+		t.Errorf("Expected unredacted content when outbound disabled, got: %s", w.Body.String())
+	}
+}
+
+// ── config validation (outbound) ──────────────────────────────────────────────
+
+func TestValidateConfig_InvalidOutboundAction(t *testing.T) {
+	cfg := defaultConfig()
+	cfg.Defaults.Outbound = OutboundConfig{Enabled: true, Action: "invalid"}
+	if err := validateConfig(cfg); err == nil {
+		t.Error("Expected error for invalid outbound action")
+	}
+}
+
+func TestValidateConfig_ValidOutboundActions(t *testing.T) {
+	for _, action := range []string{"redact", "block", "flag", ""} {
+		cfg := defaultConfig()
+		cfg.Defaults.Outbound = OutboundConfig{Enabled: true, Action: action}
+		if err := validateConfig(cfg); err != nil {
+			t.Errorf("Expected no error for action %q, got: %v", action, err)
+		}
+	}
+}
+
+func TestValidateConfig_Route_InvalidOutboundAction(t *testing.T) {
+	cfg := defaultConfig()
+	cfg.Routes = []RouteConfig{
+		{
+			Match:    RouteMatch{Header: "x-policy", Value: "hipaa"},
+			Policy:   "hipaa",
+			Outbound: OutboundConfig{Enabled: true, Action: "badaction"},
+		},
+	}
+	if err := validateConfig(cfg); err == nil {
+		t.Error("Expected error for invalid route outbound action")
+	}
+}

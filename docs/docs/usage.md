@@ -175,6 +175,55 @@ curl -k "https://localhost:8080/v1beta/models/gemini-2.0-flash:generateContent?k
   }'
 ```
 
+## Outbound Response Scanning
+
+By default, the proxy only redacts inbound prompts. You can also scan LLM responses for PII before they reach your client by enabling outbound scanning in the config:
+
+```yaml
+defaults:
+  policy: default
+  outbound:
+    enabled: true
+    action: redact   # redact | block | flag
+```
+
+Or on a specific route only:
+
+```yaml
+routes:
+  - match:
+      header: x-philter-policy
+      value: hipaa
+    policy: hipaa-safe-harbor
+    outbound:
+      enabled: true
+      action: block
+```
+
+**`redact`** — PII in the response is replaced before it reaches the client:
+
+```bash
+curl -k https://localhost:8080/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $OPENAI_API_KEY" \
+  -d '{
+    "model": "gpt-4",
+    "messages": [{"role": "user", "content": "What is a common SSN format?"}]
+  }'
+```
+
+If the model responds with `A common SSN looks like 123-45-6789`, the proxy scans the response through Philter and returns the redacted version: `A common SSN looks like {{{REDACTED-ssn}}}`.
+
+**`block`** — If any PII is detected in the response, the proxy returns HTTP 403 instead of forwarding the response:
+
+```json
+{"error":{"message":"response blocked: PII detected","type":"pii_blocked"}}
+```
+
+**`flag`** — The original response is returned unchanged; a warning entry is written to the audit log if PII is found. Useful for monitoring without modifying responses.
+
+**Streaming note:** Outbound scanning only applies to non-streaming responses. Streaming responses (`"stream": true`) are forwarded to the client unchanged. Inbound prompt redaction is unaffected in either case.
+
 ## Health Check
 
 To check the health of the proxy, send a GET request to the `/health` endpoint:

@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- Outbound response scanning: LLM responses are optionally scanned through Philter before being returned to the client. Disabled by default; enabled per-route or globally via `outbound.enabled: true` in the config. Configurable `action`: `redact` (replace PII), `block` (return HTTP 403), or `flag` (pass through with a warning log). Streaming responses are passed through unchanged with a warning. Outbound scans reuse the same Philter context and document ID as the inbound request for correlation. (#92)
+
 ### Security
 
 - Removed hardcoded `InsecureSkipVerify: true` from all outbound HTTP transports. TLS certificate verification is now enabled by default for both Philter backend and LLM provider connections. (#14)

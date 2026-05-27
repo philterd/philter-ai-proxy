@@ -135,6 +135,7 @@ Each route specifies:
 |-------|----------|-------------|
 | `policy` | Yes | Philter policy name to use for redaction |
 | `context` | No | Philter context to use (falls back to `defaults.context` if not set) |
+| `outbound` | No | Outbound response scanning settings for this route (see below) |
 
 ### `defaults`
 
@@ -142,6 +143,48 @@ Each route specifies:
 |-------|------|---------|-------------|
 | `policy` | string | `default` | Philter policy used when no route matches |
 | `context` | string | `none` | Philter context used when no route matches (or when a matched route has no context) |
+| `outbound` | object | (disabled) | Default outbound scanning settings (see below) |
+
+### `outbound`
+
+Outbound response scanning runs the LLM's response through Philter before it is returned to the client. It is **disabled by default** and must be explicitly enabled. When enabled, the same Philter policy, context, and document ID used for inbound redaction are reused, so Philter can correlate the request/response pair.
+
+**Latency note:** outbound scanning buffers the full provider response before returning it, adding the round-trip latency of the Philter call. For latency-sensitive workloads, consider enabling outbound scanning only on routes where compliance requires it.
+
+**Streaming note:** outbound scanning is skipped automatically when the provider returns a streaming response (`text/event-stream` or `application/x-ndjson`). The response is passed through to the client unchanged, and a warning is logged.
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `enabled` | bool | `false` | Enable outbound response scanning |
+| `action` | string | `redact` | Action when PII is detected: `redact`, `block`, or `flag` |
+
+**Actions:**
+
+| Action | Behaviour |
+|--------|-----------|
+| `redact` | Detected PII is replaced with Philter's configured replacement token before the response is returned (default). |
+| `block` | If any PII is detected, the response is suppressed and the client receives HTTP `403` with `{"error":{"message":"response blocked: PII detected","type":"pii_blocked"}}`. |
+| `flag` | PII is detected and logged as a warning, but the original unmodified response is returned to the client. |
+
+**Example — block responses containing PII for HIPAA routes:**
+
+```yaml
+routes:
+  - match:
+      header: x-philter-policy
+      value: hipaa
+    policy: hipaa-safe-harbor
+    context: healthcare-chatbot
+    outbound:
+      enabled: true
+      action: block
+
+defaults:
+  policy: default
+  context: none
+  outbound:
+    enabled: false
+```
 
 ## Audit Logging
 
@@ -153,7 +196,7 @@ Every proxy request produces a structured JSON log entry (JSONL) to stdout. All 
 |-------|------|-------------|
 | `time` | string | ISO 8601 timestamp |
 | `request_id` | string | Unique ID for request correlation |
-| `direction` | string | Scan direction (`inbound`; `outbound` when response scanning is added) |
+| `direction` | string | Scan direction: `inbound` (request) or `outbound` (response, when outbound scanning is enabled) |
 | `provider` | string | LLM provider (`openai`, `anthropic`, `gemini`, `ollama`) |
 | `model` | string | Model name from the request body |
 | `policy_name` | string | Philter policy used for redaction |
@@ -165,9 +208,18 @@ Every proxy request produces a structured JSON log entry (JSONL) to stdout. All 
 | `client_ip` | string | Client IP address (supports `X-Forwarded-For`) |
 | `http_status` | int | HTTP status code of the upstream provider response |
 
-### Example Log Entry
+### Example Log Entries
+
+When outbound scanning is disabled (default), one entry is emitted per request:
 
 ```json
+{"time":"2026-01-15T10:30:00Z","level":"INFO","msg":"request","request_id":"a1b2c3d4","direction":"inbound","provider":"openai","model":"gpt-4","policy_name":"default","document_id":"doc-789","fields_redacted":2,"entity_count":3,"entity_types":["NER_ENTITY","SSN"],"redact_latency_ms":45,"client_ip":"10.0.0.1","http_status":200}
+```
+
+When outbound scanning is enabled, two entries are emitted per request — one for the inbound scan and one for the outbound scan. Both share the same `request_id` and `document_id` for correlation:
+
+```json
+{"time":"2026-01-15T10:30:00Z","level":"INFO","msg":"request","request_id":"a1b2c3d4","direction":"outbound","provider":"openai","model":"gpt-4","policy_name":"default","document_id":"doc-789","fields_redacted":1,"entity_count":1,"entity_types":["NER_ENTITY"],"redact_latency_ms":12,"client_ip":"10.0.0.1","http_status":200}
 {"time":"2026-01-15T10:30:00Z","level":"INFO","msg":"request","request_id":"a1b2c3d4","direction":"inbound","provider":"openai","model":"gpt-4","policy_name":"default","document_id":"doc-789","fields_redacted":2,"entity_count":3,"entity_types":["NER_ENTITY","SSN"],"redact_latency_ms":45,"client_ip":"10.0.0.1","http_status":200}
 ```
 
