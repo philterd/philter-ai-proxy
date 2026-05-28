@@ -208,6 +208,23 @@ var hopByHopHeaders = map[string]bool{
 	"Upgrade":             true,
 }
 
+// writeJSONError writes a structured JSON error response with the shape
+// {"error":{"message":"...","type":"..."}} that the rest of the proxy uses
+// for auth, rate-limit, concurrency, and outbound-block paths. Replaces
+// http.Error in parser code paths, which otherwise forces Content-Type back
+// to text/plain.
+func writeJSONError(w http.ResponseWriter, status int, errType, message string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	payload, _ := json.Marshal(map[string]any{
+		"error": map[string]any{
+			"message": message,
+			"type":    errType,
+		},
+	})
+	w.Write(payload)
+}
+
 func sanitizeQuery(rawQuery string) string {
 	params, err := url.ParseQuery(rawQuery)
 	if err != nil {
@@ -872,7 +889,7 @@ func (p *Proxy) signBedrockRequest(ctx context.Context, req *http.Request, body 
 func (p *Proxy) handleBedrock(w http.ResponseWriter, r *http.Request, bodyBytes []byte, philterCtx string, docID string, policyName string, audit *AuditEntry, outbound OutboundConfig) {
 	var req BedrockConverseRequest
 	if err := json.Unmarshal(bodyBytes, &req); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		writeJSONError(w, http.StatusBadRequest, "invalid_request", err.Error())
 		return
 	}
 
@@ -908,7 +925,7 @@ func (p *Proxy) handleBedrock(w http.ResponseWriter, r *http.Request, bodyBytes 
 
 	body, err := json.Marshal(req)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeJSONError(w, http.StatusInternalServerError, "internal_error", err.Error())
 		return
 	}
 
@@ -1186,7 +1203,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	bodyBytes, err := ioutil.ReadAll(r.Body)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		writeJSONError(w, http.StatusBadRequest, "invalid_request", err.Error())
 		return
 	}
 
@@ -1281,7 +1298,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 func (p *Proxy) handleOllamaGenerate(w http.ResponseWriter, r *http.Request, bodyBytes []byte, context string, documentId string, policyName string, audit *AuditEntry, outbound OutboundConfig) {
 	var o OllamaGenerateRequest
 	if err := json.Unmarshal(bodyBytes, &o); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		writeJSONError(w, http.StatusBadRequest, "invalid_request", err.Error())
 		return
 	}
 
@@ -1309,7 +1326,7 @@ func (p *Proxy) handleOllamaGenerate(w http.ResponseWriter, r *http.Request, bod
 
 	j, err := json.Marshal(o)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeJSONError(w, http.StatusInternalServerError, "internal_error", err.Error())
 		return
 	}
 
@@ -1324,7 +1341,7 @@ func (p *Proxy) handleOllamaGenerate(w http.ResponseWriter, r *http.Request, bod
 func (p *Proxy) handleOllamaChat(w http.ResponseWriter, r *http.Request, bodyBytes []byte, context string, documentId string, policyName string, audit *AuditEntry, outbound OutboundConfig) {
 	var o OllamaChatRequest
 	if err := json.Unmarshal(bodyBytes, &o); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		writeJSONError(w, http.StatusBadRequest, "invalid_request", err.Error())
 		return
 	}
 
@@ -1342,7 +1359,7 @@ func (p *Proxy) handleOllamaChat(w http.ResponseWriter, r *http.Request, bodyByt
 
 	j, err := json.Marshal(o)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeJSONError(w, http.StatusInternalServerError, "internal_error", err.Error())
 		return
 	}
 
@@ -1357,7 +1374,7 @@ func (p *Proxy) handleOllamaChat(w http.ResponseWriter, r *http.Request, bodyByt
 func (p *Proxy) handleGeminiNative(w http.ResponseWriter, r *http.Request, bodyBytes []byte, context string, documentId string, policyName string, audit *AuditEntry, outbound OutboundConfig) {
 	var g GeminiRequest
 	if err := json.Unmarshal(bodyBytes, &g); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		writeJSONError(w, http.StatusBadRequest, "invalid_request", err.Error())
 		return
 	}
 
@@ -1390,7 +1407,7 @@ loop:
 
 	j, err := json.Marshal(g)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeJSONError(w, http.StatusInternalServerError, "internal_error", err.Error())
 		return
 	}
 
@@ -1409,7 +1426,7 @@ func (p *Proxy) handleOpenAI(w http.ResponseWriter, r *http.Request, bodyBytes [
 func (p *Proxy) handleOpenAICompatible(w http.ResponseWriter, r *http.Request, bodyBytes []byte, context string, documentId string, policyName string, audit *AuditEntry, outbound OutboundConfig, target *url.URL, client *http.Client, provider string) {
 	var o OpenAIRequest
 	if err := json.Unmarshal(bodyBytes, &o); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		writeJSONError(w, http.StatusBadRequest, "invalid_request", err.Error())
 		return
 	}
 
@@ -1446,7 +1463,7 @@ func (p *Proxy) handleOpenAICompatible(w http.ResponseWriter, r *http.Request, b
 
 	j, err := json.Marshal(o)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeJSONError(w, http.StatusInternalServerError, "internal_error", err.Error())
 		return
 	}
 
@@ -1461,7 +1478,7 @@ func (p *Proxy) handleOpenAICompatible(w http.ResponseWriter, r *http.Request, b
 func (p *Proxy) handleAnthropic(w http.ResponseWriter, r *http.Request, bodyBytes []byte, context string, documentId string, policyName string, audit *AuditEntry, outbound OutboundConfig) {
 	var a AnthropicRequest
 	if err := json.Unmarshal(bodyBytes, &a); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		writeJSONError(w, http.StatusBadRequest, "invalid_request", err.Error())
 		return
 	}
 
@@ -1546,7 +1563,7 @@ msgloop:
 
 	j, err := json.Marshal(a)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeJSONError(w, http.StatusInternalServerError, "internal_error", err.Error())
 		return
 	}
 

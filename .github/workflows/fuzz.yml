@@ -1,0 +1,45 @@
+name: Fuzz
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+
+  fuzz:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - FuzzAnthropicRequest
+          - FuzzOpenAIToolCallArgs
+          - FuzzGeminiRequest
+          - FuzzBedrockConverseRequest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.25'
+
+    - name: Install dependencies
+      run: go mod download
+
+    # Run the named fuzz target for a fixed budget. Any panic or invariant
+    # violation produces a crash file under testdata/fuzz/<target>/ which is
+    # uploaded as an artifact for triage. The crash file is also the
+    # regression seed the developer commits to fix the bug.
+    - name: Fuzz ${{ matrix.target }}
+      run: go test -run '^$' -fuzz '^${{ matrix.target }}$' -fuzztime 60s ./...
+
+    - name: Upload crash corpus
+      if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: fuzz-crash-${{ matrix.target }}
+        path: testdata/fuzz/${{ matrix.target }}/
+        if-no-files-found: ignore
