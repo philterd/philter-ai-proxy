@@ -38,9 +38,9 @@ scrape_configs:
 | `philter_proxy_entities_redacted_total` | Counter | `entity_type`, `provider` | Total entities redacted |
 | `philter_proxy_prompt_tokens_total` | Counter | `provider`, `model` | Total prompt (input) tokens reported by providers |
 | `philter_proxy_completion_tokens_total` | Counter | `provider`, `model` | Total completion (output) tokens reported by providers |
-| `philter_proxy_philter_errors_total` | Counter | — | Failed calls to the Philter backend |
+| `philter_proxy_philter_errors_total` | Counter | - | Failed calls to the Philter backend |
 | `philter_proxy_upstream_errors_total` | Counter | `provider`, `status_code` | Failed calls to LLM providers |
-| `philter_proxy_active_requests` | Gauge | — | Currently in-flight requests (those holding a concurrency slot) |
+| `philter_proxy_active_requests` | Gauge | - | Currently in-flight requests (those holding a concurrency slot) |
 | `philter_proxy_concurrency_limit` | Gauge | `scope` | Configured max-concurrent-requests ceiling. `0` means unlimited. |
 | `philter_proxy_concurrency_shed_total` | Counter | `scope` | Requests rejected (HTTP 503) due to the concurrency guard |
 
@@ -135,7 +135,7 @@ philter_proxy_active_requests
 
 ### Concurrency
 
-**Utilization (% of the global concurrency ceiling currently in use)** — only meaningful when `listen.maxConcurrentRequests > 0`:
+**Utilization (% of the global concurrency ceiling currently in use)** - only meaningful when `listen.maxConcurrentRequests > 0`:
 ```promql
 philter_proxy_active_requests
   / on() philter_proxy_concurrency_limit{scope="global"}
@@ -146,7 +146,7 @@ philter_proxy_active_requests
 sum by (scope) (rate(philter_proxy_concurrency_shed_total[5m]))
 ```
 
-If `scope="global"` is rising, you have a real capacity problem — **scale out horizontally first** rather than raising the cap. If only `scope="per_key"` is rising, talk to that tenant or raise their per-key cap; the global pool is fine.
+If `scope="global"` is rising, you have a real capacity problem - **scale out horizontally first** rather than raising the cap. If only `scope="per_key"` is rising, talk to that tenant or raise their per-key cap; the global pool is fine.
 
 ### Alerting rules
 
@@ -187,5 +187,5 @@ groups:
         labels:
           severity: warning
         annotations:
-          summary: "Proxy is shedding requests at the global concurrency cap — scale out or raise listen.maxConcurrentRequests"
+          summary: "Proxy is shedding requests at the global concurrency cap - scale out or raise listen.maxConcurrentRequests"
 ```

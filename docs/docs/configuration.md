@@ -158,13 +158,13 @@ providers:
       target: http://vllm.internal:8000
 ```
 
-Clients send requests to `/{name}/v1/...` — the proxy strips the prefix and forwards the remainder to the configured target using the same OpenAI handler logic. For example, a request to `/mistral/v1/chat/completions` is forwarded to `https://api.mistral.ai/v1/chat/completions`. The provider label in the audit log is set to the registered name.
+Clients send requests to `/{name}/v1/...` - the proxy strips the prefix and forwards the remainder to the configured target using the same OpenAI handler logic. For example, a request to `/mistral/v1/chat/completions` is forwarded to `https://api.mistral.ai/v1/chat/completions`. The provider label in the audit log is set to the registered name.
 
 Each entry accepts:
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `target` | string | — (required) | Base URL for this provider |
+| `target` | string | - (required) | Base URL for this provider |
 | `tlsVerify` | bool | `true` | Enable TLS certificate verification for this provider |
 
 **Reserved names**: `v1`, `api`, `model`, and `health` conflict with built-in route prefixes and will be rejected at startup.
@@ -175,7 +175,7 @@ Amazon Bedrock is an optional provider. It is enabled by setting `providers.bedr
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `region` | string | (none — Bedrock disabled) | AWS region for the Bedrock runtime endpoint (e.g., `us-east-1`) |
+| `region` | string | (none - Bedrock disabled) | AWS region for the Bedrock runtime endpoint (e.g., `us-east-1`) |
 | `roleArn` | string | (none) | ARN of an IAM role to assume for Bedrock calls (e.g., `arn:aws:iam::123456789012:role/BedrockRole`). When set, the proxy calls `sts:AssumeRole` using the host's base credentials and signs Bedrock requests with the resulting session credentials. |
 | `tlsVerify` | bool | `true` | Enable TLS certificate verification for the Bedrock connection |
 
@@ -201,7 +201,7 @@ If the host credentials do not have Bedrock access directly (e.g., in a multi-ac
 
 ### `routes`
 
-Routes control which **Philter redaction policy and context** are applied to each request. They do not control which LLM provider handles the request — provider routing is determined automatically by the URL path (see [API Reference](api.md) for path-to-provider mapping).
+Routes control which **Philter redaction policy and context** are applied to each request. They do not control which LLM provider handles the request - provider routing is determined automatically by the URL path (see [API Reference](api.md) for path-to-provider mapping).
 
 This means a single route can apply across all providers. For example, a route matching the header `x-philter-policy: hipaa` will use the HIPAA policy whether the request is going to OpenAI, Anthropic, Gemini, or Ollama.
 
@@ -252,7 +252,7 @@ Outbound response scanning runs the LLM's response through Philter before it is 
 | `block` | If any PII is detected, the response is suppressed and the client receives HTTP `403` with `{"error":{"message":"response blocked: PII detected","type":"pii_blocked"}}`. |
 | `flag` | PII is detected and logged as a warning, but the original unmodified response is returned to the client. |
 
-**Example — block responses containing PII for HIPAA routes:**
+**Example - block responses containing PII for HIPAA routes:**
 
 ```yaml
 routes:
@@ -305,8 +305,8 @@ auth:
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `enabled` | bool | `false` | Enable rate limiting. When false all other fields are ignored. |
-| `requestsPerSecond` | float | — (required when enabled) | Sustained per-client request rate (requests per second) |
-| `burst` | int | — (required when enabled) | Maximum number of requests a client may send in a burst above the sustained rate. Must be ≥ 1. |
+| `requestsPerSecond` | float | - (required when enabled) | Sustained per-client request rate (requests per second) |
+| `burst` | int | - (required when enabled) | Maximum number of requests a client may send in a burst above the sustained rate. Must be ≥ 1. |
 | `global.requestsPerSecond` | float | `0` (disabled) | Global sustained rate across all clients combined. `0` disables the global backstop. |
 | `global.burst` | int | `0` (disabled) | Global burst size. Must be set alongside `global.requestsPerSecond` to enable the global limit. |
 
@@ -345,7 +345,7 @@ Configure a list of API keys in the `auth` section. Each key can optionally be b
 
 ```yaml
 auth:
-  header: x-philter-proxy-key   # optional — this is the default
+  header: x-philter-proxy-key   # optional - this is the default
   apiKeys:
     - key: secret-key-for-team-a
     - key: secret-key-for-healthcare
@@ -379,7 +379,7 @@ curl -k https://localhost:8080/v1/chat/completions \
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `header` | string | `x-philter-proxy-key` | Request header the proxy reads the API key from |
-| `apiKeys` | list | (none — auth disabled) | List of valid API keys |
+| `apiKeys` | list | (none - auth disabled) | List of valid API keys |
 
 #### `auth.apiKeys[]` entry
 
@@ -406,7 +406,7 @@ listen:
 
 When `clientCA` is set, the proxy configures `RequireAndVerifyClientCert` on its TLS listener. Any connection without a valid client certificate is rejected at the TLS handshake level, before any HTTP processing occurs.
 
-**mTLS and API key authentication are orthogonal** — either or both can be enabled simultaneously. A typical defence-in-depth configuration uses mTLS to authenticate the connection and API keys to scope policy access per team.
+**mTLS and API key authentication are orthogonal** - either or both can be enabled simultaneously. A typical defence-in-depth configuration uses mTLS to authenticate the connection and API keys to scope policy access per team.
 
 **Generating a test client certificate:**
 
@@ -425,7 +425,7 @@ Set `listen.clientCA: ca.crt` in the proxy config, then pass `--cert client.crt 
 
 ## Audit Logging
 
-Every proxy request produces a structured JSON log entry (JSONL) to stdout. All output from the proxy — audit entries, startup, shutdown, and errors — is structured JSON, making it safe to pipe directly into log aggregators.
+Every proxy request produces a structured JSON log entry (JSONL) to stdout. All output from the proxy - audit entries, startup, shutdown, and errors - is structured JSON, making it safe to pipe directly into log aggregators.
 
 ### Log Schema
 
@@ -457,7 +457,7 @@ When outbound scanning is disabled (default), one entry is emitted per request:
 {"time":"2026-01-15T10:30:00Z","level":"INFO","msg":"request","request_id":"a1b2c3d4","direction":"inbound","provider":"openai","model":"gpt-4","policy_name":"default","document_id":"doc-789","fields_redacted":2,"entity_count":3,"entity_types":["NER_ENTITY","SSN"],"redact_latency_ms":45,"client_ip":"10.0.0.1","http_status":200,"prompt_tokens":312,"completion_tokens":87}
 ```
 
-When outbound scanning is enabled, two entries are emitted per request — one for the inbound scan and one for the outbound scan. Both share the same `request_id` and `document_id` for correlation. Token counts appear on the inbound entry only:
+When outbound scanning is enabled, two entries are emitted per request - one for the inbound scan and one for the outbound scan. Both share the same `request_id` and `document_id` for correlation. Token counts appear on the inbound entry only:
 
 ```json
 {"time":"2026-01-15T10:30:00Z","level":"INFO","msg":"request","request_id":"a1b2c3d4","direction":"outbound","provider":"openai","model":"gpt-4","policy_name":"default","document_id":"doc-789","fields_redacted":1,"entity_count":1,"entity_types":["NER_ENTITY"],"redact_latency_ms":12,"client_ip":"10.0.0.1","http_status":200}
@@ -535,7 +535,7 @@ auth:
       maxConcurrent: 20        # per-key in-flight cap; applied in addition to the global cap
 ```
 
-The global and per-key caps **compose** — a request must acquire both. The per-key cap protects the shared pool from a single noisy tenant; the global cap protects the proxy as a whole.
+The global and per-key caps **compose** - a request must acquire both. The per-key cap protects the shared pool from a single noisy tenant; the global cap protects the proxy as a whole.
 
 ### Behaviour when the limit is exceeded
 
@@ -563,7 +563,7 @@ maxConcurrentRequests = 2 × (target_rps × p95_provider_response_seconds)
 
 The `2×` is headroom for tail latency and short bursts. Cross-check against:
 
-- **Your LLM provider's concurrent-request quota.** Set the proxy cap no higher than what your account can actually serve — otherwise you push work into the provider's queue and lose the back-pressure signal here.
+- **Your LLM provider's concurrent-request quota.** Set the proxy cap no higher than what your account can actually serve - otherwise you push work into the provider's queue and lose the back-pressure signal here.
 - **File descriptors.** Each in-flight request needs ~3 sockets (client + Philter + provider). Default `ulimit -n` of 1024 is exhausted around ~330 concurrent. Raise it before raising the cap.
 - **Memory.** Each in-flight request holds one goroutine plus buffered request/response bodies (rough estimate: 50–200 KB per request). 1,000 concurrent ≈ 50–200 MB of proxy state.
 
@@ -596,21 +596,21 @@ The `(type, code)` set below is part of the proxy's public API. New codes may be
 
 | Status | `type` | `code` | Trigger | `Retry-After` |
 |---|---|---|---|---|
-| 400 | `invalid_request` | `bad_json` | Request body is not valid JSON for the matched provider | — |
-| 400 | `invalid_request` | `body_read` | Request body could not be read from the client connection | — |
-| 401 | `unauthorized` | `missing_api_key` | Auth enabled and no key in the configured header | — |
-| 401 | `unauthorized` | `invalid_api_key` | Auth enabled and the supplied key was not recognised | — |
-| 403 | `pii_blocked` | `outbound_blocked` | Outbound scanning is on with `action: block` and PII was found in the provider response | — |
-| 404 | `not_found` | `bedrock_disabled` | A Bedrock path was requested but `providers.bedrock.region` is unset | — |
+| 400 | `invalid_request` | `bad_json` | Request body is not valid JSON for the matched provider | - |
+| 400 | `invalid_request` | `body_read` | Request body could not be read from the client connection | - |
+| 401 | `unauthorized` | `missing_api_key` | Auth enabled and no key in the configured header | - |
+| 401 | `unauthorized` | `invalid_api_key` | Auth enabled and the supplied key was not recognised | - |
+| 403 | `pii_blocked` | `outbound_blocked` | Outbound scanning is on with `action: block` and PII was found in the provider response | - |
+| 404 | `not_found` | `bedrock_disabled` | A Bedrock path was requested but `providers.bedrock.region` is unset | - |
 | 429 | `rate_limit_error` | `rate_limited` | Rate-limit token bucket exhausted for this client | seconds until refill |
-| 500 | `internal_error` | `marshal_failed` | Re-serialising the redacted request body failed (should not occur in normal operation) | — |
-| 500 | `internal_error` | `request_creation_failed` | `http.NewRequest` failed when building the upstream call (typically an invalid target URL) | — |
-| 500 | `internal_error` | `bedrock_sign_failed` | AWS SigV4 signing failed (credentials cannot be retrieved) | — |
-| 502 | `provider_error` | `unreachable` | Upstream LLM provider connection failed (DNS, dial, TLS) | — |
-| 502 | `provider_error` | `response_read_failed` | Connected to the provider but failed to read the response body | — |
-| 502 | `philter_error` | `request_failed` | Philter call failed (network or non-2xx response) and retries were exhausted | — |
+| 500 | `internal_error` | `marshal_failed` | Re-serialising the redacted request body failed (should not occur in normal operation) | - |
+| 500 | `internal_error` | `request_creation_failed` | `http.NewRequest` failed when building the upstream call (typically an invalid target URL) | - |
+| 500 | `internal_error` | `bedrock_sign_failed` | AWS SigV4 signing failed (credentials cannot be retrieved) | - |
+| 502 | `provider_error` | `unreachable` | Upstream LLM provider connection failed (DNS, dial, TLS) | - |
+| 502 | `provider_error` | `response_read_failed` | Connected to the provider but failed to read the response body | - |
+| 502 | `philter_error` | `request_failed` | Philter call failed (network or non-2xx response) and retries were exhausted | - |
 | 503 | `capacity` | `concurrency_exceeded` | `listen.maxConcurrentRequests` or a per-key cap was hit | `1` |
-| 503 | `circuit_open` | `philter_unavailable` | Philter circuit breaker is open with `fallback: block` | — |
+| 503 | `circuit_open` | `philter_unavailable` | Philter circuit breaker is open with `fallback: block` | - |
 
 **Errors forwarded from upstream LLM providers** are passed through unchanged and follow the provider's own error format, not the schema above. The codes here apply only to errors the proxy itself generates.
 

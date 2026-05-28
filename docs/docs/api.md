@@ -11,13 +11,13 @@ The proxy inspects and redacts all text-bearing fields in the request body befor
 | OpenAI / OpenAI-compatible | `role: user` | `content` (string) |
 | OpenAI / OpenAI-compatible | `role: system` | `content` (string) |
 | OpenAI / OpenAI-compatible | `role: tool` | `content` (string) |
-| OpenAI / OpenAI-compatible | `role: assistant` with tool calls | `tool_calls[].function.arguments` — parsed as JSON, string values redacted, re-serialized |
+| OpenAI / OpenAI-compatible | `role: assistant` with tool calls | `tool_calls[].function.arguments` - parsed as JSON, string values redacted, re-serialized |
 | Anthropic | Top-level | `system` (string) |
 | Anthropic | `text` content block | `text` |
 | Anthropic | `tool_result` content block | `content` (string or nested `text` blocks) |
 | Gemini | `text` part | `text` |
-| Gemini | `functionResponse` part | `response` object — all string values redacted recursively |
-| Ollama generate | — | `prompt`, `system` |
+| Gemini | `functionResponse` part | `response` object - all string values redacted recursively |
+| Ollama generate | - | `prompt`, `system` |
 | Ollama chat | `role: *` | `content` |
 | Bedrock Converse | Top-level | `system[].text` |
 | Bedrock Converse | `messages[].content[]` | `text` |
@@ -118,7 +118,7 @@ The proxy routes requests based on the URL path:
 - **URL**: `/v1beta/models/{model}:generateContent`
 - **Method**: `POST`
 - **Streaming**: Use `:streamGenerateContent` instead of `:generateContent`. Response is chunked JSON.
-- **Note**: The Gemini API passes the API key as a URL query parameter (`?key=...`) rather than a header. The proxy forwards the query string to the provider but never logs API keys — sensitive query parameters are redacted from all log and error output.
+- **Note**: The Gemini API passes the API key as a URL query parameter (`?key=...`) rather than a header. The proxy forwards the query string to the provider but never logs API keys - sensitive query parameters are redacted from all log and error output.
 - **Example**:
   ```bash
   curl -k "https://localhost:8080/v1beta/models/gemini-2.0-flash:generateContent?key=$GEMINI_API_KEY" \

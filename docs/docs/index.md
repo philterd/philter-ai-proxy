@@ -25,6 +25,6 @@ Every request produces a structured JSON audit log entry with the provider, mode
 
 The proxy ships as a single Go binary. From there:
 
-- **Local / VM** — run the binary directly with `--config config.yaml`. See [Installation](installation.md).
-- **Docker** — a multi-arch image at `philterd/philter-ai-proxy`. See [Installation → Docker](installation.md#docker).
-- **Kubernetes** — first-party Helm chart and plain manifests under `deploy/`, plus a starter Grafana dashboard. See [Kubernetes Quickstart](kubernetes.md).
+- **Local / VM** - run the binary directly with `--config config.yaml`. See [Installation](installation.md).
+- **Docker** - a multi-arch image at `philterd/philter-ai-proxy`. See [Installation → Docker](installation.md#docker).
+- **Kubernetes** - first-party Helm chart and plain manifests under `deploy/`, plus a starter Grafana dashboard. See [Kubernetes Quickstart](kubernetes.md).

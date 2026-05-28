@@ -25,7 +25,7 @@ Both streaming and non-streaming requests are supported for all providers.
 
 Yes. Streaming responses (SSE for OpenAI/Anthropic, chunked JSON for Gemini, NDJSON for Ollama) are forwarded to the client in real time without buffering. Inbound prompt redaction works identically for streaming and non-streaming requests.
 
-Outbound response scanning is not applied to streaming responses — the stream is forwarded to the client unchanged and a warning is logged. Outbound scanning applies only to non-streaming responses.
+Outbound response scanning is not applied to streaming responses - the stream is forwarded to the client unchanged and a warning is logged. Outbound scanning applies only to non-streaming responses.
 
 ### Is any sensitive data logged?
 
@@ -45,7 +45,7 @@ Outbound scanning is disabled by default because it adds a Philter round-trip af
 
 Yes. When outbound scanning is enabled, the proxy must buffer the full provider response and make an additional request to Philter before returning the response to the client. The added latency equals roughly one Philter round-trip (typically low-double-digit milliseconds on local deployments).
 
-Streaming responses are not scanned — they are forwarded immediately — so streaming requests have no outbound latency overhead.
+Streaming responses are not scanned - they are forwarded immediately - so streaming requests have no outbound latency overhead.
 
 ### How do I configure the proxy?
 
@@ -69,11 +69,11 @@ For zero-trust service-to-service authentication, set `listen.clientCA` to a CA 
 
 ### Can I use the proxy with Mistral, Cohere, vLLM, or other OpenAI-compatible providers?
 
-Yes. Register any OpenAI-compatible provider under `providers.openaiCompatible` in the config, giving it a short name and a target URL. Clients send requests to `/{name}/v1/...` (e.g., `/mistral/v1/chat/completions`); the proxy strips the prefix and forwards the standard OpenAI-format request to the configured target after running PII redaction. No changes are needed to route configuration — routes work the same way across all OpenAI-compatible providers. See [Configuration](configuration.md#providersopenaicompatible) for details.
+Yes. Register any OpenAI-compatible provider under `providers.openaiCompatible` in the config, giving it a short name and a target URL. Clients send requests to `/{name}/v1/...` (e.g., `/mistral/v1/chat/completions`); the proxy strips the prefix and forwards the standard OpenAI-format request to the configured target after running PII redaction. No changes are needed to route configuration - routes work the same way across all OpenAI-compatible providers. See [Configuration](configuration.md#providersopenaicompatible) for details.
 
 ### How does Bedrock authentication work?
 
-The proxy handles AWS Signature Version 4 signing internally. The client sends a plain JSON request (no AWS credentials needed). The proxy signs the modified request using credentials from the standard AWS credential chain — environment variables, EC2 instance profile, ECS task role, or IRSA — before forwarding it to Bedrock. This means you never expose AWS credentials to API clients, and access control is enforced at the IAM level on the proxy's role.
+The proxy handles AWS Signature Version 4 signing internally. The client sends a plain JSON request (no AWS credentials needed). The proxy signs the modified request using credentials from the standard AWS credential chain - environment variables, EC2 instance profile, ECS task role, or IRSA - before forwarding it to Bedrock. This means you never expose AWS credentials to API clients, and access control is enforced at the IAM level on the proxy's role.
 
 ### Does the proxy support streaming with Amazon Bedrock?
 
@@ -99,7 +99,7 @@ All errors the proxy generates itself are structured JSON with the shape:
 {"error":{"message":"...","type":"...","code":"...","request_id":"..."}}
 ```
 
-`Content-Type: application/json` and an `X-Request-Id` header carrying the same `request_id` are always set. The `(type, code)` pair is a stable enum — codes will not be removed or repurposed across minor versions. The full table lives at [Configuration → Error Responses](configuration.md#error-responses).
+`Content-Type: application/json` and an `X-Request-Id` header carrying the same `request_id` are always set. The `(type, code)` pair is a stable enum - codes will not be removed or repurposed across minor versions. The full table lives at [Configuration → Error Responses](configuration.md#error-responses).
 
 To trace a failed request: grab the `X-Request-Id` header from the response, then search audit logs for `request_id=<that value>`. The audit entry's `error_type` and `error_code` will match what the client received.
 

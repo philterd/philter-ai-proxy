@@ -54,7 +54,7 @@ curl -k "https://localhost:8080/v1beta/models/gemini-2.0-flash:generateContent?k
     }'
 ```
 
-**Note:** The Gemini API passes the API key as a URL query parameter rather than a header. The proxy forwards the query string to the provider but never logs API keys — sensitive query parameters are redacted from all log and error output.
+**Note:** The Gemini API passes the API key as a URL query parameter rather than a header. The proxy forwards the query string to the provider but never logs API keys - sensitive query parameters are redacted from all log and error output.
 
 For streaming, use the `streamGenerateContent` endpoint:
 
@@ -99,7 +99,7 @@ Ollama streams by default. Set `"stream": false` to receive a single response.
 
 ## Tool Use and Function Calling
 
-The proxy redacts PII in tool-use workflows automatically — no additional configuration is required.
+The proxy redacts PII in tool-use workflows automatically - no additional configuration is required.
 
 ### OpenAI Tool Results
 
@@ -200,7 +200,7 @@ routes:
       action: block
 ```
 
-**`redact`** — PII in the response is replaced before it reaches the client:
+**`redact`** - PII in the response is replaced before it reaches the client:
 
 ```bash
 curl -k https://localhost:8080/v1/chat/completions \
@@ -214,13 +214,13 @@ curl -k https://localhost:8080/v1/chat/completions \
 
 If the model responds with `A common SSN looks like 123-45-6789`, the proxy scans the response through Philter and returns the redacted version: `A common SSN looks like {{{REDACTED-ssn}}}`.
 
-**`block`** — If any PII is detected in the response, the proxy returns HTTP 403 instead of forwarding the response:
+**`block`** - If any PII is detected in the response, the proxy returns HTTP 403 instead of forwarding the response:
 
 ```json
 {"error":{"message":"response blocked: PII detected","type":"pii_blocked"}}
 ```
 
-**`flag`** — The original response is returned unchanged; a warning entry is written to the audit log if PII is found. Useful for monitoring without modifying responses.
+**`flag`** - The original response is returned unchanged; a warning entry is written to the audit log if PII is found. Useful for monitoring without modifying responses.
 
 **Streaming note:** Outbound scanning only applies to non-streaming responses. Streaming responses (`"stream": true`) are forwarded to the client unchanged. Inbound prompt redaction is unaffected in either case.
 

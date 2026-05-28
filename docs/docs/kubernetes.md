@@ -2,8 +2,8 @@
 
 Two ways to run the proxy in Kubernetes:
 
-- [**Helm chart**](#helm-chart) — recommended. Production-ready, every advanced feature opt-in.
-- [**Plain manifests**](#plain-manifests) — for users who don't want Helm. Minimal Deployment + Service + Secret.
+- [**Helm chart**](#helm-chart) - recommended. Production-ready, every advanced feature opt-in.
+- [**Plain manifests**](#plain-manifests) - for users who don't want Helm. Minimal Deployment + Service + Secret.
 
 The metrics endpoint is wired up for Prometheus the same way in both cases. See the bottom of this page for the [starter Grafana dashboard](#grafana-dashboard).
 
@@ -134,7 +134,7 @@ openssl req -x509 -newkey rsa:4096 -keyout tls.key -out tls.crt -days 365 -nodes
 
 kubectl create secret tls philter-ai-proxy-tls --cert=tls.crt --key=tls.key
 
-# 2. Edit deploy/k8s/01-config.yaml — point philter.endpoint at your Philter.
+# 2. Edit deploy/k8s/01-config.yaml - point philter.endpoint at your Philter.
 # 3. Apply.
 kubectl apply -f deploy/k8s/
 

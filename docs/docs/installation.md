@@ -69,8 +69,8 @@ The default `docker-compose.yaml` mounts `config.example.yaml` as the config fil
 
 Two ways to deploy on Kubernetes:
 
-- **Helm chart** at `deploy/helm/philter-ai-proxy/` — production-ready, with values for replicas, autoscaling (HPA), Pod Disruption Budgets, Ingress, Prometheus Operator `ServiceMonitor`, mTLS, and cert-manager-issued TLS.
-- **Plain manifests** at `deploy/k8s/` — minimal Deployment + Service + Secret for users who don't want Helm.
+- **Helm chart** at `deploy/helm/philter-ai-proxy/` - production-ready, with values for replicas, autoscaling (HPA), Pod Disruption Budgets, Ingress, Prometheus Operator `ServiceMonitor`, mTLS, and cert-manager-issued TLS.
+- **Plain manifests** at `deploy/k8s/` - minimal Deployment + Service + Secret for users who don't want Helm.
 
 A starter Grafana dashboard covering every emitted metric ships alongside at `deploy/grafana/philter-ai-proxy.json`.
 
