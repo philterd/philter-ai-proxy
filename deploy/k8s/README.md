@@ -27,7 +27,8 @@ kubectl apply -f deploy/k8s/
 # 5. Check.
 kubectl get pods -l app=philter-ai-proxy
 kubectl port-forward svc/philter-ai-proxy 8443:8080 &
-curl -k https://localhost:8443/health
+curl -k https://localhost:8443/livez
+curl -k https://localhost:8443/readyz
 ```
 
 ## Layout

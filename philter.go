@@ -130,6 +130,16 @@ func (cb *circuitBreaker) State() string {
 	return "unknown"
 }
 
+// blocking reports whether the breaker is currently rejecting requests with
+// the "block" fallback. Half-open is treated as serving (a probe goes
+// through); only the open+block state means the proxy will return 503 to
+// every request that arrives.
+func (cb *circuitBreaker) blocking() bool {
+	cb.mu.Lock()
+	defer cb.mu.Unlock()
+	return cb.state == cbStateOpen && cb.fallback == "block"
+}
+
 // --- PhilterClient -----------------------------------------------------------
 
 // filterFunc is a Philter call abstraction used by redactAny and redactJSONArguments.
@@ -172,6 +182,23 @@ func newPhilterClient(httpClient *http.Client, endpoint string, retryCfg RetryCo
 		pc.cb = newCircuitBreaker(threshold, timeout, fallback)
 	}
 	return pc
+}
+
+// Ready reports whether the client can currently serve traffic. The only
+// state that returns false is "circuit breaker is open AND its fallback is
+// block" - i.e. every request that arrives right now will be rejected. With
+// no breaker configured, or with the breaker closed/half-open, or with the
+// breaker open and fallback=passthrough, the client is considered ready
+// (individual requests may still fail; the proxy is just not categorically
+// down).
+//
+// Used by the /readyz handler so transient Philter blips don't cause
+// Kubernetes to restart healthy pods.
+func (pc *PhilterClient) Ready() bool {
+	if pc == nil || pc.cb == nil {
+		return true
+	}
+	return !pc.cb.blocking()
 }
 
 // Filter calls the Philter /api/explain endpoint with retry and circuit breaker logic.

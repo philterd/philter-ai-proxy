@@ -58,10 +58,10 @@ helm install proxy ./deploy/helm/philter-ai-proxy \
 ```bash
 kubectl --namespace philter-system get pods -l app.kubernetes.io/instance=proxy
 
-# Port-forward + curl the health endpoint
+# Port-forward + check the two probe endpoints
 kubectl --namespace philter-system port-forward svc/proxy-philter-ai-proxy 8443:8080 &
-curl -k https://localhost:8443/health
-# → {"status":"ok","philter":"ok"}
+curl -k https://localhost:8443/livez   # process up; returns {"status":"ok"}
+curl -k https://localhost:8443/readyz  # ready to serve; returns {"status":"ok"} unless the Philter breaker is open+block
 ```
 
 ### Common configurations
@@ -150,7 +150,8 @@ kubectl apply -f deploy/k8s/
 # 4. Verify
 kubectl get pods -l app=philter-ai-proxy
 kubectl port-forward svc/philter-ai-proxy 8443:8080 &
-curl -k https://localhost:8443/health
+curl -k https://localhost:8443/livez
+curl -k https://localhost:8443/readyz
 ```
 
 ## Grafana dashboard

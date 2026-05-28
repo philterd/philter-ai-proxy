@@ -56,21 +56,27 @@ Token counters are populated from each provider's native usage response field. T
 
 **`scope`** (on concurrency metrics): `global` for the proxy-wide cap, `per_key` for per-API-key caps.
 
-## Health Endpoint
+## Health Endpoints
 
-`GET /health` (on the proxy port, not the metrics port) returns a JSON body indicating whether the Philter backend is reachable:
+The proxy exposes three HTTP endpoints on the proxy port (not the metrics port) for use as load-balancer health checks and Kubernetes probes.
 
-```json
-{"status":"ok","philter":"ok"}
-```
+### `/livez` (liveness)
 
-If Philter is unreachable, the endpoint returns HTTP `503` with:
+Always returns `200 OK` with body `{"status":"ok"}` as long as the process is running and the listener is accepting connections. **Does not probe Philter** - this is the endpoint to point a Kubernetes liveness probe at, so transient upstream blips don't trigger pod restarts.
 
-```json
-{"status":"degraded","philter":"unreachable"}
-```
+### `/readyz` (readiness)
 
-This is suitable for use as a Kubernetes liveness/readiness probe or a load-balancer health check. The check uses a 2-second timeout so it does not stall health polling loops.
+Returns `200 OK` with body `{"status":"ok"}` when the proxy is willing to accept traffic, or `503 Service Unavailable` with body `{"status":"not_ready","reason":"philter_circuit_open"}` when the Philter circuit breaker is open AND configured to block. In every other state (no breaker configured, breaker closed, breaker half-open, or breaker open with `fallback: passthrough`) the proxy is considered ready: individual requests may still fail but Kubernetes should NOT shed traffic from the pod.
+
+**Does not probe Philter** - the breaker's existing state is the source of truth. This keeps readiness cheap and avoids adding load to a struggling Philter.
+
+Use this as a Kubernetes readiness probe.
+
+### `/health` (deprecated)
+
+Retained for backwards compatibility. Returns `200 OK` with `{"status":"ok","philter":"ok"}` when Philter is reachable; `503` with `{"status":"degraded","philter":"unreachable"}` when not. Unlike `/readyz`, this endpoint makes an active outbound probe to Philter on every call (2-second timeout).
+
+**Deprecated in favor of `/livez` and `/readyz`.** New deployments should use the split endpoints; treating Philter unreachability as a liveness failure causes Kubernetes to restart healthy pods during transient outages, which is precisely the failure mode the split was introduced to fix.
 
 ## Grafana Dashboard
 

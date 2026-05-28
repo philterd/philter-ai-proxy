@@ -41,9 +41,13 @@ spec:
             - name: metrics
               containerPort: 9090
               protocol: TCP
+          # /livez never fails for upstream issues (so transient Philter blips
+          # don't restart healthy pods); /readyz returns 503 when the Philter
+          # circuit breaker is open with fallback=block (so k8s sheds traffic
+          # from pods that can't actually serve).
           livenessProbe:
             httpGet:
-              path: /health
+              path: /livez
               port: proxy
               scheme: HTTPS
             initialDelaySeconds: 10
@@ -51,7 +55,7 @@ spec:
             timeoutSeconds: 3
           readinessProbe:
             httpGet:
-              path: /health
+              path: /readyz
               port: proxy
               scheme: HTTPS
             initialDelaySeconds: 5

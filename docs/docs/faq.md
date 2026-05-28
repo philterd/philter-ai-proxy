@@ -67,6 +67,10 @@ For API key authentication, configure one or more keys under `auth.apiKeys` in t
 
 For zero-trust service-to-service authentication, set `listen.clientCA` to a CA certificate. The proxy will require and verify a client TLS certificate on every connection. API key auth and mTLS can be used simultaneously. See [Configuration](configuration.md#authentication) for details and examples.
 
+### What endpoints should I use for Kubernetes probes?
+
+Point liveness at `/livez` and readiness at `/readyz`. `/livez` always returns 200 as long as the process is running, so transient Philter outages don't restart healthy pods. `/readyz` returns 503 only when the Philter circuit breaker is open with `fallback: block` - the proxy can't serve any traffic in that state. In every other state (no breaker, breaker closed, half-open, or open with `fallback: passthrough`) `/readyz` returns 200. The first-party Helm chart and plain manifests already use these endpoints. The legacy `/health` endpoint is retained for backwards compatibility but is deprecated; treating Philter unreachability as a liveness failure is the exact failure mode the split fixes. See [Monitoring -> Health Endpoints](monitoring.md#health-endpoints).
+
 ### Are API keys hashed at rest?
 
 Yes. Keys are hashed when the config is loaded and never held in memory as plaintext. The `auth.apiKeys[].key` field accepts plaintext (auto-hashed with SHA256 at load), `sha256$<64-hex>` for a pre-hashed value, or `bcrypt$<bcrypt-hash>` for users with existing bcrypt key-management workflows. Verification uses constant-time comparison. For production, pre-hash externally so the plaintext never appears in your YAML, source control, or container images. See [API Key Hashing](configuration.md#api-key-hashing) for format details, latency per algorithm, and CLI recipes for generating pre-hashed values.

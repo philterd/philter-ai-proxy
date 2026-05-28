@@ -279,6 +279,41 @@ func (p *Proxy) philterError(w http.ResponseWriter, audit *AuditEntry, err error
 	writeError(w, audit, http.StatusBadGateway, "philter_error", "request_failed", "philter request failed")
 }
 
+// handleLivez serves the Kubernetes-style liveness endpoint. It is intentionally
+// dependency-free: any reply (even 200) proves the process is alive and the
+// listener is accepting connections. Treating Philter unreachability as a
+// liveness failure used to cause k8s to restart healthy pods during transient
+// upstream blips; that responsibility now belongs to /readyz.
+func (p *Proxy) handleLivez(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte(`{"status":"ok"}`))
+}
+
+// handleReadyz serves the Kubernetes-style readiness endpoint. It returns 503
+// only when the proxy is in a state where every request will fail - currently
+// that means the Philter circuit breaker is open AND its fallback is "block".
+// In any other state (no breaker, breaker closed, half-open, or breaker open
+// with fallback=passthrough) the proxy is considered ready: individual
+// requests may still fail, but k8s shouldn't shed traffic from us.
+//
+// Unlike /health, /readyz does NOT make an active outbound probe; the breaker
+// state is the source of truth. This keeps readiness checks cheap and avoids
+// adding extra load to a struggling Philter.
+func (p *Proxy) handleReadyz(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if p.philter != nil && !p.philter.Ready() {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		w.Write([]byte(`{"status":"not_ready","reason":"philter_circuit_open"}`))
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte(`{"status":"ok"}`))
+}
+
+// handleHealth is retained for backwards compatibility. New deployments
+// should point Kubernetes probes at /livez (liveness) and /readyz
+// (readiness) instead.
 func (p *Proxy) handleHealth(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
@@ -1194,7 +1229,14 @@ func (p *Proxy) resolveOpenAICompatible(path string) (name string, target *url.U
 
 func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
-	if r.URL.Path == "/health" {
+	switch r.URL.Path {
+	case "/livez":
+		p.handleLivez(w, r)
+		return
+	case "/readyz":
+		p.handleReadyz(w, r)
+		return
+	case "/health":
 		p.handleHealth(w, r)
 		return
 	}
