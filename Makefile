@@ -1,3 +1,8 @@
+# All targets are phony (no target produces a file by the same name). Without
+# this, `make test` is shadowed by the test/ directory and reports
+# "up to date" instead of running the tests.
+.PHONY: build run cert docker-build docker-push docker-push-dry-run test integration-up integration-down test-integration
+
 build:
 	go build -o philter-ai-proxy .
 
