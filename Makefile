@@ -12,3 +12,13 @@ docker-build:
 
 test:
 	go test -v ./...
+
+integration-up:
+	docker compose -f docker-compose.test.yaml up -d philter
+
+integration-down:
+	docker compose -f docker-compose.test.yaml down
+
+test-integration: integration-up
+	PHILTER_TEST_URL=http://localhost:8081 go test -v -tags=integration -run Integration ./...
+	$(MAKE) integration-down
