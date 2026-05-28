@@ -5,6 +5,11 @@ listen:
   shutdownTimeout: 30
   # clientCA: /etc/ssl/client-ca.pem  # optional: enable mTLS by specifying the CA that signed client certs
   # maxConcurrentRequests: 0          # max in-flight requests; 0 = unlimited (default). Excess requests get HTTP 503 + Retry-After.
+  # Inbound request hardening (secure defaults applied when unset). See docs/configuration.md#request-hardening
+  # maxRequestBodyBytes: 10485760     # max inbound body (10 MiB default); larger → HTTP 413
+  # maxHeaderBytes: 1048576           # max request header bytes (1 MiB default)
+  # readHeaderTimeoutMs: 10000        # time to send headers (10s default); slowloris mitigation
+  # readTimeoutMs: 0                  # whole-request read bound; 0 = disabled (default), set to bound slow-body uploads
 
 logging:
   enabled: true

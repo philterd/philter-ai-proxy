@@ -83,6 +83,10 @@ defaults:
 | `shutdownTimeout` | int | `30` | Seconds to wait for in-flight requests during graceful shutdown |
 | `clientCA` | string | (none) | Path to a PEM CA certificate used to verify client certificates. When set, mTLS is enabled and the proxy requires a valid client certificate on every connection. See [mTLS](#mtls-mutual-tls) below. |
 | `maxConcurrentRequests` | int | `0` (unlimited) | Maximum number of in-flight requests the proxy will process at once. Excess requests get HTTP 503 with `Retry-After: 1`. See [Concurrency Limits](#concurrency-limits) below. |
+| `maxRequestBodyBytes` | int | `10485760` (10 MiB) | Maximum inbound request body size in bytes. Larger bodies are rejected with HTTP 413. See [Request Hardening](#request-hardening) below. |
+| `maxHeaderBytes` | int | `1048576` (1 MiB) | Maximum total size of inbound request headers. |
+| `readHeaderTimeoutMs` | int | `10000` (10s) | Time a client may take to send the request headers before the connection is dropped (slowloris mitigation). |
+| `readTimeoutMs` | int | `0` (disabled) | Time to read the entire request including body. Bounds slow-body attacks; affects only request reads, never response streaming. Disabled by default so large/slow uploads aren't truncated. |
 
 ### `logging`
 
@@ -805,6 +809,29 @@ The `2×` is headroom for tail latency and short bursts. Cross-check against:
 
 See the [Monitoring](monitoring.md#concurrency) page for the metrics to watch and a PromQL recipe for computing utilization.
 
+## Request Hardening
+
+The proxy is network-facing, so it bounds the **size and duration of inbound client requests** in addition to the [concurrency](#concurrency-limits) (count) and [provider timeout](#provider-timeouts) (outbound) limits. These are configured under `listen` and applied with secure defaults when unset:
+
+```yaml
+listen:
+  maxRequestBodyBytes: 10485760   # 10 MiB; larger bodies → HTTP 413
+  maxHeaderBytes: 1048576         # 1 MiB
+  readHeaderTimeoutMs: 10000      # 10s to send headers (slowloris mitigation)
+  readTimeoutMs: 0                # 0 = disabled; whole-request (incl. body) read bound
+```
+
+| Protection | Field | Default | Behaviour |
+|---|---|---|---|
+| **Body size** | `maxRequestBodyBytes` | 10 MiB | The body is wrapped in a hard limit; exceeding it returns `413 Too Large` (`payload_too_large` / `request_body_too_large`) and the connection is closed. Raise it if you send large multimodal (base64 image) requests. |
+| **Header size** | `maxHeaderBytes` | 1 MiB | Caps total request header bytes (matches net/http's default). |
+| **Slowloris** | `readHeaderTimeoutMs` | 10s | Bounds how long a client may take to send the request headers; a client that dribbles headers to hold the connection open is dropped. |
+| **Slow body** | `readTimeoutMs` | disabled | Bounds reading the whole request (headers + body). Opt-in, because a too-low value would truncate large or slow legitimate uploads. It affects only request reads. |
+
+**Streaming is unaffected.** The proxy deliberately does **not** set a write timeout, so streamed responses can run arbitrarily long. `readTimeoutMs` bounds only the inbound request, never the response. The same header limits and timeouts are applied to the metrics server.
+
+These limits apply per request and are independent of the concurrency guard: concurrency bounds *how many* requests run at once, while these bound *how big* and *how slow* any single request may be.
+
 ## Token Quotas
 
 Token quotas cap **cumulative token consumption** per API key over a calendar window, distinct from [rate limits](#rate-limiting) (which bound request *frequency*). Use them for hard cost ceilings and multi-tenant budgets. Quotas are **disabled by default**.
@@ -980,6 +1007,7 @@ The `(type, code)` set below is part of the proxy's public API. New codes may be
 |---|---|---|---|---|
 | 400 | `invalid_request` | `bad_json` | Request body is not valid JSON for the matched provider | - |
 | 400 | `invalid_request` | `body_read` | Request body could not be read from the client connection | - |
+| 413 | `payload_too_large` | `request_body_too_large` | Request body exceeded `listen.maxRequestBodyBytes` | - |
 | 401 | `unauthorized` | `missing_api_key` | Auth enabled and no key in the configured header | - |
 | 401 | `unauthorized` | `invalid_api_key` | Auth enabled and the supplied key was not recognised | - |
 | 403 | `pii_blocked` | `outbound_blocked` | Outbound scanning is on with `action: block` and PII was found in the provider response | - |

@@ -1438,8 +1438,18 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		defer p.metrics.activeRequests.Dec()
 	}
 
+	// Cap the inbound request body. MaxBytesReader makes ReadAll fail with
+	// *http.MaxBytesError once the limit is exceeded (and signals the server to
+	// close the connection). The original w is passed so that signal works.
+	r.Body = http.MaxBytesReader(w, r.Body, p.config.Listen.effectiveMaxRequestBodyBytes())
 	bodyBytes, err := ioutil.ReadAll(r.Body)
 	if err != nil {
+		var maxErr *http.MaxBytesError
+		if errors.As(err, &maxErr) {
+			slog.Warn("Request body exceeds limit", "limit_bytes", maxErr.Limit, "request_id", requestID)
+			writeError(rc, audit, http.StatusRequestEntityTooLarge, "payload_too_large", "request_body_too_large", "request body exceeds the maximum allowed size")
+			return
+		}
 		writeError(rc, audit, http.StatusBadRequest, "invalid_request", "body_read", err.Error())
 		return
 	}
@@ -1559,6 +1569,32 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			})
 		}
 	}
+}
+
+// hardenedServer builds an http.Server with inbound request-hardening applied:
+// a header read deadline (slowloris mitigation) and a header size cap, with
+// secure defaults when unset. WriteTimeout is deliberately omitted so streaming
+// responses can run arbitrarily long; ReadTimeout (whole-request, incl. body)
+// is opt-in and never affects response writes.
+func hardenedServer(addr string, handler http.Handler, cfg ListenConfig) *http.Server {
+	readHeaderTimeoutMs := cfg.ReadHeaderTimeoutMs
+	if readHeaderTimeoutMs == 0 {
+		readHeaderTimeoutMs = DefaultReadHeaderTimeoutMs
+	}
+	maxHeaderBytes := cfg.MaxHeaderBytes
+	if maxHeaderBytes == 0 {
+		maxHeaderBytes = DefaultMaxHeaderBytes
+	}
+	srv := &http.Server{
+		Addr:              addr,
+		Handler:           handler,
+		ReadHeaderTimeout: time.Duration(readHeaderTimeoutMs) * time.Millisecond,
+		MaxHeaderBytes:    maxHeaderBytes,
+	}
+	if cfg.ReadTimeoutMs > 0 {
+		srv.ReadTimeout = time.Duration(cfg.ReadTimeoutMs) * time.Millisecond
+	}
+	return srv
 }
 
 // backendTypeName normalizes an empty backend type to its "memory" default for
@@ -2178,10 +2214,7 @@ func main() {
 	key_file := cfg.Listen.Key
 	shutdownTimeoutSec := cfg.Listen.ShutdownTimeout
 
-	srv := &http.Server{
-		Addr:    ":" + port,
-		Handler: instrumentHandler(p, tracingActive),
-	}
+	srv := hardenedServer(":"+port, instrumentHandler(p, tracingActive), cfg.Listen)
 
 	// mTLS: require and verify client certificates when clientCA is configured.
 	if cfg.Listen.ClientCA != "" {
@@ -2206,10 +2239,7 @@ func main() {
 	if cfg.Metrics.Enabled {
 		mux := http.NewServeMux()
 		mux.Handle("/metrics", promhttp.HandlerFor(metricsReg, promhttp.HandlerOpts{}))
-		metricsSrv = &http.Server{
-			Addr:    fmt.Sprintf(":%d", cfg.Metrics.Port),
-			Handler: mux,
-		}
+		metricsSrv = hardenedServer(fmt.Sprintf(":%d", cfg.Metrics.Port), mux, cfg.Listen)
 		go func() {
 			slog.Info("Started metrics server", "port", cfg.Metrics.Port)
 			if err := metricsSrv.ListenAndServe(); err != http.ErrServerClosed {

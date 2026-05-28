@@ -15,6 +15,24 @@ type ListenConfig struct {
 	ShutdownTimeout       int    `yaml:"shutdownTimeout"`
 	ClientCA              string `yaml:"clientCA"`
 	MaxConcurrentRequests int    `yaml:"maxConcurrentRequests"` // 0 = unlimited (default)
+
+	// Inbound request hardening. These bound the size and duration of inbound
+	// client requests (distinct from the per-provider timeouts, which bound
+	// outbound calls). Secure defaults are applied when a value is 0.
+	//
+	// MaxRequestBodyBytes caps the inbound request body; a larger body is
+	// rejected with HTTP 413. Default: 10 MiB.
+	MaxRequestBodyBytes int `yaml:"maxRequestBodyBytes"`
+	// MaxHeaderBytes caps the total size of request headers. Default: 1 MiB.
+	MaxHeaderBytes int `yaml:"maxHeaderBytes"`
+	// ReadHeaderTimeoutMs bounds how long a client may take to send the request
+	// headers — the primary slowloris mitigation. Default: 10000 (10s).
+	ReadHeaderTimeoutMs int `yaml:"readHeaderTimeoutMs"`
+	// ReadTimeoutMs bounds reading the entire request including the body. It
+	// only affects request reads (never response streaming). Disabled by
+	// default (0) so very large or slow legitimate uploads are not truncated;
+	// set it to bound slow-body attacks under the size cap.
+	ReadTimeoutMs int `yaml:"readTimeoutMs"`
 }
 
 type RateLimitBucket struct {
@@ -197,6 +215,23 @@ const (
 	DefaultIdleConnTimeoutMs       = 90000
 )
 
+// Inbound request-hardening defaults, applied at use-site when the config value
+// is 0.
+const (
+	DefaultMaxRequestBodyBytes = 10 << 20 // 10 MiB
+	DefaultMaxHeaderBytes      = 1 << 20  // 1 MiB (matches net/http's default)
+	DefaultReadHeaderTimeoutMs = 10000    // 10s slowloris mitigation
+)
+
+// effectiveMaxRequestBodyBytes returns the configured inbound body cap or the
+// default when unset.
+func (c ListenConfig) effectiveMaxRequestBodyBytes() int64 {
+	if c.MaxRequestBodyBytes > 0 {
+		return int64(c.MaxRequestBodyBytes)
+	}
+	return DefaultMaxRequestBodyBytes
+}
+
 type ProviderConfig struct {
 	Target    string           `yaml:"target"`
 	TLSVerify *bool            `yaml:"tlsVerify"`
@@ -374,6 +409,19 @@ func validateConfig(cfg *Config) error {
 
 	if cfg.Listen.MaxConcurrentRequests < 0 {
 		return fmt.Errorf("config: listen.maxConcurrentRequests must be >= 0")
+	}
+	for _, f := range []struct {
+		name  string
+		value int
+	}{
+		{"maxRequestBodyBytes", cfg.Listen.MaxRequestBodyBytes},
+		{"maxHeaderBytes", cfg.Listen.MaxHeaderBytes},
+		{"readHeaderTimeoutMs", cfg.Listen.ReadHeaderTimeoutMs},
+		{"readTimeoutMs", cfg.Listen.ReadTimeoutMs},
+	} {
+		if f.value < 0 {
+			return fmt.Errorf("config: listen.%s must be >= 0", f.name)
+		}
 	}
 
 	if cfg.Metrics.Enabled && (cfg.Metrics.Port < 1 || cfg.Metrics.Port > 65535) {
