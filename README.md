@@ -120,6 +120,67 @@ curl https://localhost:8080/model/amazon.titan-text-express-v1/converse \
   }'
 ```
 
+## Capacity and concurrency
+
+The proxy can cap the number of requests it processes at any one time. When the cap is reached the proxy responds with `503 Service Unavailable` and a `Retry-After: 1` header instead of queuing or running out of resources.
+
+```yaml
+listen:
+  maxConcurrentRequests: 200   # global in-flight cap; 0 (default) = unlimited
+
+auth:
+  apiKeys:
+    - key: noisy-tenant
+      maxConcurrent: 20        # per-key in-flight cap; applied in addition to the global cap
+```
+
+The global and per-key caps compose: a request must acquire both. The per-key cap protects the shared pool from a single noisy tenant; the global cap protects the proxy as a whole.
+
+### What an in-flight request holds
+
+Each request in flight occupies, until the upstream LLM finishes responding:
+
+- One goroutine (Go starts each at 2 KB and grows as needed; expect a few tens of KB under load).
+- One outbound TCP connection to Philter (typically released in tens of milliseconds — only held during the redaction call).
+- One outbound TCP connection to the LLM provider, held for the full LLM response time (often **5–60+ seconds** for streaming completions).
+- The buffered request and response bodies — bounded by your max request size.
+
+The LLM connection is the dominant cost. With long-tail LLM latency, a small request rate can produce a surprisingly large in-flight count: at 10 RPS with an average 8-second LLM response, steady-state concurrency is ~80.
+
+### Choosing a starting value
+
+A defensible starting point:
+
+```
+maxConcurrentRequests = 2 × (target_rps × p95_provider_response_seconds)
+```
+
+The `2×` is headroom for tail latency and short bursts. Cross-check against:
+
+- **Your LLM provider's concurrent-request quota.** Set the proxy cap no higher than what your account can actually serve — otherwise you push work into the provider's queue and lose the back-pressure signal here.
+- **File descriptors.** Each in-flight request needs ~3 sockets (client + Philter + provider). Default `ulimit -n` of 1024 is exhausted around ~330 concurrent. Raise it before raising the cap.
+- **Memory.** Rough estimate: `goroutine + buffers ≈ 50–200 KB per request`. 1,000 concurrent ≈ 50–200 MB just for the proxy state, before request/response bodies.
+
+### Tuning workflow
+
+1. Deploy with a generous cap and `philter_proxy_concurrency_shed_total` set to zero.
+2. Watch `philter_proxy_active_requests / philter_proxy_concurrency_limit{scope="global"}` for utilization. PromQL:
+   ```
+   philter_proxy_active_requests
+     / on() philter_proxy_concurrency_limit{scope="global"}
+   ```
+3. If utilization stays below ~50% at peak, the cap is loose enough.
+4. If utilization regularly approaches 1.0 and you see `philter_proxy_concurrency_shed_total{scope="global"}` rising, you have a real capacity problem — **scale out horizontally first** (add replicas) rather than raising the cap. Removing the cap to "fix" sheds turns a graceful 503 into goroutine/FD exhaustion.
+5. If sheds are concentrated on `scope="per_key"`, talk to that tenant or raise their per-key cap — the global pool is fine.
+
+### Metrics reference
+
+| Metric | Type | Use |
+| --- | --- | --- |
+| `philter_proxy_active_requests` | gauge | Current in-flight requests holding a concurrency slot. |
+| `philter_proxy_concurrency_limit{scope="global"}` | gauge | Configured global ceiling (0 = unlimited). |
+| `philter_proxy_concurrency_shed_total{scope}` | counter | Requests rejected with 503; `scope` ∈ `global`, `per_key`. |
+
 ## License
 
 Copyright 2023-2026 Philterd, LLC. "Philter" is a registered trademark of Philterd, LLC.

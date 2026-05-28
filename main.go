@@ -156,6 +156,7 @@ type Proxy struct {
 	metrics         *ProxyMetrics
 	keyIndex        map[string]string // API key value → bound policy (empty string = no override)
 	rateLimiter     *ProxyRateLimiter
+	concurrency     *ConcurrencyLimiter
 }
 
 type AuditEntry struct {
@@ -1157,6 +1158,26 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Concurrency guard. Bounds the number of in-flight requests with a graceful
+	// 503 + Retry-After when the configured ceiling is reached. Acquire happens
+	// after auth and rate limiting so shedded requests are charged against the
+	// right client identity and never starve the global pool with junk traffic.
+	if p.concurrency != nil {
+		allowed, scope, release := p.concurrency.Acquire(clientKey)
+		if !allowed {
+			slog.Warn("Concurrency limit exceeded", "scope", scope, "client", clientKey)
+			if p.metrics != nil {
+				p.metrics.concurrencyShed.WithLabelValues(scope).Inc()
+			}
+			w.Header().Set("Retry-After", "1")
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			w.Write([]byte(`{"error":{"message":"concurrency limit exceeded","type":"capacity"}}`))
+			return
+		}
+		defer release()
+	}
+
 	if p.metrics != nil {
 		p.metrics.activeRequests.Inc()
 		defer p.metrics.activeRequests.Dec()
@@ -1705,6 +1726,21 @@ func main() {
 			"burst", cfg.RateLimit.Burst)
 	}
 
+	var proxyConcurrency *ConcurrencyLimiter
+	if cfg.Listen.MaxConcurrentRequests > 0 || hasPerKeyConcurrency(cfg.Auth.APIKeys) {
+		proxyConcurrency = newConcurrencyLimiter(
+			cfg.Listen.MaxConcurrentRequests,
+			perKeyConcurrencyMap(cfg.Auth.APIKeys),
+		)
+		slog.Info("Concurrency guard enabled",
+			"global", cfg.Listen.MaxConcurrentRequests,
+			"perKeyEntries", len(perKeyConcurrencyMap(cfg.Auth.APIKeys)),
+		)
+	}
+	if proxyMetrics != nil {
+		proxyMetrics.concurrencyLimit.WithLabelValues("global").Set(float64(cfg.Listen.MaxConcurrentRequests))
+	}
+
 	p := &Proxy{
 		config:          cfg,
 		openaiTarget:    targets[0],
@@ -1725,6 +1761,7 @@ func main() {
 		metrics:                 proxyMetrics,
 		keyIndex:                keyIndex,
 		rateLimiter:             proxyRateLimiter,
+		concurrency:             proxyConcurrency,
 	}
 
 	port := fmt.Sprintf("%d", cfg.Listen.Port)

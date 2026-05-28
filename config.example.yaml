@@ -4,6 +4,7 @@ listen:
   key: key.pem
   shutdownTimeout: 30
   # clientCA: /etc/ssl/client-ca.pem  # optional: enable mTLS by specifying the CA that signed client certs
+  # maxConcurrentRequests: 0          # max in-flight requests; 0 = unlimited (default). Excess requests get HTTP 503 + Retry-After.
 
 logging:
   enabled: true
@@ -90,6 +91,7 @@ defaults:
 #       # rateLimit:                 # optional: per-key override (takes precedence over global rateLimit)
 #       #   requestsPerSecond: 5.0
 #       #   burst: 10
+#       # maxConcurrent: 10          # optional: per-key in-flight cap (in addition to listen.maxConcurrentRequests)
 
 # Rate limiting is disabled by default. Uncomment to enable.
 # rateLimit:

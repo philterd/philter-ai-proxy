@@ -12,6 +12,8 @@ type ProxyMetrics struct {
 	philterErrors        prometheus.Counter
 	upstreamErrors       *prometheus.CounterVec
 	activeRequests       prometheus.Gauge
+	concurrencyShed      *prometheus.CounterVec
+	concurrencyLimit     *prometheus.GaugeVec
 }
 
 func newMetrics(reg prometheus.Registerer) *ProxyMetrics {
@@ -62,6 +64,16 @@ func newMetrics(reg prometheus.Registerer) *ProxyMetrics {
 			Name: "philter_proxy_active_requests",
 			Help: "Currently in-flight requests.",
 		}),
+
+		concurrencyShed: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "philter_proxy_concurrency_shed_total",
+			Help: "Total requests rejected due to the max-concurrent-requests guard, labeled by scope (global, per_key).",
+		}, []string{"scope"}),
+
+		concurrencyLimit: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Name: "philter_proxy_concurrency_limit",
+			Help: "Configured max-concurrent-requests ceiling, labeled by scope. 0 means unlimited. Pair with philter_proxy_active_requests to compute utilization.",
+		}, []string{"scope"}),
 	}
 
 	reg.MustRegister(
@@ -74,6 +86,8 @@ func newMetrics(reg prometheus.Registerer) *ProxyMetrics {
 		m.philterErrors,
 		m.upstreamErrors,
 		m.activeRequests,
+		m.concurrencyShed,
+		m.concurrencyLimit,
 	)
 	return m
 }

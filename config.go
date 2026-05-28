@@ -9,11 +9,12 @@ import (
 )
 
 type ListenConfig struct {
-	Port            int    `yaml:"port"`
-	Cert            string `yaml:"cert"`
-	Key             string `yaml:"key"`
-	ShutdownTimeout int    `yaml:"shutdownTimeout"`
-	ClientCA        string `yaml:"clientCA"`
+	Port                  int    `yaml:"port"`
+	Cert                  string `yaml:"cert"`
+	Key                   string `yaml:"key"`
+	ShutdownTimeout       int    `yaml:"shutdownTimeout"`
+	ClientCA              string `yaml:"clientCA"`
+	MaxConcurrentRequests int    `yaml:"maxConcurrentRequests"` // 0 = unlimited (default)
 }
 
 type RateLimitBucket struct {
@@ -29,9 +30,10 @@ type RateLimitConfig struct {
 }
 
 type APIKeyEntry struct {
-	Key       string           `yaml:"key"`
-	Policy    string           `yaml:"policy"`
-	RateLimit *RateLimitBucket `yaml:"rateLimit"`
+	Key           string           `yaml:"key"`
+	Policy        string           `yaml:"policy"`
+	RateLimit     *RateLimitBucket `yaml:"rateLimit"`
+	MaxConcurrent int              `yaml:"maxConcurrent"` // 0 = unlimited (default)
 }
 
 type AuthConfig struct {
@@ -208,6 +210,10 @@ func validateConfig(cfg *Config) error {
 		return fmt.Errorf("config: listen.port %d is out of range (1-65535)", cfg.Listen.Port)
 	}
 
+	if cfg.Listen.MaxConcurrentRequests < 0 {
+		return fmt.Errorf("config: listen.maxConcurrentRequests must be >= 0")
+	}
+
 	if cfg.Metrics.Enabled && (cfg.Metrics.Port < 1 || cfg.Metrics.Port > 65535) {
 		return fmt.Errorf("config: metrics.port %d is out of range (1-65535)", cfg.Metrics.Port)
 	}
@@ -279,6 +285,9 @@ func validateConfig(cfg *Config) error {
 			if entry.RateLimit.Burst < 1 {
 				return fmt.Errorf("config: auth.apiKeys[%d].rateLimit.burst must be >= 1", i)
 			}
+		}
+		if entry.MaxConcurrent < 0 {
+			return fmt.Errorf("config: auth.apiKeys[%d].maxConcurrent must be >= 0", i)
 		}
 	}
 
