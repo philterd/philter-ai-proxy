@@ -17,13 +17,13 @@ import (
 	"io/ioutil"
 	"log"
 	"log/slog"
+	"math"
 	"math/big"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"os"
-	"math"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -269,10 +269,10 @@ func TestProxy_ServeHTTP_CustomConfig(t *testing.T) {
 
 	openaiURL, _ := url.Parse(openaiServer.URL)
 	proxy := &Proxy{
-		config:        cfg,
-		openaiTarget:  openaiURL,
-		openaiClient:  http.DefaultClient,
-		philter: testPhilterClient(cfg.Philter.Endpoint),
+		config:       cfg,
+		openaiTarget: openaiURL,
+		openaiClient: http.DefaultClient,
+		philter:      testPhilterClient(cfg.Philter.Endpoint),
 	}
 
 	reqBody := `{"model": "gpt-3.5-turbo", "messages": [{"role": "user", "content": "secret"}]}`
@@ -310,10 +310,10 @@ func TestProxy_ServeHTTP_RandomUUID(t *testing.T) {
 
 	openaiURL, _ := url.Parse(openaiServer.URL)
 	proxy := &Proxy{
-		config:         testConfig(philterServer.URL),
+		config:       testConfig(philterServer.URL),
 		openaiTarget: openaiURL,
 		openaiClient: http.DefaultClient,
-		philter: testPhilterClient(philterServer.URL),
+		philter:      testPhilterClient(philterServer.URL),
 	}
 
 	reqBody := `{"model": "gpt-3.5-turbo", "messages": [{"role": "user", "content": "secret"}]}`
@@ -359,10 +359,10 @@ func TestProxy_ServeHTTP_OpenAI(t *testing.T) {
 	openaiURL, _ := url.Parse(openaiServer.URL)
 	// Re-initialize proxy correctly for testing
 	proxy := &Proxy{
-		config:         testConfig(philterURL),
+		config:       testConfig(philterURL),
 		openaiTarget: openaiURL,
 		openaiClient: http.DefaultClient,
-		philter: testPhilterClient(philterURL),
+		philter:      testPhilterClient(philterURL),
 	}
 
 	reqBody := `{"model": "gpt-3.5-turbo", "messages": [{"role": "user", "content": "Hello John Smith"}]}`
@@ -410,7 +410,7 @@ func TestProxy_ServeHTTP_Anthropic(t *testing.T) {
 		config:          testConfig(philterURL),
 		anthropicTarget: anthropicURL,
 		anthropicClient: http.DefaultClient,
-		philter: testPhilterClient(philterURL),
+		philter:         testPhilterClient(philterURL),
 	}
 
 	reqBody := `{"model": "claude-3-opus", "messages": [{"role": "user", "content": "Hello John Smith"}]}`
@@ -459,7 +459,7 @@ func TestProxy_ServeHTTP_Anthropic_Complex(t *testing.T) {
 		config:          testConfig(philterURL),
 		anthropicTarget: anthropicURL,
 		anthropicClient: http.DefaultClient,
-		philter: testPhilterClient(philterURL),
+		philter:         testPhilterClient(philterURL),
 	}
 
 	reqBody := `{"model": "claude-3-opus", "messages": [{"role": "user", "content": [{"type": "text", "text": "Hello John Smith"}]}]}`
@@ -505,7 +505,7 @@ func TestProxy_ServeHTTP_Anthropic_System(t *testing.T) {
 		config:          testConfig(philterURL),
 		anthropicTarget: anthropicURL,
 		anthropicClient: http.DefaultClient,
-		philter: testPhilterClient(philterURL),
+		philter:         testPhilterClient(philterURL),
 	}
 
 	reqBody := `{"model": "claude-3-opus", "system": "Hello John Smith", "messages": [{"role": "user", "content": "Hi"}]}`
@@ -549,10 +549,10 @@ func TestProxy_ServeHTTP_Gemini(t *testing.T) {
 
 	geminiURL, _ := url.Parse(geminiServer.URL)
 	proxy := &Proxy{
-		config:         testConfig(philterURL),
+		config:       testConfig(philterURL),
 		geminiTarget: geminiURL,
 		geminiClient: http.DefaultClient,
-		philter: testPhilterClient(philterURL),
+		philter:      testPhilterClient(philterURL),
 	}
 
 	reqBody := `{"contents": [{"parts": [{"text": "John Smith"}]}]}`
@@ -573,7 +573,7 @@ func TestProxy_ServeHTTP_Health(t *testing.T) {
 	defer philterServer.Close()
 
 	proxy := &Proxy{
-		config:        testConfig(philterServer.URL),
+		config:  testConfig(philterServer.URL),
 		philter: testPhilterClient(philterServer.URL),
 	}
 	req := httptest.NewRequest("GET", "/health", nil)
@@ -595,7 +595,7 @@ func TestProxy_ServeHTTP_Health(t *testing.T) {
 
 func TestProxy_ServeHTTP_Health_Degraded(t *testing.T) {
 	proxy := &Proxy{
-		config:        testConfig("http://127.0.0.1:1"),
+		config:  testConfig("http://127.0.0.1:1"),
 		philter: testPhilterClient("http://127.0.0.1:1"),
 	}
 	req := httptest.NewRequest("GET", "/health", nil)
@@ -657,10 +657,10 @@ func TestProxy_ServeHTTP_OllamaGenerate(t *testing.T) {
 
 	ollamaURL, _ := url.Parse(ollamaServer.URL)
 	proxy := &Proxy{
-		config:         testConfig(philterURL),
+		config:       testConfig(philterURL),
 		ollamaTarget: ollamaURL,
 		ollamaClient: http.DefaultClient,
-		philter: testPhilterClient(philterURL),
+		philter:      testPhilterClient(philterURL),
 	}
 
 	reqBody := `{"model": "llama3", "prompt": "John Smith", "system": "John Smith"}`
@@ -704,10 +704,10 @@ func TestProxy_ServeHTTP_OllamaChat(t *testing.T) {
 
 	ollamaURL, _ := url.Parse(ollamaServer.URL)
 	proxy := &Proxy{
-		config:         testConfig(philterURL),
+		config:       testConfig(philterURL),
 		ollamaTarget: ollamaURL,
 		ollamaClient: http.DefaultClient,
-		philter: testPhilterClient(philterURL),
+		philter:      testPhilterClient(philterURL),
 	}
 
 	reqBody := `{"model": "llama3", "messages": [{"role": "user", "content": "John Smith"}]}`
@@ -748,10 +748,10 @@ func TestStreaming_OpenAI_SSE(t *testing.T) {
 
 	openaiURL, _ := url.Parse(openaiServer.URL)
 	proxy := &Proxy{
-		config:         testConfig(philterURL),
+		config:       testConfig(philterURL),
 		openaiTarget: openaiURL,
 		openaiClient: http.DefaultClient,
-		philter: testPhilterClient(philterURL),
+		philter:      testPhilterClient(philterURL),
 	}
 
 	reqBody := `{"model": "gpt-4", "messages": [{"role": "user", "content": "secret"}], "stream": true}`
@@ -803,7 +803,7 @@ func TestStreaming_Anthropic_SSE(t *testing.T) {
 		config:          testConfig(philterURL),
 		anthropicTarget: anthropicURL,
 		anthropicClient: http.DefaultClient,
-		philter: testPhilterClient(philterURL),
+		philter:         testPhilterClient(philterURL),
 	}
 
 	reqBody := `{"model": "claude-3-opus", "messages": [{"role": "user", "content": "secret"}], "stream": true}`
@@ -849,10 +849,10 @@ func TestStreaming_Gemini_Chunked(t *testing.T) {
 
 	geminiURL, _ := url.Parse(geminiServer.URL)
 	proxy := &Proxy{
-		config:         testConfig(philterURL),
+		config:       testConfig(philterURL),
 		geminiTarget: geminiURL,
 		geminiClient: http.DefaultClient,
-		philter: testPhilterClient(philterURL),
+		philter:      testPhilterClient(philterURL),
 	}
 
 	reqBody := `{"contents": [{"parts": [{"text": "secret"}]}]}`
@@ -898,10 +898,10 @@ func TestStreaming_Ollama_NDJSON(t *testing.T) {
 
 	ollamaURL, _ := url.Parse(ollamaServer.URL)
 	proxy := &Proxy{
-		config:         testConfig(philterURL),
+		config:       testConfig(philterURL),
 		ollamaTarget: ollamaURL,
 		ollamaClient: http.DefaultClient,
-		philter: testPhilterClient(philterURL),
+		philter:      testPhilterClient(philterURL),
 	}
 
 	reqBody := `{"model": "llama3", "messages": [{"role": "user", "content": "secret"}]}`
@@ -944,10 +944,10 @@ func TestStreaming_HeadersPreserved(t *testing.T) {
 
 	openaiURL, _ := url.Parse(openaiServer.URL)
 	proxy := &Proxy{
-		config:         testConfig(philterURL),
+		config:       testConfig(philterURL),
 		openaiTarget: openaiURL,
 		openaiClient: http.DefaultClient,
-		philter: testPhilterClient(philterURL),
+		philter:      testPhilterClient(philterURL),
 	}
 
 	reqBody := `{"model": "gpt-4", "messages": [{"role": "user", "content": "secret"}], "stream": true}`
@@ -1080,11 +1080,11 @@ func TestAuditLog_OpenAI_Integration(t *testing.T) {
 
 	openaiURL, _ := url.Parse(openaiServer.URL)
 	proxy := &Proxy{
-		config:         testConfig(philterURL),
+		config:       testConfig(philterURL),
 		openaiTarget: openaiURL,
 		openaiClient: http.DefaultClient,
-		philter: testPhilterClient(philterURL),
-		auditLogger:    auditLogger,
+		philter:      testPhilterClient(philterURL),
+		auditLogger:  auditLogger,
 	}
 
 	reqBody := `{"model": "gpt-4", "messages": [{"role": "user", "content": "Hello John Smith"}]}`
@@ -1147,11 +1147,11 @@ func TestAuditLog_Disabled(t *testing.T) {
 
 	openaiURL, _ := url.Parse(openaiServer.URL)
 	proxy := &Proxy{
-		config:         testConfig(philterURL),
+		config:       testConfig(philterURL),
 		openaiTarget: openaiURL,
 		openaiClient: http.DefaultClient,
-		philter: testPhilterClient(philterURL),
-		auditLogger:    nil,
+		philter:      testPhilterClient(philterURL),
+		auditLogger:  nil,
 	}
 
 	reqBody := `{"model": "gpt-4", "messages": [{"role": "user", "content": "secret"}]}`
@@ -1416,10 +1416,10 @@ func TestProxy_ServeHTTP_OpenAI_SystemMessage(t *testing.T) {
 
 	openaiURL, _ := url.Parse(openaiServer.URL)
 	proxy := &Proxy{
-		config:        testConfig(philterServer.URL),
-		openaiTarget:  openaiURL,
-		openaiClient:  http.DefaultClient,
-		philter: testPhilterClient(philterServer.URL),
+		config:       testConfig(philterServer.URL),
+		openaiTarget: openaiURL,
+		openaiClient: http.DefaultClient,
+		philter:      testPhilterClient(philterServer.URL),
 	}
 
 	reqBody := `{"model":"gpt-4","messages":[{"role":"system","content":"You are a helpful assistant. The user is John Smith."}]}`
@@ -1459,10 +1459,10 @@ func TestProxy_ServeHTTP_OpenAI_ToolResult(t *testing.T) {
 
 	openaiURL, _ := url.Parse(openaiServer.URL)
 	proxy := &Proxy{
-		config:        testConfig(philterServer.URL),
-		openaiTarget:  openaiURL,
-		openaiClient:  http.DefaultClient,
-		philter: testPhilterClient(philterServer.URL),
+		config:       testConfig(philterServer.URL),
+		openaiTarget: openaiURL,
+		openaiClient: http.DefaultClient,
+		philter:      testPhilterClient(philterServer.URL),
 	}
 
 	reqBody := `{"model":"gpt-4","messages":[{"role":"tool","tool_call_id":"call_abc123","content":"Customer John Smith, SSN 123-45-6789, has a balance of $4,200."}]}`
@@ -1510,10 +1510,10 @@ func TestProxy_ServeHTTP_OpenAI_ToolCallArguments(t *testing.T) {
 
 	openaiURL, _ := url.Parse(openaiServer.URL)
 	proxy := &Proxy{
-		config:        testConfig(philterServer.URL),
-		openaiTarget:  openaiURL,
-		openaiClient:  http.DefaultClient,
-		philter: testPhilterClient(philterServer.URL),
+		config:       testConfig(philterServer.URL),
+		openaiTarget: openaiURL,
+		openaiClient: http.DefaultClient,
+		philter:      testPhilterClient(philterServer.URL),
 	}
 
 	reqBody := `{"model":"gpt-4","messages":[{"role":"assistant","tool_calls":[{"id":"call_abc123","type":"function","function":{"name":"lookup_customer","arguments":"{\"name\":\"John Smith\",\"ssn\":\"123-45-6789\"}"}}]}]}`
@@ -1562,7 +1562,7 @@ func TestProxy_ServeHTTP_Anthropic_ToolResult(t *testing.T) {
 		config:          testConfig(philterServer.URL),
 		anthropicTarget: anthropicURL,
 		anthropicClient: http.DefaultClient,
-		philter: testPhilterClient(philterServer.URL),
+		philter:         testPhilterClient(philterServer.URL),
 	}
 
 	reqBody := `{"model":"claude-3-opus","messages":[{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_abc123","content":"Patient Margaret Collins, DOB 04/12/1978, MRN 8847291."}]}]}`
@@ -1607,10 +1607,10 @@ func TestProxy_ServeHTTP_Gemini_FunctionResponse(t *testing.T) {
 
 	geminiURL, _ := url.Parse(geminiServer.URL)
 	proxy := &Proxy{
-		config:        testConfig(philterServer.URL),
-		geminiTarget:  geminiURL,
-		geminiClient:  http.DefaultClient,
-		philter: testPhilterClient(philterServer.URL),
+		config:       testConfig(philterServer.URL),
+		geminiTarget: geminiURL,
+		geminiClient: http.DefaultClient,
+		philter:      testPhilterClient(philterServer.URL),
 	}
 
 	reqBody := `{"contents":[{"parts":[{"functionResponse":{"name":"get_patient","response":{"result":"Patient John Smith, SSN 123-45-6789"}}}]}]}`
@@ -1653,9 +1653,9 @@ func newTestProxy(philterURL, providerURL string, providerKey string) (*Proxy, *
 	cfg := testConfig(philterURL)
 	u, _ := url.Parse(providerURL)
 	p := &Proxy{
-		config:        cfg,
+		config:  cfg,
 		philter: testPhilterClient(cfg.Philter.Endpoint),
-		metrics:       metrics,
+		metrics: metrics,
 	}
 	switch providerKey {
 	case "openai":
@@ -2208,7 +2208,7 @@ func TestHandleAnthropic_ToolResult_ArrayContent(t *testing.T) {
 		config:          testConfig(ps.URL),
 		anthropicTarget: anthropicURL,
 		anthropicClient: http.DefaultClient,
-		philter: testPhilterClient(ps.URL),
+		philter:         testPhilterClient(ps.URL),
 	}
 
 	reqBody := `{"model":"claude-3-opus","messages":[{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":[{"type":"text","text":"John Smith"}]}]}]}`
@@ -2264,10 +2264,10 @@ func TestForwardToProvider_QueryStringInErrorLog(t *testing.T) {
 	defer ps.Close()
 
 	proxy := &Proxy{
-		config:        testConfig(ps.URL),
-		philter: testPhilterClient(ps.URL),
-		geminiTarget:  mustParseURL("http://127.0.0.1:1"),
-		geminiClient:  http.DefaultClient,
+		config:       testConfig(ps.URL),
+		philter:      testPhilterClient(ps.URL),
+		geminiTarget: mustParseURL("http://127.0.0.1:1"),
+		geminiClient: http.DefaultClient,
 	}
 
 	reqBody := `{"contents":[{"parts":[{"text":"hello"}]}]}`
@@ -2317,7 +2317,7 @@ func newOutboundProxy(philterURL, providerURL, provider string, action string) *
 	cfg.Defaults.Outbound = outbound
 	u, _ := url.Parse(providerURL)
 	p := &Proxy{
-		config:        cfg,
+		config:  cfg,
 		philter: testPhilterClient(cfg.Philter.Endpoint),
 	}
 	switch provider {
@@ -2666,11 +2666,11 @@ func TestOutbound_AuditLog(t *testing.T) {
 	cfg := testConfig(philter.URL)
 	cfg.Defaults.Outbound = OutboundConfig{Enabled: true, Action: "redact"}
 	proxy := &Proxy{
-		config:        cfg,
-		philter: testPhilterClient(cfg.Philter.Endpoint),
-		openaiTarget:  mustParseURL(provider.URL),
-		openaiClient:  http.DefaultClient,
-		auditLogger:   auditLogger,
+		config:       cfg,
+		philter:      testPhilterClient(cfg.Philter.Endpoint),
+		openaiTarget: mustParseURL(provider.URL),
+		openaiClient: http.DefaultClient,
+		auditLogger:  auditLogger,
 	}
 
 	reqBody := `{"model":"gpt-4","messages":[{"role":"user","content":"hello"}]}`
@@ -3024,9 +3024,9 @@ func TestProxy_CircuitBreakerOpen_Returns503(t *testing.T) {
 
 	reg := prometheus.NewRegistry()
 	proxy := &Proxy{
-		config:  cfg,
-		philter: pc,
-		metrics: newMetrics(reg),
+		config:       cfg,
+		philter:      pc,
+		metrics:      newMetrics(reg),
 		openaiTarget: mustParseURL("http://127.0.0.1:1"),
 		openaiClient: http.DefaultClient,
 	}
@@ -3049,8 +3049,8 @@ func newOpenAICompatProxy(philterURL, providerURL, name string) *Proxy {
 	}
 	u, _ := url.Parse(providerURL)
 	return &Proxy{
-		config:  cfg,
-		philter: testPhilterClient(philterURL),
+		config:                  cfg,
+		philter:                 testPhilterClient(philterURL),
 		openaiCompatibleTargets: map[string]*url.URL{name: u},
 		openaiCompatibleClients: map[string]*http.Client{name: http.DefaultClient},
 	}
@@ -3189,16 +3189,16 @@ func TestResolveOpenAICompatible(t *testing.T) {
 	}
 
 	cases := []struct {
-		path    string
-		name    string
+		path     string
+		name     string
 		stripped string
-		ok      bool
+		ok       bool
 	}{
 		{"/mistral/v1/chat/completions", "mistral", "/v1/chat/completions", true},
 		{"/mistral/v1/models", "mistral", "/v1/models", true},
-		{"/v1/chat/completions", "", "", false},   // no prefix
+		{"/v1/chat/completions", "", "", false},         // no prefix
 		{"/unknown/v1/chat/completions", "", "", false}, // prefix not configured
-		{"/mistral", "", "", false},               // no slash after prefix
+		{"/mistral", "", "", false},                     // no slash after prefix
 		{"/health", "", "", false},
 	}
 	for _, tc := range cases {
@@ -3738,10 +3738,10 @@ func TestTokenUsage_PopulatedInAudit_OpenAI(t *testing.T) {
 	cfg := testConfig(philterSrv.URL)
 	provURL, _ := url.Parse(providerSrv.URL)
 	proxy := &Proxy{
-		config:        cfg,
-		philter:       testPhilterClient(philterSrv.URL),
-		openaiTarget:  provURL,
-		openaiClient:  http.DefaultClient,
+		config:       cfg,
+		philter:      testPhilterClient(philterSrv.URL),
+		openaiTarget: provURL,
+		openaiClient: http.DefaultClient,
 	}
 
 	var buf strings.Builder
@@ -3775,10 +3775,10 @@ func TestTokenUsage_PopulatedInAudit_Anthropic(t *testing.T) {
 	cfg := testConfig(philterSrv.URL)
 	provURL, _ := url.Parse(providerSrv.URL)
 	proxy := &Proxy{
-		config:           cfg,
-		philter:          testPhilterClient(philterSrv.URL),
-		anthropicTarget:  provURL,
-		anthropicClient:  http.DefaultClient,
+		config:          cfg,
+		philter:         testPhilterClient(philterSrv.URL),
+		anthropicTarget: provURL,
+		anthropicClient: http.DefaultClient,
 	}
 
 	var buf strings.Builder
@@ -4221,8 +4221,29 @@ func newRateLimitedProxy(philterURL, providerURL string, rps float64, burst int,
 		philter:      testPhilterClient(philterURL),
 		openaiTarget: u,
 		openaiClient: http.DefaultClient,
-		rateLimiter:  newProxyRateLimiter(cfg.RateLimit, nil),
+		rateLimiter:  mustRateLimiter(cfg.RateLimit, nil),
 	}
+}
+
+// mustRateLimiter builds a ProxyRateLimiter for tests, panicking on error
+// (the memory backend never errors).
+func mustRateLimiter(cfg RateLimitConfig, apiKeys []APIKeyEntry) *ProxyRateLimiter {
+	rl, err := newProxyRateLimiter(cfg, apiKeys, nil)
+	if err != nil {
+		panic(err)
+	}
+	return rl
+}
+
+// mustKeyStore builds a keyStore from an ordered slice so per-entry IDs
+// (key-0, key-1, ...) match their slice positions — unlike testKeyStore, which
+// builds from a map with random iteration order.
+func mustKeyStore(entries []APIKeyEntry) *keyStore {
+	ks, err := newKeyStore(entries)
+	if err != nil {
+		panic(err)
+	}
+	return ks
 }
 
 func openAIBody() string {
@@ -4372,7 +4393,7 @@ func TestRateLimit_PerClientIsolation(t *testing.T) {
 func TestRateLimit_GlobalLimit(t *testing.T) {
 	proxy := newRateLimitedProxy("http://127.0.0.1:1", "http://127.0.0.1:1",
 		1000, 1000, // high per-client limit — won't trigger
-		0.001, 1,   // global burst=1, very low rps
+		0.001, 1, // global burst=1, very low rps
 	)
 
 	// First request from client A consumes the global token.
@@ -4412,7 +4433,7 @@ func TestRateLimit_UsesAPIKeyAsClientID(t *testing.T) {
 		openaiTarget: u,
 		openaiClient: http.DefaultClient,
 		keyStore:     testKeyStore(map[string]string{"key-a": "", "key-b": ""}),
-		rateLimiter:  newProxyRateLimiter(cfg.RateLimit, cfg.Auth.APIKeys),
+		rateLimiter:  mustRateLimiter(cfg.RateLimit, cfg.Auth.APIKeys),
 	}
 
 	// Exhaust key-a's bucket (burst=2, send 3).
@@ -4499,8 +4520,12 @@ func TestRateLimit_PerKeyOverride(t *testing.T) {
 		philter:      testPhilterClient(philterSrv.URL),
 		openaiTarget: u,
 		openaiClient: http.DefaultClient,
-		keyStore:     testKeyStore(map[string]string{"default-key": "", "restricted-key": ""}),
-		rateLimiter:  newProxyRateLimiter(cfg.RateLimit, cfg.Auth.APIKeys),
+		// Build the keyStore from the same slice the rate limiter uses so the
+		// per-entry IDs (key-0, key-1) align with the per-key override indices.
+		// testKeyStore() builds from a map, whose iteration order is random and
+		// would make this assertion flaky.
+		keyStore:    mustKeyStore(cfg.Auth.APIKeys),
+		rateLimiter: mustRateLimiter(cfg.RateLimit, cfg.Auth.APIKeys),
 	}
 
 	// restricted-key exhausted after 1 request (burst=1).

@@ -3,17 +3,20 @@ package main
 import "github.com/prometheus/client_golang/prometheus"
 
 type ProxyMetrics struct {
-	requestsTotal        *prometheus.CounterVec
-	requestDuration      *prometheus.HistogramVec
-	redactionDuration    *prometheus.HistogramVec
-	entitiesRedacted     *prometheus.CounterVec
-	promptTokensTotal    *prometheus.CounterVec
-	completionTokensTotal *prometheus.CounterVec
-	philterErrors        prometheus.Counter
-	upstreamErrors       *prometheus.CounterVec
-	activeRequests       prometheus.Gauge
-	concurrencyShed      *prometheus.CounterVec
-	concurrencyLimit     *prometheus.GaugeVec
+	requestsTotal            *prometheus.CounterVec
+	requestDuration          *prometheus.HistogramVec
+	redactionDuration        *prometheus.HistogramVec
+	entitiesRedacted         *prometheus.CounterVec
+	promptTokensTotal        *prometheus.CounterVec
+	completionTokensTotal    *prometheus.CounterVec
+	philterErrors            prometheus.Counter
+	upstreamErrors           *prometheus.CounterVec
+	activeRequests           prometheus.Gauge
+	concurrencyShed          *prometheus.CounterVec
+	concurrencyLimit         *prometheus.GaugeVec
+	rateLimitBackendDuration *prometheus.HistogramVec
+	rateLimitBackendErrors   *prometheus.CounterVec
+	rateLimitFallback        prometheus.Counter
 }
 
 func newMetrics(reg prometheus.Registerer) *ProxyMetrics {
@@ -74,6 +77,22 @@ func newMetrics(reg prometheus.Registerer) *ProxyMetrics {
 			Name: "philter_proxy_concurrency_limit",
 			Help: "Configured max-concurrent-requests ceiling, labeled by scope. 0 means unlimited. Pair with philter_proxy_active_requests to compute utilization.",
 		}, []string{"scope"}),
+
+		rateLimitBackendDuration: prometheus.NewHistogramVec(prometheus.HistogramOpts{
+			Name:    "philter_proxy_ratelimit_backend_duration_seconds",
+			Help:    "Latency of rate-limit backend calls in seconds, labeled by backend and result (ok, error).",
+			Buckets: []float64{.0005, .001, .0025, .005, .01, .025, .05, .1, .25, .5, 1},
+		}, []string{"backend", "result"}),
+
+		rateLimitBackendErrors: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "philter_proxy_ratelimit_backend_errors_total",
+			Help: "Total rate-limit backend errors (e.g. Redis unreachable/timeout), labeled by backend.",
+		}, []string{"backend"}),
+
+		rateLimitFallback: prometheus.NewCounter(prometheus.CounterOpts{
+			Name: "philter_proxy_ratelimit_fallback_total",
+			Help: "Total rate-limit decisions that fell back to the local in-memory limiter because the configured backend was unreachable.",
+		}),
 	}
 
 	reg.MustRegister(
@@ -88,6 +107,9 @@ func newMetrics(reg prometheus.Registerer) *ProxyMetrics {
 		m.activeRequests,
 		m.concurrencyShed,
 		m.concurrencyLimit,
+		m.rateLimitBackendDuration,
+		m.rateLimitBackendErrors,
+		m.rateLimitFallback,
 	)
 	return m
 }

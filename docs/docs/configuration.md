@@ -319,8 +319,66 @@ auth:
 | `burst` | int | - (required when enabled) | Maximum number of requests a client may send in a burst above the sustained rate. Must be ≥ 1. |
 | `global.requestsPerSecond` | float | `0` (disabled) | Global sustained rate across all clients combined. `0` disables the global backstop. |
 | `global.burst` | int | `0` (disabled) | Global burst size. Must be set alongside `global.requestsPerSecond` to enable the global limit. |
+| `backend` | object | `memory` | Where token-bucket state lives. Use `redis` to share state across replicas. See [Shared state for multi-replica deployments](#shared-state-for-multi-replica-deployments). |
 
 Per-key rate limit overrides (`auth.apiKeys[].rateLimit`) accept the same `requestsPerSecond` and `burst` fields and take precedence over the global defaults for that key.
+
+### Shared state for multi-replica deployments
+
+By default, token-bucket state lives in process memory (`backend.type: memory`). This is correct for a single replica, but **running N replicas behind a load balancer multiplies the effective limit by N** — each replica counts only the requests it sees. To enforce one consistent limit across all replicas, point the limiter at a shared Redis backend:
+
+```yaml
+rateLimit:
+  enabled: true
+  requestsPerSecond: 100.0
+  burst: 200
+  backend:
+    type: redis              # default: memory
+    failureMode: open        # "open" (default) or "closed" — see below
+    redis:
+      address: redis.internal:6379
+      username: philter       # optional (Redis 6+ ACL)
+      password: ${REDIS_PASSWORD}   # supports ${ENV_VAR} / file: references
+      db: 0
+      keyPrefix: "philter:rl:"      # optional namespace
+      timeoutMs: 100                # per-call timeout
+      tls:
+        enabled: true
+        caCert: /etc/ssl/redis-ca.pem        # optional custom CA
+        cert: /etc/ssl/redis-client.pem      # optional client cert (mTLS)
+        key: /etc/ssl/redis-client-key.pem
+        # insecureSkipVerify: true           # development only
+```
+
+The Redis backend implements an **atomic token bucket** in a server-side Lua script (a single round-trip per decision) and uses the Redis server clock, so replicas with skewed clocks still agree. The same per-client and global buckets described above apply — they are simply stored in Redis instead of process memory.
+
+**Failure mode when Redis is unreachable** (`backend.failureMode`):
+
+| Mode | Behaviour when the backend errors or times out |
+|------|------------------------------------------------|
+| `open` (default) | **Fail open** — degrade to the local in-memory limiter so traffic keeps flowing, still bounded per-replica. Availability is preserved at the cost of temporarily enforcing per-replica rather than global limits. |
+| `closed` | **Fail closed** — reject requests with `429` while the backend is down. Choose this when exceeding the limit is worse than dropping traffic. |
+
+The local-memory limiter is always retained and is used as the fail-open fallback, so a Redis outage never takes the proxy down.
+
+**Backend health is observable** via Prometheus metrics: `philter_proxy_ratelimit_backend_duration_seconds` (call latency, labeled by backend and `ok`/`error` result), `philter_proxy_ratelimit_backend_errors_total` (backend error count), and `philter_proxy_ratelimit_fallback_total` (decisions that fell back to local memory). See [Monitoring](monitoring.md).
+
+#### `rateLimit.backend` reference
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `type` | string | `memory` | `memory` (per-replica, in-process) or `redis` (shared across replicas). |
+| `failureMode` | string | `open` | Behaviour when the redis backend is unreachable: `open` (fall back to local memory) or `closed` (reject). |
+| `redis.address` | string | - (required for redis) | Redis endpoint, `host:port`. |
+| `redis.username` | string | (none) | Redis ACL username (Redis 6+). |
+| `redis.password` | string | (none) | Redis password. Accepts `${ENV_VAR}` / `file:` [secret references](#loading-secrets-from-environment-variables-and-files). |
+| `redis.db` | int | `0` | Logical database number. |
+| `redis.keyPrefix` | string | `philter:rl:` | Namespace prefix for the proxy's keys. |
+| `redis.timeoutMs` | int | `100` | Per-call Redis timeout in milliseconds. On timeout the failure mode applies. |
+| `redis.tls.enabled` | bool | `false` | Connect to Redis over TLS. |
+| `redis.tls.caCert` | string | (system roots) | PEM CA bundle for verifying the Redis server certificate. |
+| `redis.tls.cert` / `redis.tls.key` | string | (none) | Client certificate + key for mutual TLS to Redis. Both required together. |
+| `redis.tls.insecureSkipVerify` | bool | `false` | Skip server certificate verification (development only). |
 
 ### Behaviour when the limit is exceeded
 
@@ -395,7 +453,7 @@ curl -k https://localhost:8080/v1/chat/completions \
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `key` | string | Yes | The API key value. Accepts plaintext or a pre-hashed value; see [Hashing](#api-key-hashing) below. |
+| `key` | string | Yes | The API key value. Accepts plaintext, a pre-hashed value (see [Hashing](#api-key-hashing)), or a `${ENV_VAR}` / `file:` secret reference (see [Loading secrets from environment variables and files](#loading-secrets-from-environment-variables-and-files)). |
 | `policy` | string | No | Philter policy to enforce for all requests authenticated with this key. Overrides route and default policy. |
 | `rateLimit` | object | No | Per-key rate-limit override. See [Rate Limiting](#rate-limiting). |
 | `maxConcurrent` | int | No | Per-key in-flight concurrency cap (0 = unlimited). Applied in addition to the global `listen.maxConcurrentRequests` cap. See [Concurrency Limits](#concurrency-limits). |
@@ -443,6 +501,50 @@ python3 -c "import bcrypt; print('bcrypt$' + bcrypt.hashpw(b'SuperSecretAPIKey12
 - bcrypt: pick the lowest cost your compliance requirements allow. cost=4 is appropriate for high-throughput API key use.
 
 **Per-key features (rate-limit, concurrency).** The proxy assigns each `auth.apiKeys[]` entry an opaque stable identifier (`key-0`, `key-1`, ...) based on its position. Per-key rate-limit and per-key concurrency buckets are keyed by this identifier, so the raw API key never has to reach those subsystems. Logs that need a "client" field record the identifier, not the key value.
+
+#### Loading secrets from environment variables and files
+
+Storing API keys as plaintext in `config.yaml` means they end up in version control or baked into container images. To keep secrets out of the config file, the `key:` field accepts two reference syntaxes in addition to literal values:
+
+| Syntax | Example | Resolves to |
+|---|---|---|
+| `${ENV_VAR}` | `key: ${TEAM_A_KEY}` | The value of the `TEAM_A_KEY` environment variable |
+| `file:<path>` | `key: file:/run/secrets/team-a` | The contents of `/run/secrets/team-a` (trailing whitespace/newline trimmed) |
+| literal | `key: secret-key-for-team-a` | Used verbatim (backwards-compatible) |
+
+```yaml
+auth:
+  apiKeys:
+    - key: ${TEAM_A_KEY}                  # from environment variable
+    - key: file:/run/secrets/healthcare   # from a mounted file
+      policy: hipaa-safe-harbor
+    - key: secret-key-legacy              # plaintext literal still works
+```
+
+References are resolved **once, at config load**, before validation and hashing. The resolved value then flows through the same [hashing](#api-key-hashing) path as a literal — so a plaintext secret loaded from a file or env var is still SHA256-hashed in memory and never retained as plaintext beyond load.
+
+This is the recommended way to integrate with external secret stores:
+
+- **Kubernetes / Docker secrets** — mount the secret as a file and reference it with `file:/run/secrets/...`.
+- **HashiCorp Vault, AWS Secrets Manager, etc.** — have your init container or entrypoint export the secret into an environment variable (e.g. `vault read`, `aws secretsmanager get-secret-value`) and reference it with `${VAR}`.
+
+**Error handling.** If a referenced environment variable is unset or empty, or a referenced file is missing or empty, the proxy fails to start with a clear error that names the variable or path. **Validation and resolution errors never echo the secret value itself** — only the reference (env var name or file path), which is not sensitive.
+
+This syntax is implemented by a generic resolver (`resolveSecret`) and is intended to apply to any future secret-bearing config field (such as provider auth headers), not just `auth.apiKeys[].key`.
+
+#### Rotating API keys
+
+Because secrets are resolved at config load, rotation follows the lifecycle of the underlying env var / file plus a config reload:
+
+1. **Issue the new key** in your secret store (Vault, Secrets Manager, Kubernetes Secret, etc.).
+2. **Add it alongside the old one** as a second `auth.apiKeys[]` entry so both are valid during the cutover window (zero-downtime). For example, mount the new secret at `file:/run/secrets/team-a-next` and add a second entry referencing it.
+3. **Reload the proxy** so it re-resolves the references and picks up the new value:
+     - The proxy currently re-reads its config (and therefore re-resolves `${ENV_VAR}` / `file:` references) **on process restart**. In Kubernetes, trigger a rolling restart (`kubectl rollout restart deployment/philter-ai-proxy`) — updated Secret/env values are picked up by the new pods with no dropped connections.
+     - *(Planned: in-place reload on `SIGHUP` so a running process can re-resolve secrets without a restart. Until that ships, use a rolling restart.)*
+4. **Migrate clients** to the new key.
+5. **Remove the old entry** and revoke the old secret in your store, then reload again.
+
+Because the value lives in the secret store rather than the YAML, rotation does not require editing and re-committing `config.yaml`.
 
 ### mTLS (Mutual TLS)
 

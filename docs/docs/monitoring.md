@@ -43,6 +43,9 @@ scrape_configs:
 | `philter_proxy_active_requests` | Gauge | - | Currently in-flight requests (those holding a concurrency slot) |
 | `philter_proxy_concurrency_limit` | Gauge | `scope` | Configured max-concurrent-requests ceiling. `0` means unlimited. |
 | `philter_proxy_concurrency_shed_total` | Counter | `scope` | Requests rejected (HTTP 503) due to the concurrency guard |
+| `philter_proxy_ratelimit_backend_duration_seconds` | Histogram | `backend`, `result` | Latency of rate-limit backend calls. `result` is `ok` or `error`. Only emitted when rate limiting is enabled. |
+| `philter_proxy_ratelimit_backend_errors_total` | Counter | `backend` | Rate-limit backend errors (e.g. Redis unreachable/timeout) |
+| `philter_proxy_ratelimit_fallback_total` | Counter | - | Decisions that fell back to the local in-memory limiter because the configured backend was unreachable (fail-open) |
 
 Token counters are populated from each provider's native usage response field. They are not incremented for streaming responses, since token counts are not reliably available mid-stream.
 
@@ -55,6 +58,10 @@ Token counters are populated from each provider's native usage response field. T
 **`policy`**: The Philter policy name matched by the route, e.g. `default`, `hipaa-safe-harbor`.
 
 **`scope`** (on concurrency metrics): `global` for the proxy-wide cap, `per_key` for per-API-key caps.
+
+**`backend`** (on rate-limit metrics): `memory` or `redis`.
+
+**`result`** (on `philter_proxy_ratelimit_backend_duration_seconds`): `ok` for a successful backend decision, `error` for a backend failure/timeout.
 
 ## Health Endpoints
 

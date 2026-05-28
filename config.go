@@ -23,10 +23,51 @@ type RateLimitBucket struct {
 }
 
 type RateLimitConfig struct {
-	Enabled           bool            `yaml:"enabled"`
-	RequestsPerSecond float64         `yaml:"requestsPerSecond"`
-	Burst             int             `yaml:"burst"`
-	Global            RateLimitBucket `yaml:"global"`
+	Enabled           bool                   `yaml:"enabled"`
+	RequestsPerSecond float64                `yaml:"requestsPerSecond"`
+	Burst             int                    `yaml:"burst"`
+	Global            RateLimitBucket        `yaml:"global"`
+	Backend           RateLimitBackendConfig `yaml:"backend"`
+}
+
+// RateLimitBackendConfig selects where token-bucket state lives. The default
+// (empty / "memory") keeps per-replica state in process memory. Selecting
+// "redis" shares state across replicas so N replicas behind a load balancer
+// enforce one consistent global limit instead of N times the configured limit.
+type RateLimitBackendConfig struct {
+	// Type is "memory" (default) or "redis".
+	Type string `yaml:"type"`
+	// FailureMode governs behavior when the configured backend is unreachable:
+	// "open" (default) degrades to the local in-memory limiter so traffic keeps
+	// flowing (bounded per-replica); "closed" rejects requests while the backend
+	// is down. Only meaningful for the redis backend.
+	FailureMode string             `yaml:"failureMode"`
+	Redis       RedisBackendConfig `yaml:"redis"`
+}
+
+type RedisBackendConfig struct {
+	// Address is the Redis endpoint, host:port. Required when type is "redis".
+	Address string `yaml:"address"`
+	// Username/Password authenticate to Redis (Redis 6+ ACL or legacy
+	// requirepass). Password accepts ${ENV_VAR} / file: secret references.
+	Username string `yaml:"username"`
+	Password string `yaml:"password"`
+	// DB is the Redis logical database number (default 0).
+	DB int `yaml:"db"`
+	// KeyPrefix namespaces the proxy's keys (default "philter:rl:").
+	KeyPrefix string `yaml:"keyPrefix"`
+	// TimeoutMs bounds each Redis round-trip. On timeout the FailureMode
+	// applies. Default 100.
+	TimeoutMs int            `yaml:"timeoutMs"`
+	TLS       RedisTLSConfig `yaml:"tls"`
+}
+
+type RedisTLSConfig struct {
+	Enabled            bool   `yaml:"enabled"`
+	CACert             string `yaml:"caCert"`
+	Cert               string `yaml:"cert"`
+	Key                string `yaml:"key"`
+	InsecureSkipVerify bool   `yaml:"insecureSkipVerify"`
 }
 
 type APIKeyEntry struct {
@@ -227,6 +268,12 @@ func loadConfig(path string) (*Config, error) {
 		return nil, fmt.Errorf("failed to parse config file %s: %w", path, err)
 	}
 
+	// Expand ${ENV_VAR} / file: secret references before validation so the
+	// rest of the pipeline (validation, key hashing) sees the actual values.
+	if err := resolveSecrets(cfg); err != nil {
+		return nil, err
+	}
+
 	if err := validateConfig(cfg); err != nil {
 		return nil, err
 	}
@@ -351,6 +398,27 @@ func validateConfig(cfg *Config) error {
 		}
 		if cfg.RateLimit.Global.Burst < 0 {
 			return fmt.Errorf("config: rateLimit.global.burst must be >= 0")
+		}
+
+		validBackends := map[string]bool{"": true, "memory": true, "redis": true}
+		if !validBackends[cfg.RateLimit.Backend.Type] {
+			return fmt.Errorf("config: rateLimit.backend.type %q is invalid (must be memory or redis)", cfg.RateLimit.Backend.Type)
+		}
+		validFailureModes := map[string]bool{"": true, "open": true, "closed": true}
+		if !validFailureModes[cfg.RateLimit.Backend.FailureMode] {
+			return fmt.Errorf("config: rateLimit.backend.failureMode %q is invalid (must be open or closed)", cfg.RateLimit.Backend.FailureMode)
+		}
+		if cfg.RateLimit.Backend.Type == "redis" {
+			r := cfg.RateLimit.Backend.Redis
+			if r.Address == "" {
+				return fmt.Errorf("config: rateLimit.backend.redis.address is required when backend type is redis")
+			}
+			if r.DB < 0 {
+				return fmt.Errorf("config: rateLimit.backend.redis.db must be >= 0")
+			}
+			if r.TimeoutMs < 0 {
+				return fmt.Errorf("config: rateLimit.backend.redis.timeoutMs must be >= 0")
+			}
 		}
 	}
 

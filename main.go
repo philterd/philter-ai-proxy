@@ -1328,7 +1328,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if id == "" {
 			id = clientIP(r)
 		}
-		if allowed, retryAfter := p.rateLimiter.Allow(id); !allowed {
+		if allowed, retryAfter := p.rateLimiter.Allow(r.Context(), id); !allowed {
 			slog.Warn("Rate limit exceeded", "client", id, "request_id", requestID)
 			retrySecs := int(retryAfter.Seconds())
 			if retrySecs < 1 {
@@ -1887,7 +1887,11 @@ func main() {
 
 	var proxyRateLimiter *ProxyRateLimiter
 	if cfg.RateLimit.Enabled {
-		proxyRateLimiter = newProxyRateLimiter(cfg.RateLimit, cfg.Auth.APIKeys)
+		proxyRateLimiter, err = newProxyRateLimiter(cfg.RateLimit, cfg.Auth.APIKeys, proxyMetrics)
+		if err != nil {
+			slog.Error("Failed to initialize rate-limit backend", "error", err)
+			os.Exit(1)
+		}
 		slog.Info("Rate limiting enabled",
 			"requestsPerSecond", cfg.RateLimit.RequestsPerSecond,
 			"burst", cfg.RateLimit.Burst)
@@ -1995,6 +1999,10 @@ func main() {
 
 	if metricsSrv != nil {
 		metricsSrv.Shutdown(ctx)
+	}
+
+	if proxyRateLimiter != nil {
+		proxyRateLimiter.Close()
 	}
 
 	if err := srv.Shutdown(ctx); err != nil {

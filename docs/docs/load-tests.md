@@ -24,7 +24,7 @@ For the most common production case (`openai` inbound redaction):
 
 - The proxy adds **~2 ms p50** and **~8.4 ms p95** of latency on top of the direct-to-stub baseline.
 - Sustained throughput drops from ~40K req/s to **~2.9K req/s**. The bottleneck is the Philter container, not the proxy itself: with one Philter instance on the same machine, every request serializes through a single redaction call.
-- For higher throughput, scale Philter horizontally and bring up additional proxy replicas (the proxy is stateless except for in-process rate-limit buckets and concurrency slots; see issue #110 for shared rate-limit state).
+- For higher throughput, scale Philter horizontally and bring up additional proxy replicas. The proxy is stateless except for concurrency slots and, by default, in-process rate-limit buckets; for a consistent limit across replicas, use the shared [Redis rate-limit backend](configuration.md#shared-state-for-multi-replica-deployments).
 
 The `outbound-scan` row is **two** Philter round-trips per request (one inbound on the prompt, one outbound on the response). Throughput halves vs `openai` and p99 climbs from 13ms to 65ms - the price of scanning the LLM's reply for PII before it leaves the proxy.
 

@@ -104,13 +104,19 @@ defaults:
 #   - plaintext (hashed with SHA256 at load)
 #   - sha256$<64-hex>  - pre-hashed
 #   - bcrypt$<bcrypt-hash>  - pre-hashed
-# See docs/configuration.md#api-key-hashing for the latency table and
+#   - ${ENV_VAR}       - read from an environment variable
+#   - file:/path/secret - read from a file (trailing whitespace trimmed)
+# The ${ENV_VAR} / file: forms keep secrets out of this file; see
+# docs/configuration.md#loading-secrets-from-environment-variables-and-files
+# (and #rotating-api-keys). See #api-key-hashing for the latency table and
 # instructions for generating pre-hashed values.
 # auth:
 #   header: x-philter-proxy-key   # optional; this is the default header name
 #   apiKeys:
 #     - key: your-secret-key-here
 #       # policy: hipaa-safe-harbor  # optional: lock this key to a specific Philter policy
+#     - key: ${TEAM_B_API_KEY}     # loaded from an environment variable
+#     - key: file:/run/secrets/team-c   # loaded from a mounted secret file
 #     - key: sha256$2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae
 #       # rateLimit:                 # optional: per-key override (takes precedence over global rateLimit)
 #       #   requestsPerSecond: 5.0
@@ -125,3 +131,18 @@ defaults:
 #   global:                   # optional: global backstop across all clients
 #     requestsPerSecond: 100.0
 #     burst: 200
+#   # backend:                # optional: where token-bucket state lives. Default: memory (per-replica).
+#   #   type: redis           # use redis to share one limit across replicas (multi-replica deployments)
+#   #   failureMode: open     # when redis is unreachable: open (fall back to local memory) or closed (reject)
+#   #   redis:
+#   #     address: redis.internal:6379
+#   #     password: ${REDIS_PASSWORD}   # supports ${ENV_VAR} / file: references
+#   #     # db: 0
+#   #     # keyPrefix: "philter:rl:"
+#   #     # timeoutMs: 100
+#   #     # tls:
+#   #     #   enabled: true
+#   #     #   caCert: /etc/ssl/redis-ca.pem      # optional custom CA
+#   #     #   cert: /etc/ssl/redis-client.pem    # optional client cert (mTLS)
+#   #     #   key: /etc/ssl/redis-client-key.pem
+#   # See docs/configuration.md#shared-state-for-multi-replica-deployments

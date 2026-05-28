@@ -162,6 +162,62 @@ func TestValidateConfig_RouteNoPolicy(t *testing.T) {
 	}
 }
 
+func TestValidateConfig_RedisRequiresAddress(t *testing.T) {
+	cfg := defaultConfig()
+	cfg.RateLimit = RateLimitConfig{
+		Enabled:           true,
+		RequestsPerSecond: 1,
+		Burst:             1,
+		Backend:           RateLimitBackendConfig{Type: "redis"},
+	}
+	if err := validateConfig(cfg); err == nil {
+		t.Error("expected error when redis backend has no address")
+	}
+}
+
+func TestValidateConfig_InvalidBackendType(t *testing.T) {
+	cfg := defaultConfig()
+	cfg.RateLimit = RateLimitConfig{
+		Enabled:           true,
+		RequestsPerSecond: 1,
+		Burst:             1,
+		Backend:           RateLimitBackendConfig{Type: "memcached"},
+	}
+	if err := validateConfig(cfg); err == nil {
+		t.Error("expected error for invalid backend type")
+	}
+}
+
+func TestValidateConfig_InvalidFailureMode(t *testing.T) {
+	cfg := defaultConfig()
+	cfg.RateLimit = RateLimitConfig{
+		Enabled:           true,
+		RequestsPerSecond: 1,
+		Burst:             1,
+		Backend:           RateLimitBackendConfig{Type: "memory", FailureMode: "explode"},
+	}
+	if err := validateConfig(cfg); err == nil {
+		t.Error("expected error for invalid failure mode")
+	}
+}
+
+func TestValidateConfig_RedisBackendValid(t *testing.T) {
+	cfg := defaultConfig()
+	cfg.RateLimit = RateLimitConfig{
+		Enabled:           true,
+		RequestsPerSecond: 1,
+		Burst:             1,
+		Backend: RateLimitBackendConfig{
+			Type:        "redis",
+			FailureMode: "closed",
+			Redis:       RedisBackendConfig{Address: "redis:6379"},
+		},
+	}
+	if err := validateConfig(cfg); err != nil {
+		t.Errorf("expected valid redis backend config, got %v", err)
+	}
+}
+
 func TestMatchRoute_HeaderMatch(t *testing.T) {
 	cfg := defaultConfig()
 	cfg.Routes = []RouteConfig{
