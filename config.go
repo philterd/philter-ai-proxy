@@ -210,12 +210,37 @@ type BedrockConfig struct {
 	Timeouts  ProviderTimeouts `yaml:"timeouts"`
 }
 
+// AzureConfig configures the first-class Azure OpenAI provider. It is enabled
+// by setting `target`. Azure's API surface differs from OpenAI: requests use
+// deployment-based paths (`/openai/deployments/{deployment}/...`) with a
+// required `api-version` query parameter, and authenticate with either an
+// `api-key` header (passed through from the client) or an Azure AD / Entra ID
+// bearer token (acquired by the proxy when `entraID` is set).
+type AzureConfig struct {
+	// Target is the Azure OpenAI resource endpoint, e.g.
+	// https://my-resource.openai.azure.com. Required to enable Azure.
+	Target string `yaml:"target"`
+	// APIVersion, when set, is injected as the `api-version` query parameter
+	// for requests that omit it. Azure requires this parameter; setting a
+	// default here lets clients that don't send it still work.
+	APIVersion string `yaml:"apiVersion"`
+	// EntraID enables Azure AD (Entra ID) authentication: the proxy acquires a
+	// bearer token via the default Azure credential chain (managed identity,
+	// workload identity, environment, etc.) and sets it as the Authorization
+	// header. When false (default), the client's `api-key` header is passed
+	// through unchanged.
+	EntraID   bool             `yaml:"entraID"`
+	TLSVerify *bool            `yaml:"tlsVerify"`
+	Timeouts  ProviderTimeouts `yaml:"timeouts"`
+}
+
 type ProvidersConfig struct {
 	OpenAI           ProviderConfig            `yaml:"openai"`
 	Anthropic        ProviderConfig            `yaml:"anthropic"`
 	Gemini           ProviderConfig            `yaml:"gemini"`
 	Ollama           ProviderConfig            `yaml:"ollama"`
 	Bedrock          BedrockConfig             `yaml:"bedrock"`
+	Azure            AzureConfig               `yaml:"azure"`
 	OpenAICompatible map[string]ProviderConfig `yaml:"openaiCompatible"`
 }
 
@@ -384,9 +409,17 @@ func validateConfig(cfg *Config) error {
 		{"providers.gemini", cfg.Providers.Gemini.Timeouts},
 		{"providers.ollama", cfg.Providers.Ollama.Timeouts},
 		{"providers.bedrock", cfg.Providers.Bedrock.Timeouts},
+		{"providers.azure", cfg.Providers.Azure.Timeouts},
 	} {
 		if err := timeoutFields(p.name, p.t); err != nil {
 			return err
+		}
+	}
+
+	// Azure is optional (enabled by setting a target); validate the URL when set.
+	if cfg.Providers.Azure.Target != "" {
+		if _, err := url.Parse(cfg.Providers.Azure.Target); err != nil {
+			return fmt.Errorf("config: providers.azure has invalid URL %q: %w", cfg.Providers.Azure.Target, err)
 		}
 	}
 	for name, pc := range cfg.Providers.OpenAICompatible {

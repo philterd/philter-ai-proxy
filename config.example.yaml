@@ -61,6 +61,11 @@ providers:
     # tlsVerify: true
     # timeouts:                 # same shape as the openai block above
     #   responseHeaderMs: 60000
+  # azure:                                      # optional: first-class Azure OpenAI. Enable by setting target.
+  #   target: https://my-resource.openai.azure.com
+  #   apiVersion: "2024-02-01"                  # injected when a request omits ?api-version=
+  #   entraID: false                            # true = proxy uses Azure AD/Entra token; false = pass client's api-key through
+  #   # tlsVerify: true
   # openaiCompatible:
   #   mistral:
   #     target: https://api.mistral.ai

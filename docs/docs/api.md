@@ -8,10 +8,10 @@ The proxy inspects and redacts all text-bearing fields in the request body befor
 
 | Provider | Message type | Fields redacted |
 |----------|-------------|-----------------|
-| OpenAI / OpenAI-compatible | `role: user` | `content` (string) |
-| OpenAI / OpenAI-compatible | `role: system` | `content` (string) |
-| OpenAI / OpenAI-compatible | `role: tool` | `content` (string) |
-| OpenAI / OpenAI-compatible | `role: assistant` with tool calls | `tool_calls[].function.arguments` - parsed as JSON, string values redacted, re-serialized |
+| OpenAI / OpenAI-compatible / Azure OpenAI | `role: user` | `content` (string) |
+| OpenAI / OpenAI-compatible / Azure OpenAI | `role: system` | `content` (string) |
+| OpenAI / OpenAI-compatible / Azure OpenAI | `role: tool` | `content` (string) |
+| OpenAI / OpenAI-compatible / Azure OpenAI | `role: assistant` with tool calls | `tool_calls[].function.arguments` - parsed as JSON, string values redacted, re-serialized |
 | Anthropic | Top-level | `system` (string) |
 | Anthropic | `text` content block | `text` |
 | Anthropic | `tool_result` content block | `content` (string or nested `text` blocks) |
@@ -73,6 +73,7 @@ The proxy routes requests based on the URL path:
 | `/api/generate` | Ollama |
 | `/api/chat` | Ollama |
 | `/model/{modelId}/converse` | Amazon Bedrock |
+| `/openai/deployments/{deployment}/...` | Azure OpenAI (configured via `providers.azure`) |
 | `/{name}/v1/...` | OpenAI-compatible (configured via `providers.openaiCompatible`) |
 | `/health` | Health check (no proxying) |
 | All other paths | OpenAI |

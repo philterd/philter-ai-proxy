@@ -25,10 +25,10 @@ import (
 	"encoding/hex"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	v4 "github.com/aws/aws-sdk-go-v2/aws/signer/v4"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials/stscreds"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
-	v4 "github.com/aws/aws-sdk-go-v2/aws/signer/v4"
 	"github.com/google/uuid"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -114,7 +114,7 @@ type BedrockContentBlock struct {
 }
 
 type BedrockMessage struct {
-	Role    string               `json:"role"`
+	Role    string                `json:"role"`
 	Content []BedrockContentBlock `json:"content"`
 }
 
@@ -138,53 +138,56 @@ type BedrockConverseResponse struct {
 }
 
 type Proxy struct {
-	config          *Config
-	openaiTarget    *url.URL
-	anthropicTarget *url.URL
-	geminiTarget    *url.URL
-	ollamaTarget    *url.URL
-	openaiClient    *http.Client
-	anthropicClient *http.Client
-	geminiClient    *http.Client
-	ollamaClient    *http.Client
-	bedrockClient            *http.Client
-	bedrockRegion            string
-	bedrockCreds             aws.CredentialsProvider
-	openaiCompatibleTargets  map[string]*url.URL
-	openaiCompatibleClients  map[string]*http.Client
-	philter         *PhilterClient
-	auditLogger     *slog.Logger
-	metrics         *ProxyMetrics
-	keyStore        *keyStore // hashed API keys; nil when auth is disabled
-	rateLimiter     *ProxyRateLimiter
-	concurrency     *ConcurrencyLimiter
-	usage           UsageStore     // per-key token accounting; nil when quota & admin both off
-	quota           *QuotaEnforcer // per-key token quotas; nil when disabled
-	cache           ResponseCache  // response cache; nil when disabled
+	config                  *Config
+	openaiTarget            *url.URL
+	anthropicTarget         *url.URL
+	geminiTarget            *url.URL
+	ollamaTarget            *url.URL
+	openaiClient            *http.Client
+	anthropicClient         *http.Client
+	geminiClient            *http.Client
+	ollamaClient            *http.Client
+	bedrockClient           *http.Client
+	bedrockRegion           string
+	bedrockCreds            aws.CredentialsProvider
+	azureTarget             *url.URL // nil when Azure is not configured
+	azureClient             *http.Client
+	azureCred               tokenSource // non-nil only when Entra ID auth is enabled
+	openaiCompatibleTargets map[string]*url.URL
+	openaiCompatibleClients map[string]*http.Client
+	philter                 *PhilterClient
+	auditLogger             *slog.Logger
+	metrics                 *ProxyMetrics
+	keyStore                *keyStore // hashed API keys; nil when auth is disabled
+	rateLimiter             *ProxyRateLimiter
+	concurrency             *ConcurrencyLimiter
+	usage                   UsageStore     // per-key token accounting; nil when quota & admin both off
+	quota                   *QuotaEnforcer // per-key token quotas; nil when disabled
+	cache                   ResponseCache  // response cache; nil when disabled
 }
 
 type AuditEntry struct {
-	RequestID        string         `json:"request_id"`
-	Direction        string         `json:"direction"`
-	Provider         string         `json:"provider"`
-	Model            string         `json:"model"`
-	PolicyName       string         `json:"policy_name"`
-	DocumentID       string         `json:"document_id"`
-	FieldsRedacted   int            `json:"fields_redacted"`
-	EntityCount      int            `json:"entity_count"`
-	EntityTypes      []string       `json:"entity_types"`
-	RedactLatency    time.Duration  `json:"redact_latency_ms"`
-	ClientIP         string         `json:"client_ip"`
-	HTTPStatus       int            `json:"http_status"`
-	PromptTokens     int            `json:"prompt_tokens,omitempty"`
-	CompletionTokens int            `json:"completion_tokens,omitempty"`
+	RequestID        string        `json:"request_id"`
+	Direction        string        `json:"direction"`
+	Provider         string        `json:"provider"`
+	Model            string        `json:"model"`
+	PolicyName       string        `json:"policy_name"`
+	DocumentID       string        `json:"document_id"`
+	FieldsRedacted   int           `json:"fields_redacted"`
+	EntityCount      int           `json:"entity_count"`
+	EntityTypes      []string      `json:"entity_types"`
+	RedactLatency    time.Duration `json:"redact_latency_ms"`
+	ClientIP         string        `json:"client_ip"`
+	HTTPStatus       int           `json:"http_status"`
+	PromptTokens     int           `json:"prompt_tokens,omitempty"`
+	CompletionTokens int           `json:"completion_tokens,omitempty"`
 	// ErrorType / ErrorCode mirror the values the client received in the
 	// JSON error body. Empty on 2xx responses.
 	ErrorType string `json:"error_type,omitempty"`
 	ErrorCode string `json:"error_code,omitempty"`
 	// TraceID is the W3C trace ID for this request when OpenTelemetry tracing
 	// is enabled and the request was sampled. Empty otherwise.
-	TraceID string `json:"trace_id,omitempty"`
+	TraceID          string         `json:"trace_id,omitempty"`
 	EntityTypeCounts map[string]int `json:"-"`
 }
 
@@ -1509,6 +1512,13 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	} else if r.URL.Path == "/api/chat" {
 		audit.Provider = "ollama"
 		p.handleOllamaChat(rc, r, bodyBytes, philter_context, philter_document_id, philter_policy_name, audit, route.Outbound)
+	} else if isAzurePath(r.URL.Path) {
+		audit.Provider = "azure"
+		if p.azureTarget == nil {
+			writeError(rc, audit, http.StatusNotFound, "not_found", "azure_disabled", "azure provider not configured")
+		} else {
+			p.handleAzure(rc, r, bodyBytes, philter_context, philter_document_id, philter_policy_name, audit, route.Outbound)
+		}
 	} else if isBedrockPath(r.URL.Path) {
 		audit.Provider = "bedrock"
 		if p.bedrockRegion == "" {
@@ -1705,44 +1715,71 @@ func (p *Proxy) handleOpenAI(w http.ResponseWriter, r *http.Request, bodyBytes [
 }
 
 func (p *Proxy) handleOpenAICompatible(w http.ResponseWriter, r *http.Request, bodyBytes []byte, context string, documentId string, policyName string, audit *AuditEntry, outbound OutboundConfig, target *url.URL, client *http.Client, provider string) {
-	var o OpenAIRequest
-	if err := json.Unmarshal(bodyBytes, &o); err != nil {
+	// Parse into a generic object so every top-level field the client sent
+	// (max_tokens, temperature, top_p, stream, stop, tools, tool_choice,
+	// response_format, seed, ...) is preserved verbatim when we re-serialize.
+	// Only `messages` is rewritten with redacted content; everything else
+	// passes through unchanged. Unmarshaling into a fixed struct here would
+	// silently drop those parameters and break sampling, streaming, and
+	// function-calling for OpenAI, Azure OpenAI, and every openai-compatible
+	// provider.
+	var root map[string]json.RawMessage
+	if err := json.Unmarshal(bodyBytes, &root); err != nil {
 		writeError(w, audit, http.StatusBadRequest, "invalid_request", "bad_json", err.Error())
 		return
 	}
 
-	audit.Model = o.Model
-
-	for i := range o.Messages {
-		msg := &o.Messages[i]
-
-		if len(msg.Content) > 0 {
-			var s string
-			if json.Unmarshal(msg.Content, &s) == nil && s != "" {
-				fr, err := p.philter.Filter(r.Context(), s, context, documentId, policyName)
-				if err != nil {
-					p.philterError(w, audit, err)
-					return
-				}
-				msg.Content, _ = json.Marshal(fr.FilteredText)
-				audit.recordFilterResult(fr)
-			}
-		}
-
-		for j := range msg.ToolCalls {
-			tc := &msg.ToolCalls[j]
-			if tc.Function.Arguments != "" {
-				redacted, err := redactJSONArguments(r.Context(), p.philter.Filter, tc.Function.Arguments, context, documentId, policyName, audit)
-				if err != nil {
-					p.philterError(w, audit, err)
-					return
-				}
-				tc.Function.Arguments = redacted
-			}
-		}
+	if rawModel, ok := root["model"]; ok {
+		var m string
+		_ = json.Unmarshal(rawModel, &m)
+		audit.Model = m
 	}
 
-	j, err := json.Marshal(o)
+	if rawMsgs, ok := root["messages"]; ok && len(rawMsgs) > 0 {
+		var messages []OpenAIMessage
+		if err := json.Unmarshal(rawMsgs, &messages); err != nil {
+			writeError(w, audit, http.StatusBadRequest, "invalid_request", "bad_json", err.Error())
+			return
+		}
+
+		for i := range messages {
+			msg := &messages[i]
+
+			if len(msg.Content) > 0 {
+				var s string
+				if json.Unmarshal(msg.Content, &s) == nil && s != "" {
+					fr, err := p.philter.Filter(r.Context(), s, context, documentId, policyName)
+					if err != nil {
+						p.philterError(w, audit, err)
+						return
+					}
+					msg.Content, _ = json.Marshal(fr.FilteredText)
+					audit.recordFilterResult(fr)
+				}
+			}
+
+			for j := range msg.ToolCalls {
+				tc := &msg.ToolCalls[j]
+				if tc.Function.Arguments != "" {
+					redacted, err := redactJSONArguments(r.Context(), p.philter.Filter, tc.Function.Arguments, context, documentId, policyName, audit)
+					if err != nil {
+						p.philterError(w, audit, err)
+						return
+					}
+					tc.Function.Arguments = redacted
+				}
+			}
+		}
+
+		newMsgs, err := json.Marshal(messages)
+		if err != nil {
+			writeError(w, audit, http.StatusInternalServerError, "internal_error", "marshal_failed", err.Error())
+			return
+		}
+		root["messages"] = newMsgs
+	}
+
+	j, err := json.Marshal(root)
 	if err != nil {
 		writeError(w, audit, http.StatusInternalServerError, "internal_error", "marshal_failed", err.Error())
 		return
@@ -2014,6 +2051,43 @@ func main() {
 		slog.Info("OpenAI-compatible provider configured", "name", name, "target", pc.Target)
 	}
 
+	// Azure OpenAI is optional; only initialize if a target is configured.
+	var azureTarget *url.URL
+	var azureClient *http.Client
+	var azureCred tokenSource
+	if cfg.Providers.Azure.Target != "" {
+		azureTarget, err = url.Parse(cfg.Providers.Azure.Target)
+		if err != nil {
+			slog.Error("Invalid Azure target URL", "error", err)
+			os.Exit(1)
+		}
+		verify := true
+		if cfg.Providers.Azure.TLSVerify != nil {
+			verify = *cfg.Providers.Azure.TLSVerify
+		}
+		tlsCfg, err := buildTLSConfig(!verify, "")
+		if err != nil {
+			slog.Error("Azure TLS configuration error", "error", err)
+			os.Exit(1)
+		}
+		azureClient = instrumentTransport(
+			&http.Client{Transport: newProviderTransport(tlsCfg, cfg.Providers.Azure.Timeouts)},
+			tracingActive, "provider.azure",
+		)
+		if cfg.Providers.Azure.EntraID {
+			cred, err := newAzureTokenProvider()
+			if err != nil {
+				slog.Error("Failed to initialize Azure AD credential", "error", err)
+				os.Exit(1)
+			}
+			azureCred = cred
+		}
+		slog.Info("Azure OpenAI provider configured",
+			"target", cfg.Providers.Azure.Target,
+			"auth", azureAuthMode(cfg.Providers.Azure.EntraID),
+			"apiVersionDefault", cfg.Providers.Azure.APIVersion)
+	}
+
 	var proxyMetrics *ProxyMetrics
 	var metricsReg *prometheus.Registry
 	if cfg.Metrics.Enabled {
@@ -2095,18 +2169,21 @@ func main() {
 	}
 
 	p := &Proxy{
-		config:          cfg,
-		openaiTarget:    targets[0],
-		anthropicTarget: targets[1],
-		geminiTarget:    targets[2],
-		ollamaTarget:    targets[3],
-		openaiClient:    clients[0],
-		anthropicClient: clients[1],
-		geminiClient:    clients[2],
-		ollamaClient:    clients[3],
+		config:                  cfg,
+		openaiTarget:            targets[0],
+		anthropicTarget:         targets[1],
+		geminiTarget:            targets[2],
+		ollamaTarget:            targets[3],
+		openaiClient:            clients[0],
+		anthropicClient:         clients[1],
+		geminiClient:            clients[2],
+		ollamaClient:            clients[3],
 		bedrockClient:           bedrockClient,
 		bedrockRegion:           bedrockRegion,
 		bedrockCreds:            bedrockCreds,
+		azureTarget:             azureTarget,
+		azureClient:             azureClient,
+		azureCred:               azureCred,
 		openaiCompatibleTargets: openaiCompatTargets,
 		openaiCompatibleClients: openaiCompatClients,
 		philter:                 philterClient,

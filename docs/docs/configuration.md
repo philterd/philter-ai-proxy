@@ -209,6 +209,44 @@ If the host credentials do not have Bedrock access directly (e.g., in a multi-ac
 
 **Streaming**: The `converseStream` endpoint is not yet supported. Streaming support is planned for a future release.
 
+### `providers.azure`
+
+Azure OpenAI is an optional first-class provider. It is enabled by setting `providers.azure.target` to your resource endpoint. Azure uses deployment-based routing rather than OpenAI's model-in-body convention: the proxy routes any request whose path begins with `/openai/deployments/{deployment}/`, preserves the path and the `api-version` query parameter, and forwards it to the configured Azure endpoint. Request and response bodies are OpenAI-compatible, so **inbound redaction and token-usage accounting are identical to the OpenAI provider**.
+
+!!! warning "Redaction scope"
+    As with the OpenAI provider, inbound redaction covers **chat-style message content** (`messages[].content` and `tool_calls[].function.arguments` on `.../chat/completions`). The legacy `.../completions` (`prompt`) and `.../embeddings` (`input`) endpoints are routed and forwarded but their inputs are **not yet redacted** — do not send PII through them until embeddings/completions redaction lands ([#153](https://github.com/philterd/philterd-website/issues/153)). This limitation is shared with the OpenAI provider.
+
+```yaml
+providers:
+  azure:
+    target: https://my-resource.openai.azure.com
+    apiVersion: "2024-02-01"   # optional: injected when a request omits api-version
+    entraID: false             # false (default) = pass the client's api-key header through
+    # tlsVerify: true
+```
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `target` | string | (none - Azure disabled) | Azure OpenAI resource endpoint, e.g. `https://my-resource.openai.azure.com`. |
+| `apiVersion` | string | (none) | Default `api-version` injected when a request doesn't supply one. Azure requires this parameter; setting it here lets clients that omit it still work. A client-supplied `api-version` always takes precedence. |
+| `entraID` | bool | `false` | When `true`, the proxy authenticates to Azure with an Azure AD / Entra ID bearer token instead of passing the client's `api-key` through. |
+| `tlsVerify` | bool | `true` | Enable TLS certificate verification for the Azure connection. |
+
+**Authentication — two modes:**
+
+- **`api-key` pass-through (default).** The client sends its Azure `api-key` header; the proxy forwards it unchanged (the same way it passes through `Authorization` for OpenAI). No proxy-side credentials are needed.
+- **Entra ID (`entraID: true`).** The proxy acquires a token via the [default Azure credential chain](https://learn.microsoft.com/azure/developer/go/azure-sdk-authentication) — managed identity, workload identity, or environment credentials (`AZURE_CLIENT_ID` / `AZURE_TENANT_ID` / `AZURE_CLIENT_SECRET`) — caches it until shortly before expiry, and sets it as the `Authorization: Bearer` header on outbound requests (scope `https://cognitiveservices.azure.com/.default`). The recommended production pattern is a workload identity / managed identity assigned the **Cognitive Services OpenAI User** role on the resource, so no secrets are handled by clients. A token-acquisition failure returns `502` (`provider_error` / `azure_auth_failed`).
+
+**Client example** (api-key mode):
+```bash
+curl -k "https://localhost:8080/openai/deployments/gpt-4o/chat/completions?api-version=2024-06-01" \
+  -H "api-key: $AZURE_OPENAI_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"messages":[{"role":"user","content":"Hello"}]}'
+```
+
+Note Azure encodes the model in the deployment name (URL), so the request body's `model` field is optional; the audit log records whatever the body supplies. When the proxy is not configured for Azure, `/openai/deployments/...` requests return `404` (`not_found` / `azure_disabled`).
+
 ### `routes`
 
 Routes control which **Philter redaction policy and context** are applied to each request. They do not control which LLM provider handles the request - provider routing is determined automatically by the URL path (see [API Reference](api.md) for path-to-provider mapping).
@@ -946,6 +984,7 @@ The `(type, code)` set below is part of the proxy's public API. New codes may be
 | 401 | `unauthorized` | `invalid_api_key` | Auth enabled and the supplied key was not recognised | - |
 | 403 | `pii_blocked` | `outbound_blocked` | Outbound scanning is on with `action: block` and PII was found in the provider response | - |
 | 404 | `not_found` | `bedrock_disabled` | A Bedrock path was requested but `providers.bedrock.region` is unset | - |
+| 404 | `not_found` | `azure_disabled` | An Azure path (`/openai/deployments/...`) was requested but `providers.azure.target` is unset | - |
 | 404 | `not_found` | `admin_disabled` | `/admin/usage` was requested but `admin.enabled` is false | - |
 | 401 | `unauthorized` | `invalid_admin_token` | `/admin/usage` requested with a missing or wrong admin token | - |
 | 405 | `method_not_allowed` | `method_not_allowed` | `/admin/usage` requested with a non-GET method | - |
@@ -957,6 +996,7 @@ The `(type, code)` set below is part of the proxy's public API. New codes may be
 | 500 | `internal_error` | `bedrock_sign_failed` | AWS SigV4 signing failed (credentials cannot be retrieved) | - |
 | 500 | `internal_error` | `usage_snapshot_failed` | `/admin/usage` could not read the usage store | - |
 | 502 | `provider_error` | `unreachable` | Upstream LLM provider connection failed (DNS, dial, TLS) | - |
+| 502 | `provider_error` | `azure_auth_failed` | Entra ID token acquisition failed for an Azure request (`providers.azure.entraID: true`) | - |
 | 502 | `provider_error` | `response_read_failed` | Connected to the provider but failed to read the response body | - |
 | 502 | `philter_error` | `request_failed` | Philter call failed (network or non-2xx response) and retries were exhausted | - |
 | 503 | `capacity` | `concurrency_exceeded` | `listen.maxConcurrentRequests` or a per-key cap was hit | `1` |
