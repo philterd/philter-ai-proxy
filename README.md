@@ -29,6 +29,20 @@ docker compose build
 docker compose up
 ```
 
+### Kubernetes
+
+A production-ready Helm chart lives at `deploy/helm/philter-ai-proxy/` and plain manifests at `deploy/k8s/`. A starter Grafana dashboard covering every emitted metric is at `deploy/grafana/philter-ai-proxy.json`.
+
+```bash
+# Quickstart with the chart (TLS cert pre-created as a Secret)
+kubectl create secret tls philter-ai-proxy-tls --cert=tls.crt --key=tls.key
+helm install proxy ./deploy/helm/philter-ai-proxy \
+  --set tls.existingSecret.name=philter-ai-proxy-tls \
+  --set config.philter.endpoint=http://philter.philter-system.svc.cluster.local:8080
+```
+
+The chart supports replicas, autoscaling (HPA), Pod Disruption Budgets, Ingress, Prometheus Operator `ServiceMonitor`, mTLS, and cert-manager-issued TLS. See [the Kubernetes Quickstart](https://philterd.github.io/philter-ai-proxy/kubernetes/) for the full walkthrough.
+
 ## Usage
 
 To use this proxy, you can send a request to it like you would to OpenAI, Claude, Gemini, or Bedrock but change the hostname:

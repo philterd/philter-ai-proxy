@@ -1,0 +1,234 @@
+{
+  "title": "Philter AI Proxy",
+  "uid": "philter-ai-proxy",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "tags": ["philter", "ai", "proxy", "pii"],
+  "time": {"from": "now-1h", "to": "now"},
+  "refresh": "30s",
+  "templating": {
+    "list": [
+      {
+        "name": "datasource",
+        "label": "Datasource",
+        "type": "datasource",
+        "query": "prometheus",
+        "current": {},
+        "hide": 0
+      },
+      {
+        "name": "provider",
+        "label": "Provider",
+        "type": "query",
+        "datasource": {"type": "prometheus", "uid": "${datasource}"},
+        "query": "label_values(philter_proxy_requests_total, provider)",
+        "refresh": 1,
+        "includeAll": true,
+        "multi": true,
+        "current": {"text": "All", "value": "$__all"}
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "Request rate by provider",
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": {"drawStyle": "line", "lineWidth": 1, "fillOpacity": 10, "stacking": {"mode": "normal"}}
+        }
+      },
+      "options": {"legend": {"displayMode": "table", "placement": "bottom"}, "tooltip": {"mode": "multi"}},
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (provider) (rate(philter_proxy_requests_total{provider=~\"$provider\"}[5m]))",
+          "legendFormat": "{{provider}}"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "Request latency p50 / p95 / p99 by provider",
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {"drawStyle": "line", "lineWidth": 1, "fillOpacity": 0}
+        }
+      },
+      "options": {"legend": {"displayMode": "table", "placement": "bottom"}, "tooltip": {"mode": "multi"}},
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.50, sum by (provider, le) (rate(philter_proxy_request_duration_seconds_bucket{provider=~\"$provider\"}[5m])))",
+          "legendFormat": "p50 {{provider}}"
+        },
+        {
+          "refId": "B",
+          "expr": "histogram_quantile(0.95, sum by (provider, le) (rate(philter_proxy_request_duration_seconds_bucket{provider=~\"$provider\"}[5m])))",
+          "legendFormat": "p95 {{provider}}"
+        },
+        {
+          "refId": "C",
+          "expr": "histogram_quantile(0.99, sum by (provider, le) (rate(philter_proxy_request_duration_seconds_bucket{provider=~\"$provider\"}[5m])))",
+          "legendFormat": "p99 {{provider}}"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "5xx error rate (last 5m)",
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "gridPos": {"h": 4, "w": 6, "x": 0, "y": 8},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "yellow", "value": 0.01},
+              {"color": "red", "value": 0.05}
+            ]
+          }
+        }
+      },
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "background"},
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(philter_proxy_requests_total{status_code=~\"5..\"}[5m])) / clamp_min(sum(rate(philter_proxy_requests_total[5m])), 1)"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Active in-flight requests",
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "gridPos": {"h": 4, "w": 6, "x": 6, "y": 8},
+      "fieldConfig": {"defaults": {"unit": "short"}},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value"},
+      "targets": [
+        {"refId": "A", "expr": "sum(philter_proxy_active_requests)"}
+      ]
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Concurrency utilization (% of global cap)",
+      "description": "Only meaningful when listen.maxConcurrentRequests is set. NaN when concurrency_limit{scope=\"global\"} is 0 (unlimited).",
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "max": 1,
+          "custom": {"drawStyle": "line", "lineWidth": 2, "fillOpacity": 20}
+        }
+      },
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}},
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(philter_proxy_active_requests) / on() philter_proxy_concurrency_limit{scope=\"global\"}",
+          "legendFormat": "utilization"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "Concurrency sheds by scope (503 rejections)",
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "gridPos": {"h": 4, "w": 12, "x": 0, "y": 12},
+      "fieldConfig": {"defaults": {"unit": "reqps", "custom": {"drawStyle": "line", "lineWidth": 1, "fillOpacity": 10}}},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}},
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (scope) (rate(philter_proxy_concurrency_shed_total[5m]))",
+          "legendFormat": "{{scope}}"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "Entities redacted by type",
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 16},
+      "fieldConfig": {"defaults": {"unit": "short", "custom": {"drawStyle": "line", "lineWidth": 1, "fillOpacity": 10, "stacking": {"mode": "normal"}}}},
+      "options": {"legend": {"displayMode": "table", "placement": "bottom"}},
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (entity_type) (rate(philter_proxy_entities_redacted_total[5m]))",
+          "legendFormat": "{{entity_type}}"
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "Token throughput by provider",
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 16},
+      "fieldConfig": {"defaults": {"unit": "short", "custom": {"drawStyle": "line", "lineWidth": 1, "fillOpacity": 10}}},
+      "options": {"legend": {"displayMode": "table", "placement": "bottom"}},
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (provider) (rate(philter_proxy_prompt_tokens_total{provider=~\"$provider\"}[5m]))",
+          "legendFormat": "prompt {{provider}}"
+        },
+        {
+          "refId": "B",
+          "expr": "sum by (provider) (rate(philter_proxy_completion_tokens_total{provider=~\"$provider\"}[5m]))",
+          "legendFormat": "completion {{provider}}"
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "type": "timeseries",
+      "title": "Philter backend errors",
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 24},
+      "fieldConfig": {"defaults": {"unit": "reqps", "custom": {"drawStyle": "line", "lineWidth": 1, "fillOpacity": 10}}},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}},
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "rate(philter_proxy_philter_errors_total[5m])",
+          "legendFormat": "errors/s"
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "type": "timeseries",
+      "title": "Upstream LLM errors by provider",
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 24},
+      "fieldConfig": {"defaults": {"unit": "reqps", "custom": {"drawStyle": "line", "lineWidth": 1, "fillOpacity": 10}}},
+      "options": {"legend": {"displayMode": "table", "placement": "bottom"}},
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (provider, status_code) (rate(philter_proxy_upstream_errors_total{provider=~\"$provider\"}[5m]))",
+          "legendFormat": "{{provider}} {{status_code}}"
+        }
+      ]
+    }
+  ]
+}

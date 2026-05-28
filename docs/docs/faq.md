@@ -51,6 +51,10 @@ Streaming responses are not scanned — they are forwarded immediately — so st
 
 The proxy is configured via a YAML configuration file. Please refer to the [Configuration](configuration.md) page for all available settings.
 
+### Can I deploy the proxy to Kubernetes?
+
+Yes. A production-ready Helm chart lives at `deploy/helm/philter-ai-proxy/` in the repo, and plain manifests for non-Helm users at `deploy/k8s/`. The chart supports replicas, autoscaling, Pod Disruption Budgets, optional Ingress, Prometheus Operator `ServiceMonitor`, mTLS, and TLS issuance via either an existing Secret or cert-manager. A starter Grafana dashboard at `deploy/grafana/philter-ai-proxy.json` covers every emitted metric. See the [Kubernetes Quickstart](kubernetes.md) for the full walkthrough.
+
 ### Is the proxy open source?
 
 Yes, the Philter AI Proxy is licensed under the Apache License, version 2.

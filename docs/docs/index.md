@@ -20,3 +20,11 @@ Inbound redaction covers all message types, including agentic and tool-use workf
 **Outbound response scanning** is also supported on an opt-in basis. When enabled, the LLM's response is scanned through Philter before it reaches the client, guarding against hallucinated or training-data PII in responses. The behaviour when PII is found is configurable: redact it, block the response entirely, or pass it through with a warning log. See [Configuration](configuration.md#outbound) for details.
 
 Every request produces a structured JSON audit log entry with the provider, model, entity types detected, entity count, and other metadata for compliance and debugging. See [Configuration](configuration.md) for details.
+
+## Deployment options
+
+The proxy ships as a single Go binary. From there:
+
+- **Local / VM** — run the binary directly with `--config config.yaml`. See [Installation](installation.md).
+- **Docker** — a multi-arch image at `philterd/philter-ai-proxy`. See [Installation → Docker](installation.md#docker).
+- **Kubernetes** — first-party Helm chart and plain manifests under `deploy/`, plus a starter Grafana dashboard. See [Kubernetes Quickstart](kubernetes.md).

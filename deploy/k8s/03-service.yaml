@@ -1,0 +1,32 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: philter-ai-proxy
+  labels:
+    app: philter-ai-proxy
+spec:
+  type: ClusterIP
+  selector:
+    app: philter-ai-proxy
+  ports:
+    - name: proxy
+      port: 8080
+      targetPort: proxy
+      protocol: TCP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: philter-ai-proxy-metrics
+  labels:
+    app: philter-ai-proxy
+    component: metrics
+spec:
+  type: ClusterIP
+  selector:
+    app: philter-ai-proxy
+  ports:
+    - name: metrics
+      port: 9090
+      targetPort: metrics
+      protocol: TCP

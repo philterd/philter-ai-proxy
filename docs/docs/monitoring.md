@@ -74,6 +74,10 @@ This is suitable for use as a Kubernetes liveness/readiness probe or a load-bala
 
 ## Grafana Dashboard
 
+A pre-built dashboard covering every metric in the table above is shipped at [`deploy/grafana/philter-ai-proxy.json`](https://github.com/philterd/philter-ai-proxy/blob/main/deploy/grafana/philter-ai-proxy.json). Import it via Grafana → **Dashboards** → **New** → **Import** and pick the Prometheus datasource that's scraping `philter_proxy_*`. The dashboard exposes a `datasource` template variable so the same JSON works across environments.
+
+If you'd rather build your own, the recipes below are the queries the bundled dashboard uses.
+
 ### Recommended panels
 
 **Request rate** (requests per second by provider):

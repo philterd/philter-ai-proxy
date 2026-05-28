@@ -65,6 +65,17 @@ docker-compose up --build
 
 The default `docker-compose.yaml` mounts `config.example.yaml` as the config file. Edit it or replace it with your own config before running.
 
+## Kubernetes
+
+Two ways to deploy on Kubernetes:
+
+- **Helm chart** at `deploy/helm/philter-ai-proxy/` — production-ready, with values for replicas, autoscaling (HPA), Pod Disruption Budgets, Ingress, Prometheus Operator `ServiceMonitor`, mTLS, and cert-manager-issued TLS.
+- **Plain manifests** at `deploy/k8s/` — minimal Deployment + Service + Secret for users who don't want Helm.
+
+A starter Grafana dashboard covering every emitted metric ships alongside at `deploy/grafana/philter-ai-proxy.json`.
+
+The [Kubernetes Quickstart](kubernetes.md) walks through both paths end-to-end.
+
 ## Certificates
 
 The proxy listens over TLS and requires a certificate and private key. You can generate a self-signed certificate for testing with the following command:

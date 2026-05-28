@@ -1,0 +1,84 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: philter-ai-proxy
+  labels:
+    app: philter-ai-proxy
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: philter-ai-proxy
+  template:
+    metadata:
+      labels:
+        app: philter-ai-proxy
+    spec:
+      terminationGracePeriodSeconds: 35
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: philter-ai-proxy
+          image: philterd/philter-ai-proxy:latest
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          args:
+            - --config
+            - /etc/philter-proxy/config/config.yaml
+          ports:
+            - name: proxy
+              containerPort: 8080
+              protocol: TCP
+            - name: metrics
+              containerPort: 9090
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: proxy
+              scheme: HTTPS
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 3
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: proxy
+              scheme: HTTPS
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 1
+              memory: 512Mi
+          volumeMounts:
+            - name: config
+              mountPath: /etc/philter-proxy/config
+              readOnly: true
+            - name: tls
+              mountPath: /etc/philter-proxy/tls
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: config
+          secret:
+            secretName: philter-ai-proxy-config
+        - name: tls
+          secret:
+            secretName: philter-ai-proxy-tls
+        - name: tmp
+          emptyDir: {}
