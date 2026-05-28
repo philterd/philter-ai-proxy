@@ -100,6 +100,15 @@ defaults:
 
 See [Monitoring](monitoring.md) for available metrics, PromQL examples, and Grafana dashboard setup.
 
+### `tracing`
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `enabled` | bool | `false` | Initialise the OpenTelemetry SDK. With this off the proxy pays zero per-request tracing overhead. |
+| `serviceName` | string | `philter-ai-proxy` | The OTel `service.name` resource attribute when `OTEL_SERVICE_NAME` is not set. |
+
+OTLP exporter destination, protocol, headers, sampler, and other tuning are all configured via the standard OTel env vars (`OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_TRACES_SAMPLER`, etc.). See [Monitoring -> Distributed Tracing](monitoring.md#distributed-tracing) for the full list and worked examples.
+
 ### `philter`
 
 | Field | Type | Default | Description |
@@ -491,6 +500,7 @@ Every proxy request produces a structured JSON log entry (JSONL) to stdout. All 
 | `completion_tokens` | int | Completion (output) token count reported by the provider. Omitted under the same conditions as `prompt_tokens`. |
 | `error_type` | string | The `error.type` value the client received. Empty on 2xx responses. See [Error Responses](#error-responses). |
 | `error_code` | string | The `error.code` value the client received. Empty on 2xx responses. See [Error Responses](#error-responses). |
+| `trace_id` | string | W3C trace ID, when OpenTelemetry tracing is enabled and the request was sampled. Use it to cross-reference audit log entries with traces in your APM. See [Distributed Tracing](monitoring.md#distributed-tracing). |
 
 ### Example Log Entries
 

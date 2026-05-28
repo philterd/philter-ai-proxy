@@ -51,6 +51,15 @@ type MetricsConfig struct {
 	Port    int  `yaml:"port"`
 }
 
+type TracingConfig struct {
+	// Enabled toggles OpenTelemetry SDK initialization. Disabled by default;
+	// with the SDK off the proxy pays zero per-request tracing overhead.
+	Enabled bool `yaml:"enabled"`
+	// ServiceName overrides the OTel `service.name` resource attribute when
+	// OTEL_SERVICE_NAME is not set in the environment.
+	ServiceName string `yaml:"serviceName"`
+}
+
 type RetryConfig struct {
 	MaxAttempts      int `yaml:"maxAttempts"`      // total attempts (1 = no retry); default 3
 	InitialBackoffMs int `yaml:"initialBackoffMs"` // initial backoff in ms; default 100
@@ -156,6 +165,7 @@ type Config struct {
 	Listen    ListenConfig    `yaml:"listen"`
 	Logging   LoggingConfig   `yaml:"logging"`
 	Metrics   MetricsConfig   `yaml:"metrics"`
+	Tracing   TracingConfig   `yaml:"tracing"`
 	Philter   PhilterConfig   `yaml:"philter"`
 	Providers ProvidersConfig `yaml:"providers"`
 	Routes    []RouteConfig   `yaml:"routes"`

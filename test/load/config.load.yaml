@@ -1,0 +1,53 @@
+listen:
+  port: 8080
+  cert: cert.pem
+  key: key.pem
+  shutdownTimeout: 30
+
+logging:
+  enabled: false   # quiet logs during load tests so they don't dominate stdout
+
+metrics:
+  enabled: true
+  port: 9090
+
+philter:
+  endpoint: http://philter:8080
+  tlsVerify: false
+  retry:
+    maxAttempts: 1
+
+# All upstream providers point at the stub. The stub serves OpenAI-shape JSON
+# on /v1/chat/completions and Anthropic-shape on /v1/messages.
+providers:
+  openai:
+    target: http://stub-provider:8090
+    tlsVerify: false
+  anthropic:
+    target: http://stub-provider:8090
+    tlsVerify: false
+  gemini:
+    target: http://stub-provider:8090
+    tlsVerify: false
+  ollama:
+    target: http://stub-provider:8090
+    tlsVerify: false
+
+# Routes:
+#   - The default route runs redaction with the standard policy.
+#   - A route gated on the `x-loadtest-mode: outbound` header enables outbound
+#     scanning so we can measure the cost of the round-trip back through
+#     Philter for response scanning.
+routes:
+  - match:
+      header: x-loadtest-mode
+      value: outbound
+    policy: default
+    context: load-test
+    outbound:
+      enabled: true
+      action: redact
+
+defaults:
+  policy: default
+  context: load-test

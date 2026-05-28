@@ -18,4 +18,5 @@ nav:
   - API Reference: api.md
   - Configuration: configuration.md
   - Monitoring: monitoring.md
+  - Load tests: load-tests.md
   - FAQ: faq.md

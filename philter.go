@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -143,7 +144,9 @@ func (cb *circuitBreaker) blocking() bool {
 // --- PhilterClient -----------------------------------------------------------
 
 // filterFunc is a Philter call abstraction used by redactAny and redactJSONArguments.
-type filterFunc func(input, ctx, docID, policy string) (FilterResponse, error)
+// The first parameter is the Go context for the outbound call; the third is
+// the Philter "context" name passed as a URL parameter.
+type filterFunc func(reqCtx context.Context, input, philterCtx, docID, policy string) (FilterResponse, error)
 
 // PhilterClient wraps an HTTP client with retry and circuit breaker logic.
 type PhilterClient struct {
@@ -203,7 +206,12 @@ func (pc *PhilterClient) Ready() bool {
 
 // Filter calls the Philter /api/explain endpoint with retry and circuit breaker logic.
 // It satisfies the filterFunc type when used as a method value (pc.Filter).
-func (pc *PhilterClient) Filter(input, ctx, docID, policy string) (FilterResponse, error) {
+//
+// reqCtx is the Go context for the outbound HTTP call; it carries the OTel
+// span context so the Philter call appears as a child of the inbound root span
+// when tracing is enabled. philterCtx is the unrelated Philter "context" name
+// passed as a URL parameter.
+func (pc *PhilterClient) Filter(reqCtx context.Context, input, philterCtx, docID, policy string) (FilterResponse, error) {
 	if pc.cb != nil {
 		allowed, fallback := pc.cb.allow()
 		if !allowed {
@@ -231,7 +239,7 @@ func (pc *PhilterClient) Filter(input, ctx, docID, policy string) (FilterRespons
 			}
 		}
 
-		fr, statusCode, err := filterHTTP(pc.httpClient, pc.endpoint, input, ctx, docID, policy)
+		fr, statusCode, err := filterHTTP(reqCtx, pc.httpClient, pc.endpoint, input, philterCtx, docID, policy)
 		if err == nil {
 			if pc.cb != nil {
 				pc.cb.recordSuccess()
@@ -253,19 +261,19 @@ func (pc *PhilterClient) Filter(input, ctx, docID, policy string) (FilterRespons
 
 // filterHTTP performs a single HTTP call to the Philter /api/explain endpoint.
 // Returns (response, httpStatusCode, error). statusCode is 0 for network-level errors.
-func filterHTTP(client *http.Client, endpoint, input, ctx, docID, policy string) (FilterResponse, int, error) {
+func filterHTTP(reqCtx context.Context, client *http.Client, endpoint, input, philterCtx, docID, policy string) (FilterResponse, int, error) {
 	base, err := url.Parse(endpoint + "/api/explain")
 	if err != nil {
 		return FilterResponse{}, 0, fmt.Errorf("failed to parse Philter endpoint: %w", err)
 	}
 
 	params := url.Values{}
-	params.Add("c", ctx)
+	params.Add("c", philterCtx)
 	params.Add("d", docID)
 	params.Add("p", policy)
 	base.RawQuery = params.Encode()
 
-	request, err := http.NewRequest("POST", base.String(), bytes.NewReader([]byte(input)))
+	request, err := http.NewRequestWithContext(reqCtx, "POST", base.String(), bytes.NewReader([]byte(input)))
 	if err != nil {
 		return FilterResponse{}, 0, fmt.Errorf("failed to create Philter request: %w", err)
 	}
@@ -331,7 +339,7 @@ func isTransientError(statusCode int, err error) bool {
 
 // Filter is a backward-compatible wrapper around filterHTTP for direct use in tests and simple callers.
 // Production code should use PhilterClient.Filter for retry and circuit breaker support.
-func Filter(client *http.Client, endpoint, input, ctx, docID, policy string) (FilterResponse, error) {
-	fr, _, err := filterHTTP(client, endpoint, input, ctx, docID, policy)
+func Filter(client *http.Client, endpoint, input, philterCtx, docID, policy string) (FilterResponse, error) {
+	fr, _, err := filterHTTP(context.Background(), client, endpoint, input, philterCtx, docID, policy)
 	return fr, err
 }

@@ -67,6 +67,16 @@ For API key authentication, configure one or more keys under `auth.apiKeys` in t
 
 For zero-trust service-to-service authentication, set `listen.clientCA` to a CA certificate. The proxy will require and verify a client TLS certificate on every connection. API key auth and mTLS can be used simultaneously. See [Configuration](configuration.md#authentication) for details and examples.
 
+### Where can I see throughput and latency numbers for the proxy?
+
+A k6 load-test harness lives at [`test/load/`](https://github.com/philterd/philter-ai-proxy/tree/main/test/load) in the repo, with a self-contained docker-compose stack (Philter + a stub LLM provider + the proxy) and five scenarios covering inbound redaction, outbound response scanning, streaming, and a no-proxy baseline for comparison. A reference baseline measured on a single-host Intel i5-11400 - including the OpenAI proxy path at ~2,900 req/s p95=8.8ms, and outbound-scan at ~1,400 req/s p95=32ms - is published at [Load tests](load-tests.md). A scheduled GitHub Actions workflow re-runs the harness weekly and uploads summary JSONs as artifacts.
+
+### Does the proxy support OpenTelemetry tracing?
+
+Yes. With `tracing.enabled: true` in the config, the proxy emits OTLP spans: one root span per inbound request, child spans for each Philter call and each upstream LLM provider call. Trace context is propagated to the upstream via the W3C `traceparent` header, so end-to-end traces work across the proxy in any APM (Jaeger, Honeycomb, Datadog, Grafana Tempo, etc.). Exporter destination, protocol, headers, and sampler are configured via the standard OTel env vars (`OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_TRACES_SAMPLER`, etc.).
+
+Tracing is off by default. Even with `tracing.enabled: true` the default sampler is `always_off`, so spans only flow when an operator explicitly sets `OTEL_TRACES_SAMPLER`. The `trace_id` appears in audit log entries when a request is sampled so APM traces and audit lines can be cross-referenced by ID. See [Distributed Tracing](monitoring.md#distributed-tracing) for the full reference.
+
 ### What endpoints should I use for Kubernetes probes?
 
 Point liveness at `/livez` and readiness at `/readyz`. `/livez` always returns 200 as long as the process is running, so transient Philter outages don't restart healthy pods. `/readyz` returns 503 only when the Philter circuit breaker is open with `fallback: block` - the proxy can't serve any traffic in that state. In every other state (no breaker, breaker closed, half-open, or open with `fallback: passthrough`) `/readyz` returns 200. The first-party Helm chart and plain manifests already use these endpoints. The legacy `/health` endpoint is retained for backwards compatibility but is deprecated; treating Philter unreachability as a liveness failure is the exact failure mode the split fixes. See [Monitoring -> Health Endpoints](monitoring.md#health-endpoints).

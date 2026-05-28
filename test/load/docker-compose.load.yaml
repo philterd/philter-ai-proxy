@@ -1,0 +1,44 @@
+# Load-test stack. Brings up Philter, a stub LLM provider, and the proxy
+# itself wired to point at the stub. The proxy listens on HTTPS (the existing
+# Dockerfile generates a self-signed cert at build time); k6 scenarios pass
+# `--insecure-skip-tls-verify` to ignore that.
+#
+# Run from the repo root:
+#
+#   docker compose -f test/load/docker-compose.load.yaml up -d --build
+#   ./test/load/run.sh openai
+#   docker compose -f test/load/docker-compose.load.yaml down -v
+
+services:
+
+  philter:
+    image: philterd/philter-api-ref
+    ports:
+      - "8081:8080"
+
+  stub-provider:
+    build:
+      context: ./stub-provider
+    ports:
+      - "8090:8090"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost:8090/healthz || exit 1"]
+      interval: 2s
+      timeout: 2s
+      retries: 5
+
+  philter-ai-proxy:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    ports:
+      - "8080:8080"
+    depends_on:
+      philter:
+        condition: service_started
+      stub-provider:
+        condition: service_healthy
+    volumes:
+      - ./config.load.yaml:/app/config.yaml:ro
+    environment:
+      - PHILTER_PROXY_CONFIG=/app/config.yaml

@@ -14,6 +14,13 @@ metrics:
   enabled: true
   port: 9090
 
+# OpenTelemetry tracing. Disabled by default. When enabled, configure the OTLP
+# exporter via the standard OTel env vars (OTEL_EXPORTER_OTLP_ENDPOINT, etc.).
+# See docs/monitoring.md#distributed-tracing for the full env-var reference.
+# tracing:
+#   enabled: true
+#   serviceName: philter-ai-proxy
+
 philter:
   endpoint: https://philter.internal:8080
   tlsVerify: true

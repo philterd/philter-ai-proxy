@@ -10,3 +10,6 @@ philter-ai-proxy
 test.sh
 cert.pem
 key.pem
+
+# Load-test k6 summaries are per-run artifacts.
+test/load/results/*.summary.json

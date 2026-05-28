@@ -69,8 +69,8 @@ func testKeyStore(m map[string]string) *keyStore {
 }
 
 func testFilterFunc(url string) filterFunc {
-	return func(input, ctx, docID, policy string) (FilterResponse, error) {
-		return Filter(http.DefaultClient, url, input, ctx, docID, policy)
+	return func(_ context.Context, input, philterCtx, docID, policy string) (FilterResponse, error) {
+		return Filter(http.DefaultClient, url, input, philterCtx, docID, policy)
 	}
 }
 
@@ -1868,7 +1868,7 @@ func TestFilter_InvalidEndpoint(t *testing.T) {
 
 func TestRedactAny_EmptyString(t *testing.T) {
 	audit := &AuditEntry{}
-	result, err := redactAny(testFilterFunc("http://127.0.0.1:1"), "", "ctx", "doc", "pol", audit)
+	result, err := redactAny(context.Background(), testFilterFunc("http://127.0.0.1:1"), "", "ctx", "doc", "pol", audit)
 	if err != nil {
 		t.Errorf("Unexpected error: %v", err)
 	}
@@ -1880,7 +1880,7 @@ func TestRedactAny_EmptyString(t *testing.T) {
 func TestRedactAny_NonStringScalar(t *testing.T) {
 	audit := &AuditEntry{}
 	for _, v := range []any{42, true, nil, 3.14} {
-		result, err := redactAny(testFilterFunc("http://127.0.0.1:1"), v, "ctx", "doc", "pol", audit)
+		result, err := redactAny(context.Background(), testFilterFunc("http://127.0.0.1:1"), v, "ctx", "doc", "pol", audit)
 		if err != nil {
 			t.Errorf("Unexpected error for %v: %v", v, err)
 		}
@@ -1893,7 +1893,7 @@ func TestRedactAny_NonStringScalar(t *testing.T) {
 func TestRedactAny_MapError(t *testing.T) {
 	audit := &AuditEntry{}
 	m := map[string]any{"name": "John Smith"}
-	_, err := redactAny(testFilterFunc("http://127.0.0.1:1"), m, "ctx", "doc", "pol", audit)
+	_, err := redactAny(context.Background(), testFilterFunc("http://127.0.0.1:1"), m, "ctx", "doc", "pol", audit)
 	if err == nil {
 		t.Error("Expected error when Philter unreachable for map value")
 	}
@@ -1902,7 +1902,7 @@ func TestRedactAny_MapError(t *testing.T) {
 func TestRedactAny_SliceError(t *testing.T) {
 	audit := &AuditEntry{}
 	s := []any{"John Smith", "another value"}
-	_, err := redactAny(testFilterFunc("http://127.0.0.1:1"), s, "ctx", "doc", "pol", audit)
+	_, err := redactAny(context.Background(), testFilterFunc("http://127.0.0.1:1"), s, "ctx", "doc", "pol", audit)
 	if err == nil {
 		t.Error("Expected error when Philter unreachable for slice element")
 	}
@@ -1916,7 +1916,7 @@ func TestRedactAny_MapSuccess(t *testing.T) {
 
 	audit := &AuditEntry{}
 	m := map[string]any{"name": "John", "count": 42}
-	result, err := redactAny(testFilterFunc(philter.URL), m, "ctx", "doc", "pol", audit)
+	result, err := redactAny(context.Background(), testFilterFunc(philter.URL), m, "ctx", "doc", "pol", audit)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -1937,7 +1937,7 @@ func TestRedactAny_SliceSuccess(t *testing.T) {
 
 	audit := &AuditEntry{}
 	s := []any{"John", 99}
-	result, err := redactAny(testFilterFunc(philter.URL), s, "ctx", "doc", "pol", audit)
+	result, err := redactAny(context.Background(), testFilterFunc(philter.URL), s, "ctx", "doc", "pol", audit)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -1959,7 +1959,7 @@ func TestRedactJSONArguments_NonJSONString(t *testing.T) {
 	defer philter.Close()
 
 	audit := &AuditEntry{}
-	result, err := redactJSONArguments(testFilterFunc(philter.URL), "not json at all", "ctx", "doc", "pol", audit)
+	result, err := redactJSONArguments(context.Background(), testFilterFunc(philter.URL), "not json at all", "ctx", "doc", "pol", audit)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -1970,7 +1970,7 @@ func TestRedactJSONArguments_NonJSONString(t *testing.T) {
 
 func TestRedactJSONArguments_NonJSON_PhilterError(t *testing.T) {
 	audit := &AuditEntry{}
-	_, err := redactJSONArguments(testFilterFunc("http://127.0.0.1:1"), "not json", "ctx", "doc", "pol", audit)
+	_, err := redactJSONArguments(context.Background(), testFilterFunc("http://127.0.0.1:1"), "not json", "ctx", "doc", "pol", audit)
 	if err == nil {
 		t.Error("Expected error when non-JSON argument and Philter unreachable")
 	}
@@ -1978,7 +1978,7 @@ func TestRedactJSONArguments_NonJSON_PhilterError(t *testing.T) {
 
 func TestRedactJSONArguments_PhilterError(t *testing.T) {
 	audit := &AuditEntry{}
-	_, err := redactJSONArguments(testFilterFunc("http://127.0.0.1:1"), `{"name":"John"}`, "ctx", "doc", "pol", audit)
+	_, err := redactJSONArguments(context.Background(), testFilterFunc("http://127.0.0.1:1"), `{"name":"John"}`, "ctx", "doc", "pol", audit)
 	if err == nil {
 		t.Error("Expected error when Philter unreachable for JSON argument")
 	}
@@ -2784,7 +2784,7 @@ func TestPhilterClient_SuccessOnFirstAttempt(t *testing.T) {
 		RetryConfig{MaxAttempts: 3, InitialBackoffMs: 1, MaxBackoffMs: 10},
 		CircuitBreakerConfig{Enabled: false},
 	)
-	fr, err := pc.Filter("hello", "ctx", "doc", "pol")
+	fr, err := pc.Filter(context.Background(), "hello", "ctx", "doc", "pol")
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -2812,7 +2812,7 @@ func TestPhilterClient_RetryOnTransientError(t *testing.T) {
 		RetryConfig{MaxAttempts: 3, InitialBackoffMs: 1, MaxBackoffMs: 10},
 		CircuitBreakerConfig{Enabled: false},
 	)
-	fr, err := pc.Filter("hello", "ctx", "doc", "pol")
+	fr, err := pc.Filter(context.Background(), "hello", "ctx", "doc", "pol")
 	if err != nil {
 		t.Fatalf("Expected success after retries, got error: %v", err)
 	}
@@ -2836,7 +2836,7 @@ func TestPhilterClient_NoRetryOn4xx(t *testing.T) {
 		RetryConfig{MaxAttempts: 3, InitialBackoffMs: 1, MaxBackoffMs: 10},
 		CircuitBreakerConfig{Enabled: false},
 	)
-	_, err := pc.Filter("hello", "ctx", "doc", "pol")
+	_, err := pc.Filter(context.Background(), "hello", "ctx", "doc", "pol")
 	if err == nil {
 		t.Error("Expected error for 4xx response")
 	}
@@ -2857,7 +2857,7 @@ func TestPhilterClient_ExhaustedRetries(t *testing.T) {
 		RetryConfig{MaxAttempts: 3, InitialBackoffMs: 1, MaxBackoffMs: 10},
 		CircuitBreakerConfig{Enabled: false},
 	)
-	_, err := pc.Filter("hello", "ctx", "doc", "pol")
+	_, err := pc.Filter(context.Background(), "hello", "ctx", "doc", "pol")
 	if err == nil {
 		t.Error("Expected error after exhausting retries")
 	}
@@ -2968,11 +2968,11 @@ func TestPhilterClient_CircuitBreakerBlock(t *testing.T) {
 	)
 
 	// Trigger two failures to open the circuit
-	pc.Filter("x", "ctx", "doc", "pol") //nolint
-	pc.Filter("x", "ctx", "doc", "pol") //nolint
+	pc.Filter(context.Background(), "x", "ctx", "doc", "pol") //nolint
+	pc.Filter(context.Background(), "x", "ctx", "doc", "pol") //nolint
 
 	// Circuit should now be open — expect CircuitOpenError
-	_, err := pc.Filter("x", "ctx", "doc", "pol")
+	_, err := pc.Filter(context.Background(), "x", "ctx", "doc", "pol")
 	var cbErr *CircuitOpenError
 	if !errors.As(err, &cbErr) {
 		t.Errorf("Expected CircuitOpenError, got %v", err)
@@ -2995,10 +2995,10 @@ func TestPhilterClient_CircuitBreakerPassthrough(t *testing.T) {
 	)
 
 	// Trigger one failure to open the circuit
-	pc.Filter("x", "ctx", "doc", "pol") //nolint
+	pc.Filter(context.Background(), "x", "ctx", "doc", "pol") //nolint
 
 	// Circuit open with passthrough: input returned unchanged
-	fr, err := pc.Filter("original text", "ctx", "doc", "pol")
+	fr, err := pc.Filter(context.Background(), "original text", "ctx", "doc", "pol")
 	if err != nil {
 		t.Fatalf("Expected passthrough, got error: %v", err)
 	}
@@ -3020,7 +3020,7 @@ func TestProxy_CircuitBreakerOpen_Returns503(t *testing.T) {
 		CircuitBreakerConfig{Enabled: true, Threshold: 1, TimeoutSeconds: 30, Fallback: "block"},
 	)
 	// Trigger the circuit open
-	pc.Filter("x", "ctx", "doc", "pol") //nolint
+	pc.Filter(context.Background(), "x", "ctx", "doc", "pol") //nolint
 
 	reg := prometheus.NewRegistry()
 	proxy := &Proxy{

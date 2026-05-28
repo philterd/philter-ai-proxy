@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -28,7 +29,7 @@ func probeProxy(philterURL string, cb CircuitBreakerConfig) *Proxy {
 func tripBreaker(t *testing.T, p *Proxy, threshold int) {
 	t.Helper()
 	for i := 0; i < threshold; i++ {
-		_, _ = p.philter.Filter("x", "ctx", "doc", "policy")
+		_, _ = p.philter.Filter(context.Background(), "x", "ctx", "doc", "policy")
 	}
 	if p.philter.cb == nil || p.philter.cb.State() != "open" {
 		t.Fatalf("expected breaker to be open after %d failures; got state=%v",

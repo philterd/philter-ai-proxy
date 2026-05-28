@@ -78,6 +78,66 @@ Retained for backwards compatibility. Returns `200 OK` with `{"status":"ok","phi
 
 **Deprecated in favor of `/livez` and `/readyz`.** New deployments should use the split endpoints; treating Philter unreachability as a liveness failure causes Kubernetes to restart healthy pods during transient outages, which is precisely the failure mode the split was introduced to fix.
 
+## Distributed Tracing
+
+The proxy emits OpenTelemetry spans for every inbound request, with child spans for each call to Philter and each upstream LLM provider. Trace context is propagated to the upstream via the W3C `traceparent` header, so a request traversing the proxy can be viewed end-to-end in any APM (Jaeger, Honeycomb, Datadog, Grafana Tempo, etc.).
+
+Tracing is **disabled by default**. With the SDK off the proxy pays zero per-request tracing overhead.
+
+### Enabling tracing
+
+Two things must be true for spans to start flowing:
+
+1. Set `tracing.enabled: true` in the config (this initialises the OTel SDK).
+2. Set the standard OTel env vars to point at your collector AND tell the SDK to actually sample. Even with `tracing.enabled: true` the default sampler is `always_off`, so spans are only emitted when the operator explicitly opts in via `OTEL_TRACES_SAMPLER`.
+
+```yaml
+tracing:
+  enabled: true
+  serviceName: philter-ai-proxy   # optional; defaults to "philter-ai-proxy"
+```
+
+```bash
+export OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4318
+export OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf   # or "grpc" for port 4317
+export OTEL_TRACES_SAMPLER=parentbased_always_on   # see samplers below
+```
+
+### Recognised env vars
+
+The proxy honours the standard OTel SDK env vars:
+
+| Env var | Effect |
+|---|---|
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | Collector URL. Required when tracing is enabled. |
+| `OTEL_EXPORTER_OTLP_PROTOCOL` | `http/protobuf` (default) or `grpc`. |
+| `OTEL_EXPORTER_OTLP_HEADERS` | Comma-separated `key=value` headers (e.g., auth tokens). |
+| `OTEL_EXPORTER_OTLP_INSECURE` | `true` to skip TLS for gRPC exporters. |
+| `OTEL_SERVICE_NAME` | Overrides `tracing.serviceName` when set. |
+| `OTEL_RESOURCE_ATTRIBUTES` | Extra resource attributes, e.g. `deployment.environment=prod`. |
+| `OTEL_TRACES_SAMPLER` | `always_off` (default), `always_on`, `parentbased_always_on`, `parentbased_always_off`, `traceidratio`, `parentbased_traceidratio`. |
+| `OTEL_TRACES_SAMPLER_ARG` | Argument for ratio samplers, e.g. `0.1` for 10% sampling. |
+
+### Spans the proxy emits
+
+| Span | When |
+|---|---|
+| `proxy.request {METHOD} {PATH}` | Root span per inbound request, created by `otelhttp.NewHandler`. Honors an inbound `traceparent` header. |
+| `philter.filter` | Each call to Philter's `/api/explain` (inbound redaction + outbound scan). |
+| `provider.{name}` | Each call to an upstream provider (`openai`, `anthropic`, `gemini`, `ollama`, `bedrock`, or any configured `openaiCompatible` name). |
+
+Child spans inherit the inbound trace ID so the whole request appears as one trace in your APM.
+
+### Correlating trace IDs with audit logs
+
+Every audit log entry includes a `trace_id` field when tracing is active and the request was sampled. Use it to jump from a slow audit-log entry to the full distributed trace in your APM, or vice versa:
+
+```json
+{"time":"...","msg":"request","request_id":"...","provider":"openai","http_status":200,"trace_id":"11112222333344445555666677778888",...}
+```
+
+When tracing is disabled or the request was not sampled, `trace_id` is omitted from the audit entry.
+
 ## Grafana Dashboard
 
 A pre-built dashboard covering every metric in the table above is shipped at [`deploy/grafana/philter-ai-proxy.json`](https://github.com/philterd/philter-ai-proxy/blob/main/deploy/grafana/philter-ai-proxy.json). Import it via Grafana → **Dashboards** → **New** → **Import** and pick the Prometheus datasource that's scraping `philter_proxy_*`. The dashboard exposes a `datasource` template variable so the same JSON works across environments.
