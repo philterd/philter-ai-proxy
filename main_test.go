@@ -56,6 +56,18 @@ func testPhilterClient(url string) *PhilterClient {
 	)
 }
 
+// testKeyStore builds a keyStore from a (rawKey -> boundPolicy) map. Mirrors
+// the shape the old test code used to assign to Proxy.keyIndex; useful when
+// the test does not depend on per-key rate-limit or per-key concurrency IDs.
+func testKeyStore(m map[string]string) *keyStore {
+	entries := make([]APIKeyEntry, 0, len(m))
+	for k, p := range m {
+		entries = append(entries, APIKeyEntry{Key: k, Policy: p})
+	}
+	ks, _ := newKeyStore(entries)
+	return ks
+}
+
 func testFilterFunc(url string) filterFunc {
 	return func(input, ctx, docID, policy string) (FilterResponse, error) {
 		return Filter(http.DefaultClient, url, input, ctx, docID, policy)
@@ -3983,16 +3995,12 @@ func TestTokenUsage_PrometheusMetrics(t *testing.T) {
 func newAuthProxy(philterURL, providerURL string, keys map[string]string) *Proxy {
 	cfg := testConfig(philterURL)
 	u, _ := url.Parse(providerURL)
-	idx := make(map[string]string, len(keys))
-	for k, v := range keys {
-		idx[k] = v
-	}
 	return &Proxy{
 		config:       cfg,
 		philter:      testPhilterClient(philterURL),
 		openaiTarget: u,
 		openaiClient: http.DefaultClient,
-		keyIndex:     idx,
+		keyStore:     testKeyStore(keys),
 	}
 }
 
@@ -4403,7 +4411,7 @@ func TestRateLimit_UsesAPIKeyAsClientID(t *testing.T) {
 		philter:      testPhilterClient(philterSrv.URL),
 		openaiTarget: u,
 		openaiClient: http.DefaultClient,
-		keyIndex:     map[string]string{"key-a": "", "key-b": ""},
+		keyStore:     testKeyStore(map[string]string{"key-a": "", "key-b": ""}),
 		rateLimiter:  newProxyRateLimiter(cfg.RateLimit, cfg.Auth.APIKeys),
 	}
 
@@ -4491,7 +4499,7 @@ func TestRateLimit_PerKeyOverride(t *testing.T) {
 		philter:      testPhilterClient(philterSrv.URL),
 		openaiTarget: u,
 		openaiClient: http.DefaultClient,
-		keyIndex:     map[string]string{"default-key": "", "restricted-key": ""},
+		keyStore:     testKeyStore(map[string]string{"default-key": "", "restricted-key": ""}),
 		rateLimiter:  newProxyRateLimiter(cfg.RateLimit, cfg.Auth.APIKeys),
 	}
 

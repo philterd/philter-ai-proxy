@@ -75,7 +75,16 @@ helm upgrade proxy ./deploy/helm/philter-ai-proxy --reuse-values \
   --set 'auth.keys[0].policy=hipaa-safe-harbor'
 ```
 
-For production, pre-create a Secret with the full `config.yaml` under an `external-secrets` or `sealed-secrets` workflow, then set `--set existingConfigSecret=<name>`. See the chart [README](https://github.com/philterd/philter-ai-proxy/blob/main/deploy/helm/philter-ai-proxy/README.md#secrets-management) for the trade-offs.
+Keys are hashed at load (SHA256 by default) and never held in memory as plaintext. To keep plaintext out of the values file as well, supply a pre-hashed `sha256$<hex>` value:
+
+```bash
+HASH=$(printf '%s' 'my-secret-key' | sha256sum | awk '{print "sha256$" $1}')
+helm upgrade proxy ./deploy/helm/philter-ai-proxy --reuse-values \
+  --set auth.enabled=true \
+  --set "auth.keys[0].key=${HASH}"
+```
+
+For full production secret management, pre-create a Secret with the entire `config.yaml` under an `external-secrets` or `sealed-secrets` workflow, then set `--set existingConfigSecret=<name>`. See the chart [README](https://github.com/philterd/philter-ai-proxy/blob/main/deploy/helm/philter-ai-proxy/README.md#secrets-management) and [API Key Hashing](configuration.md#api-key-hashing) for the trade-offs.
 
 **mTLS for client authentication.**
 

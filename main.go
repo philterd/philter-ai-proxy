@@ -155,7 +155,7 @@ type Proxy struct {
 	philter         *PhilterClient
 	auditLogger     *slog.Logger
 	metrics         *ProxyMetrics
-	keyIndex        map[string]string // API key value → bound policy (empty string = no override)
+	keyStore        *keyStore // hashed API keys; nil when auth is disabled
 	rateLimiter     *ProxyRateLimiter
 	concurrency     *ConcurrencyLimiter
 }
@@ -1243,32 +1243,37 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	// API key authentication. Enforced only when keys are configured; disabled by default.
-	var clientKey string
+	// clientKeyID is the stable per-entry identifier used downstream for
+	// per-key rate limits and per-key concurrency caps; never the raw key.
+	var clientKeyID string
 	var keyBoundPolicy string
-	if len(p.keyIndex) > 0 {
+	if p.keyStore != nil {
 		headerName := p.config.Auth.Header
 		if headerName == "" {
 			headerName = "x-philter-proxy-key"
 		}
-		clientKey = r.Header.Get(headerName)
+		clientKey := r.Header.Get(headerName)
 		if clientKey == "" {
 			writeError(rc, audit, http.StatusUnauthorized, "unauthorized", "missing_api_key", "missing API key")
 			return
 		}
-		boundPolicy, ok := p.keyIndex[clientKey]
+		id, boundPolicy, ok := p.keyStore.lookup(clientKey)
 		if !ok {
 			writeError(rc, audit, http.StatusUnauthorized, "unauthorized", "invalid_api_key", "invalid API key")
 			return
 		}
+		clientKeyID = id
 		keyBoundPolicy = boundPolicy
 		// Strip the proxy auth header so it is never forwarded to the LLM provider.
 		r.Header.Del(headerName)
 	}
 
-	// Rate limiting. Uses the API key as client identifier when auth is enabled,
-	// falling back to client IP. Disabled by default (rateLimiter == nil).
+	// Rate limiting. Uses the stable per-entry key ID as client identifier when
+	// auth is enabled, falling back to client IP. Disabled by default
+	// (rateLimiter == nil). The raw API key never reaches the rate limiter so
+	// it cannot leak into log fields like `client`.
 	if p.rateLimiter != nil {
-		id := clientKey
+		id := clientKeyID
 		if id == "" {
 			id = clientIP(r)
 		}
@@ -1289,9 +1294,9 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// after auth and rate limiting so shedded requests are charged against the
 	// right client identity and never starve the global pool with junk traffic.
 	if p.concurrency != nil {
-		allowed, scope, release := p.concurrency.Acquire(clientKey)
+		allowed, scope, release := p.concurrency.Acquire(clientKeyID)
 		if !allowed {
-			slog.Warn("Concurrency limit exceeded", "scope", scope, "client", clientKey, "request_id", requestID)
+			slog.Warn("Concurrency limit exceeded", "scope", scope, "client", clientKeyID, "request_id", requestID)
 			if p.metrics != nil {
 				p.metrics.concurrencyShed.WithLabelValues(scope).Inc()
 			}
@@ -1798,14 +1803,16 @@ func main() {
 		proxyMetrics = newMetrics(metricsReg)
 	}
 
-	// Build the API key index (key value → bound policy, or "" for no override).
-	// Empty index means authentication is disabled.
-	keyIndex := make(map[string]string, len(cfg.Auth.APIKeys))
-	for _, entry := range cfg.Auth.APIKeys {
-		keyIndex[entry.Key] = entry.Policy
+	// Build the keyStore. Plaintext keys in YAML get hashed at this point;
+	// the keyStore is the only in-memory holder of key material from here on.
+	// Returns nil (auth disabled) when no keys are configured.
+	keyStoreInstance, err := newKeyStore(cfg.Auth.APIKeys)
+	if err != nil {
+		slog.Error("Invalid API key configuration", "error", err)
+		os.Exit(1)
 	}
-	if len(keyIndex) > 0 {
-		slog.Info("API key authentication enabled", "keys", len(keyIndex))
+	if keyStoreInstance != nil {
+		slog.Info("API key authentication enabled", "keys", len(keyStoreInstance.entries))
 	}
 
 	var proxyRateLimiter *ProxyRateLimiter
@@ -1849,7 +1856,7 @@ func main() {
 		philter:                 philterClient,
 		auditLogger:             auditLogger,
 		metrics:                 proxyMetrics,
-		keyIndex:                keyIndex,
+		keyStore:                keyStoreInstance,
 		rateLimiter:             proxyRateLimiter,
 		concurrency:             proxyConcurrency,
 	}

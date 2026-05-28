@@ -386,12 +386,54 @@ curl -k https://localhost:8080/v1/chat/completions \
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `key` | string | Yes | The API key value. Keep this secret; treat it like a password. |
+| `key` | string | Yes | The API key value. Accepts plaintext or a pre-hashed value; see [Hashing](#api-key-hashing) below. |
 | `policy` | string | No | Philter policy to enforce for all requests authenticated with this key. Overrides route and default policy. |
 | `rateLimit` | object | No | Per-key rate-limit override. See [Rate Limiting](#rate-limiting). |
 | `maxConcurrent` | int | No | Per-key in-flight concurrency cap (0 = unlimited). Applied in addition to the global `listen.maxConcurrentRequests` cap. See [Concurrency Limits](#concurrency-limits). |
 
-**Security note:** API keys are stored in the config file in plaintext. Protect the config file with appropriate filesystem permissions (`chmod 600`). For environments with a secrets manager, inject keys via an included file or environment variable substitution at the infrastructure layer.
+#### API Key Hashing
+
+API keys are **hashed at load** and never stored in memory as plaintext. The in-memory `keyStore` holds only hashes; verification uses constant-time comparison. This protects against accidental disclosure via heap dumps, debug prints, or core files.
+
+Three input formats are accepted in the `key:` field:
+
+| Format | Example | When to use |
+|---|---|---|
+| Plaintext | `key: SuperSecretAPIKey123` | Quickstart. The proxy hashes the value with SHA256 at load. The plaintext is in your YAML file, so keep the file out of source control. |
+| `sha256$<64-hex>` | `key: sha256$e3b0c44...` | Production. Pre-hash externally, put the hash in YAML. The plaintext never sits in version control or the running config. |
+| `bcrypt$<bcrypt-hash>` | `key: bcrypt$$2a$10$N9qo8...` | For users with existing bcrypt-based key management or compliance requirements. Slower (see latency table). |
+
+**Why SHA256 by default.** API keys are typically high-entropy random tokens (32+ random bytes). The threat model for hashing-at-rest is "an attacker who reaches a memory dump should not be able to recover live credentials." Brute-forcing 256 bits of entropy is infeasible, so a fast hash with constant-time comparison provides adequate protection. The slow-hash family (bcrypt, argon2id) is designed for low-entropy human passwords; for random API keys it adds latency without commensurate security gain.
+
+**Generating pre-hashed values.** For SHA256:
+
+```bash
+printf '%s' 'SuperSecretAPIKey123' | sha256sum | awk '{print "sha256$" $1}'
+# sha256$2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae
+```
+
+For bcrypt (using Python; any bcrypt CLI works):
+
+```bash
+python3 -c "import bcrypt; print('bcrypt$' + bcrypt.hashpw(b'SuperSecretAPIKey123', bcrypt.gensalt(10)).decode())"
+# bcrypt$$2b$10$Hkpz7C0vQp...
+```
+
+**Per-request latency.** Approximate cost of one auth check on a modern x86 server. The proxy iterates all configured keys and verifies the supplied key against each; total latency scales with the number of configured entries.
+
+| Format | Per-entry cost | 10 entries | Notes |
+|---|---:|---:|---|
+| `sha256` | ~1-2 µs | ~20 µs | Recommended default. Negligible for any realistic QPS. |
+| `bcrypt` cost=4 | ~1-2 ms | ~10-20 ms | bcrypt minimum cost; faster than the default but still meaningful. |
+| `bcrypt` cost=10 | ~60-100 ms | ~600 ms-1 s | bcrypt default cost. **Avoid at high QPS** - this will dominate your request latency. |
+| `bcrypt` cost=12 | ~250-400 ms | several seconds | bcrypt's "recommended" password cost. Not appropriate for API keys. |
+
+**Recommendations:**
+
+- Default (SHA256): no tuning needed.
+- bcrypt: pick the lowest cost your compliance requirements allow. cost=4 is appropriate for high-throughput API key use.
+
+**Per-key features (rate-limit, concurrency).** The proxy assigns each `auth.apiKeys[]` entry an opaque stable identifier (`key-0`, `key-1`, ...) based on its position. Per-key rate-limit and per-key concurrency buckets are keyed by this identifier, so the raw API key never has to reach those subsystems. Logs that need a "client" field record the identifier, not the key value.
 
 ### mTLS (Mutual TLS)
 

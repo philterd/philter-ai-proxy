@@ -134,7 +134,7 @@ func TestErrorContract(t *testing.T) {
 			drive: func(t *testing.T) *httptest.ResponseRecorder {
 				p, cleanup := proxyForErrors(t)
 				defer cleanup()
-				p.keyIndex = map[string]string{"valid-key": ""}
+				p.keyStore = testKeyStore(map[string]string{"valid-key": ""})
 				req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(openAIBody()))
 				w := httptest.NewRecorder()
 				p.ServeHTTP(w, req)
@@ -149,7 +149,7 @@ func TestErrorContract(t *testing.T) {
 			drive: func(t *testing.T) *httptest.ResponseRecorder {
 				p, cleanup := proxyForErrors(t)
 				defer cleanup()
-				p.keyIndex = map[string]string{"valid-key": ""}
+				p.keyStore = testKeyStore(map[string]string{"valid-key": ""})
 				req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(openAIBody()))
 				req.Header.Set("x-philter-proxy-key", "wrong-key")
 				w := httptest.NewRecorder()
@@ -374,7 +374,7 @@ func TestAuditCarriesErrorCode(t *testing.T) {
 			drive: func(t *testing.T, buf *bytes.Buffer) *httptest.ResponseRecorder {
 				p, cleanup := proxyForErrors(t)
 				defer cleanup()
-				p.keyIndex = map[string]string{"valid-key": ""}
+				p.keyStore = testKeyStore(map[string]string{"valid-key": ""})
 				withAuditLogger(p, buf)
 				req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(openAIBody()))
 				w := httptest.NewRecorder()

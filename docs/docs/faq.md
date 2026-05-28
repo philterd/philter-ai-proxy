@@ -67,6 +67,10 @@ For API key authentication, configure one or more keys under `auth.apiKeys` in t
 
 For zero-trust service-to-service authentication, set `listen.clientCA` to a CA certificate. The proxy will require and verify a client TLS certificate on every connection. API key auth and mTLS can be used simultaneously. See [Configuration](configuration.md#authentication) for details and examples.
 
+### Are API keys hashed at rest?
+
+Yes. Keys are hashed when the config is loaded and never held in memory as plaintext. The `auth.apiKeys[].key` field accepts plaintext (auto-hashed with SHA256 at load), `sha256$<64-hex>` for a pre-hashed value, or `bcrypt$<bcrypt-hash>` for users with existing bcrypt key-management workflows. Verification uses constant-time comparison. For production, pre-hash externally so the plaintext never appears in your YAML, source control, or container images. See [API Key Hashing](configuration.md#api-key-hashing) for format details, latency per algorithm, and CLI recipes for generating pre-hashed values.
+
 ### Can I use the proxy with Mistral, Cohere, vLLM, or other OpenAI-compatible providers?
 
 Yes. Register any OpenAI-compatible provider under `providers.openaiCompatible` in the config, giving it a short name and a target URL. Clients send requests to `/{name}/v1/...` (e.g., `/mistral/v1/chat/completions`); the proxy strips the prefix and forwards the standard OpenAI-format request to the configured target after running PII redaction. No changes are needed to route configuration - routes work the same way across all OpenAI-compatible providers. See [Configuration](configuration.md#providersopenaicompatible) for details.

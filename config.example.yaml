@@ -93,12 +93,18 @@ defaults:
   #   action: redact  # redact (default), block, or flag
 
 # Authentication is disabled by default. Uncomment to enable API key auth.
+# Each `key:` accepts:
+#   - plaintext (hashed with SHA256 at load)
+#   - sha256$<64-hex>  - pre-hashed
+#   - bcrypt$<bcrypt-hash>  - pre-hashed
+# See docs/configuration.md#api-key-hashing for the latency table and
+# instructions for generating pre-hashed values.
 # auth:
 #   header: x-philter-proxy-key   # optional; this is the default header name
 #   apiKeys:
 #     - key: your-secret-key-here
 #       # policy: hipaa-safe-harbor  # optional: lock this key to a specific Philter policy
-#     - key: another-key-here
+#     - key: sha256$2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae
 #       # rateLimit:                 # optional: per-key override (takes precedence over global rateLimit)
 #       #   requestsPerSecond: 5.0
 #       #   burst: 10

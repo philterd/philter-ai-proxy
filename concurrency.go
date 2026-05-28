@@ -87,16 +87,18 @@ func hasPerKeyConcurrency(keys []APIKeyEntry) bool {
 	return false
 }
 
-// perKeyConcurrencyMap builds the (key → slots) map used to construct the
-// limiter. Entries with MaxConcurrent <= 0 are skipped.
+// perKeyConcurrencyMap builds the (id → slots) map used to construct the
+// limiter. Entries with MaxConcurrent <= 0 are skipped. Keys in the returned
+// map are the same opaque `key-N` IDs that keyStore.lookup returns, so the
+// raw API key never has to reach the concurrency limiter.
 func perKeyConcurrencyMap(keys []APIKeyEntry) map[string]int {
 	if len(keys) == 0 {
 		return nil
 	}
 	out := make(map[string]int)
-	for _, k := range keys {
+	for i, k := range keys {
 		if k.MaxConcurrent > 0 {
-			out[k.Key] = k.MaxConcurrent
+			out[keyIDForIndex(i)] = k.MaxConcurrent
 		}
 	}
 	if len(out) == 0 {

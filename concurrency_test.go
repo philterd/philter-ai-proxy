@@ -264,12 +264,13 @@ func TestConcurrency_SlotReleasesAfterRequest(t *testing.T) {
 
 func TestConcurrency_PerKeyLimit_Isolates(t *testing.T) {
 	hold := make(chan struct{})
-	proxy, cleanup := newConcurrencyTestProxy(t, 0, map[string]int{"key-a": 1, "key-b": 1}, hold)
+	// The concurrency limiter is keyed by the per-entry stable IDs the
+	// keyStore assigns ("key-0", "key-1"), not by the raw API key value.
+	proxy, cleanup := newConcurrencyTestProxy(t, 0, map[string]int{"key-0": 1, "key-1": 1}, hold)
 	defer cleanup()
 
-	// Enable auth so the proxy reads x-philter-proxy-key and ties acquires
-	// to the key value.
-	proxy.keyIndex = map[string]string{"key-a": "", "key-b": ""}
+	// Configure two entries; their lookup IDs will be "key-0" and "key-1".
+	proxy.keyStore, _ = newKeyStore([]APIKeyEntry{{Key: "key-a"}, {Key: "key-b"}})
 
 	// Hold one slot for key-a in a goroutine.
 	inflight := make(chan struct{})
@@ -282,10 +283,11 @@ func TestConcurrency_PerKeyLimit_Isolates(t *testing.T) {
 	}()
 	<-inflight
 
-	// Wait until the in-flight key-a request has reached the provider.
+	// Wait until the in-flight key-a request (entry id "key-0") has reached
+	// the provider.
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
-		if len(proxy.concurrency.perKey["key-a"]) == 1 {
+		if len(proxy.concurrency.perKey["key-0"]) == 1 {
 			break
 		}
 		time.Sleep(5 * time.Millisecond)
@@ -434,8 +436,11 @@ func TestPerKeyConcurrencyMap(t *testing.T) {
 		{Key: "c", MaxConcurrent: 0},
 		{Key: "d", MaxConcurrent: 2},
 	}
+	// Map is now keyed by the entry's stable ID ("key-0" for the first
+	// entry, "key-3" for the fourth — index "key-1" had no limit; "key-2"
+	// had MaxConcurrent=0 and is skipped).
 	got := perKeyConcurrencyMap(keys)
-	if len(got) != 2 || got["a"] != 5 || got["d"] != 2 {
+	if len(got) != 2 || got["key-0"] != 5 || got["key-3"] != 2 {
 		t.Errorf("unexpected map: %v", got)
 	}
 	if !hasPerKeyConcurrency(keys) {

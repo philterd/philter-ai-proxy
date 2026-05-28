@@ -37,10 +37,15 @@ func newProxyRateLimiter(cfg RateLimitConfig, apiKeys []APIKeyEntry) *ProxyRateL
 		rl.global = rate.NewLimiter(rate.Limit(cfg.Global.RequestsPerSecond), cfg.Global.Burst)
 	}
 
-	for _, entry := range apiKeys {
+	// Per-key buckets are keyed by the stable opaque ID (`key-N`) assigned
+	// to the entry at the same index in the keyStore. Keying by the raw API
+	// key would defeat hashing-at-rest, and bcrypt-prefixed values couldn't
+	// be looked up anyway.
+	for i, entry := range apiKeys {
 		if entry.RateLimit != nil {
-			rl.perKeyLimit[entry.Key] = rate.Limit(entry.RateLimit.RequestsPerSecond)
-			rl.perKeyBurst[entry.Key] = entry.RateLimit.Burst
+			id := keyIDForIndex(i)
+			rl.perKeyLimit[id] = rate.Limit(entry.RateLimit.RequestsPerSecond)
+			rl.perKeyBurst[id] = entry.RateLimit.Burst
 		}
 	}
 
