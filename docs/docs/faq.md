@@ -87,6 +87,18 @@ Yes. Keys are hashed when the config is loaded and never held in memory as plain
 
 To keep the secret out of the config file entirely, the `key:` field also accepts `${ENV_VAR}` (read from an environment variable) and `file:/path/to/secret` (read from a mounted file) references, resolved at load and then hashed like any other value. This is the recommended way to integrate with environment-injected secrets, Kubernetes/Docker secrets, Vault, or AWS Secrets Manager. See [Loading secrets from environment variables and files](configuration.md#loading-secrets-from-environment-variables-and-files) and the [key-rotation procedure](configuration.md#rotating-api-keys).
 
+### Can I cap how many tokens a customer uses (billing quotas)?
+
+Yes. Enable `quota` to set per-key **daily** and **monthly** token caps (prompt+completion), distinct from rate limits — rate limits bound request frequency, quotas bound cumulative token spend. Set a `quota.default` for all keys and/or per-key overrides on `auth.apiKeys[].quota`. When a key reaches a window's cap, requests return `429` with a `Retry-After` pointing at the window reset (UTC midnight for daily, first of next UTC month for monthly). Counters can live in memory (per-replica) or Redis (shared across replicas). See [Token Quotas](configuration.md#token-quotas).
+
+### How do I get per-customer usage for billing?
+
+Enable the `admin` endpoint and query `GET /admin/usage` with the configured admin token. It returns per-key current day/month token usage plus lifetime prompt/completion totals as JSON, or CSV with `?format=csv`. Keys are identified by their stable opaque ID (`key-0`, …), never the raw key. Usage is tracked whenever the admin endpoint or quotas are enabled. See [Usage Export](configuration.md#usage-export-admin-api).
+
+### Can I cache responses to repeated prompts?
+
+Yes. Enable `cache` to serve a stored response for an identical `(key, model, request body)` — skipping both Philter and the LLM provider, which cuts cost and latency. Only non-streaming, 2xx `POST` responses are cached, and the tenant key is part of the cache key so tenants never share cached entries. TTL is configurable; the backend is in-memory (per-replica) or Redis (shared). Responses carry an `X-Cache: HIT|MISS` header, and `philter_proxy_cache_hits_total`/`_misses_total` track the hit rate. See [Response Cache](configuration.md#response-cache).
+
 ### Can I share rate limits across multiple replicas?
 
 Yes. By default the rate limiter keeps token buckets in process memory, so running N replicas behind a load balancer enforces roughly N× the configured limit (each replica only sees its own traffic). Set `rateLimit.backend.type: redis` to store the buckets in a shared Redis instance so all replicas enforce one consistent limit. Redis connections support authentication and TLS (including client-cert mTLS), and a configurable failure mode controls behavior when Redis is unreachable — `open` (default) falls back to the local in-memory limiter so traffic keeps flowing, `closed` rejects requests. See [Shared state for multi-replica deployments](configuration.md#shared-state-for-multi-replica-deployments).

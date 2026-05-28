@@ -72,12 +72,32 @@ func resolveSecrets(cfg *Config) error {
 		cfg.Auth.APIKeys[i].Key = resolved
 	}
 
-	if cfg.RateLimit.Backend.Redis.Password != "" {
-		resolved, err := resolveSecret("rateLimit.backend.redis.password", cfg.RateLimit.Backend.Redis.Password)
+	// Resolve every redis password used across subsystems, plus the admin token.
+	redisPasswords := []struct {
+		field string
+		ptr   *string
+	}{
+		{"rateLimit.backend.redis.password", &cfg.RateLimit.Backend.Redis.Password},
+		{"quota.backend.redis.password", &cfg.Quota.Backend.Redis.Password},
+		{"cache.backend.redis.password", &cfg.Cache.Backend.Redis.Password},
+	}
+	for _, p := range redisPasswords {
+		if *p.ptr == "" {
+			continue
+		}
+		resolved, err := resolveSecret(p.field, *p.ptr)
 		if err != nil {
 			return err
 		}
-		cfg.RateLimit.Backend.Redis.Password = resolved
+		*p.ptr = resolved
+	}
+
+	if cfg.Admin.Token != "" {
+		resolved, err := resolveSecret("admin.token", cfg.Admin.Token)
+		if err != nil {
+			return err
+		}
+		cfg.Admin.Token = resolved
 	}
 
 	return nil

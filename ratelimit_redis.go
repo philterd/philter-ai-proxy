@@ -74,20 +74,30 @@ type redisBackend struct {
 	keyPrefix string
 }
 
-func newRedisBackend(cfg RedisBackendConfig) (*redisBackend, error) {
+// newRedisClient builds a go-redis client from a RedisBackendConfig, applying
+// TLS when enabled. Shared by every Redis-backed subsystem (rate limiting,
+// quotas, response cache).
+func newRedisClient(cfg RedisBackendConfig) (*redis.Client, error) {
 	opts := &redis.Options{
 		Addr:     cfg.Address,
 		Username: cfg.Username,
 		Password: cfg.Password,
 		DB:       cfg.DB,
 	}
-
 	if cfg.TLS.Enabled {
 		tlsCfg, err := buildRedisTLSConfig(cfg.TLS)
 		if err != nil {
 			return nil, err
 		}
 		opts.TLSConfig = tlsCfg
+	}
+	return redis.NewClient(opts), nil
+}
+
+func newRedisBackend(cfg RedisBackendConfig) (*redisBackend, error) {
+	client, err := newRedisClient(cfg)
+	if err != nil {
+		return nil, err
 	}
 
 	prefix := cfg.KeyPrefix
@@ -96,7 +106,7 @@ func newRedisBackend(cfg RedisBackendConfig) (*redisBackend, error) {
 	}
 
 	return &redisBackend{
-		client:    redis.NewClient(opts),
+		client:    client,
 		script:    redis.NewScript(tokenBucketScript),
 		keyPrefix: prefix,
 	}, nil

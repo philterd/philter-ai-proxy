@@ -46,6 +46,9 @@ scrape_configs:
 | `philter_proxy_ratelimit_backend_duration_seconds` | Histogram | `backend`, `result` | Latency of rate-limit backend calls. `result` is `ok` or `error`. Only emitted when rate limiting is enabled. |
 | `philter_proxy_ratelimit_backend_errors_total` | Counter | `backend` | Rate-limit backend errors (e.g. Redis unreachable/timeout) |
 | `philter_proxy_ratelimit_fallback_total` | Counter | - | Decisions that fell back to the local in-memory limiter because the configured backend was unreachable (fail-open) |
+| `philter_proxy_cache_hits_total` | Counter | - | Response-cache hits (served from cache, skipping Philter and the provider) |
+| `philter_proxy_cache_misses_total` | Counter | - | Response-cache misses on cacheable requests |
+| `philter_proxy_quota_rejections_total` | Counter | `window` | Requests rejected (HTTP 429) due to a token quota, by window (`daily`, `monthly`) |
 
 Token counters are populated from each provider's native usage response field. They are not incremented for streaming responses, since token counts are not reliably available mid-stream.
 
@@ -62,6 +65,8 @@ Token counters are populated from each provider's native usage response field. T
 **`backend`** (on rate-limit metrics): `memory` or `redis`.
 
 **`result`** (on `philter_proxy_ratelimit_backend_duration_seconds`): `ok` for a successful backend decision, `error` for a backend failure/timeout.
+
+**`window`** (on `philter_proxy_quota_rejections_total`): `daily` or `monthly` — which token-quota window was exceeded.
 
 ## Health Endpoints
 

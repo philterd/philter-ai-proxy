@@ -122,6 +122,9 @@ defaults:
 #       #   requestsPerSecond: 5.0
 #       #   burst: 10
 #       # maxConcurrent: 10          # optional: per-key in-flight cap (in addition to listen.maxConcurrentRequests)
+#       # quota:                     # optional: per-key token quota override (0 = unlimited)
+#       #   dailyTokens: 50000
+#       #   monthlyTokens: 1000000
 
 # Rate limiting is disabled by default. Uncomment to enable.
 # rateLimit:
@@ -146,3 +149,38 @@ defaults:
 #   #     #   cert: /etc/ssl/redis-client.pem    # optional client cert (mTLS)
 #   #     #   key: /etc/ssl/redis-client-key.pem
 #   # See docs/configuration.md#shared-state-for-multi-replica-deployments
+
+# Token quotas are disabled by default. Cap cumulative token usage per key per
+# UTC day/month (distinct from rate limits). Exceeding a quota returns 429 +
+# Retry-After until the window resets. See docs/configuration.md#token-quotas
+# quota:
+#   enabled: true
+#   default:                  # applied to keys without their own quota
+#     dailyTokens: 1000000    # 0 = unlimited
+#     monthlyTokens: 20000000
+#   backend:
+#     type: memory            # or "redis" to share counters across replicas
+#     # redis:
+#     #   address: redis.internal:6379
+#     #   password: ${REDIS_PASSWORD}
+
+# Response cache is disabled by default. Serves repeated prompts from cache
+# (skipping Philter + the provider) keyed on (key, model, sha256(body)).
+# See docs/configuration.md#response-cache
+# cache:
+#   enabled: true
+#   ttlSeconds: 300
+#   maxEntries: 1024          # in-memory cap (memory backend only)
+#   maxBodyBytes: 1048576     # responses larger than this are not cached
+#   backend:
+#     type: memory            # or "redis" to share the cache across replicas
+#     # redis:
+#     #   address: redis.internal:6379
+
+# Admin usage-export endpoint (GET /admin/usage) is disabled by default. Returns
+# per-key token usage as JSON (or CSV via ?format=csv) for billing/quota
+# inspection. See docs/configuration.md#usage-export-admin-api
+# admin:
+#   enabled: true
+#   token: ${PHILTER_ADMIN_TOKEN}   # required; accepts ${ENV_VAR} / file: references
+#   # header: x-philter-admin-token # optional; this is the default

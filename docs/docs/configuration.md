@@ -767,6 +767,152 @@ The `2×` is headroom for tail latency and short bursts. Cross-check against:
 
 See the [Monitoring](monitoring.md#concurrency) page for the metrics to watch and a PromQL recipe for computing utilization.
 
+## Token Quotas
+
+Token quotas cap **cumulative token consumption** per API key over a calendar window, distinct from [rate limits](#rate-limiting) (which bound request *frequency*). Use them for hard cost ceilings and multi-tenant budgets. Quotas are **disabled by default**.
+
+```yaml
+quota:
+  enabled: true
+  default:                  # applies to keys without their own quota
+    dailyTokens: 1000000    # 0 = unlimited
+    monthlyTokens: 20000000
+  backend:
+    type: memory            # or "redis" to share counters across replicas
+    # redis:
+    #   address: redis.internal:6379
+    #   password: ${REDIS_PASSWORD}
+
+auth:
+  apiKeys:
+    - key: ${TEAM_A_KEY}
+      quota:                # per-key override (takes precedence over default)
+        dailyTokens: 50000
+        monthlyTokens: 1000000
+```
+
+**How it works.** Each request's `prompt + completion` tokens (the same counts in the audit log and Prometheus token metrics) accrue against the key's current UTC **day** and **month** windows. A request is checked *before* it is forwarded: if the key has already reached either limit, the proxy returns `429 Too Many Requests` with a `Retry-After` header pointing at the **window reset** (next UTC midnight for daily, first of next UTC month for monthly — the longer window wins when both are exceeded). Windows reset automatically; there is no manual reset.
+
+The error body uses type `quota_exceeded` with code `daily_quota_exceeded` or `monthly_quota_exceeded`.
+
+**Notes.**
+
+- Quotas apply only to authenticated keys (there is no key to bill otherwise).
+- A request that has *started* is never interrupted mid-flight; the next request after a window is exhausted is the one rejected. Token counts are only known after the response, so a single request may push a key slightly past its limit before the next one is blocked.
+- Cache hits (see below) still consume quota only if they reach the provider; a served cache hit consumes no new tokens.
+- With `backend.type: memory`, counters are per-replica — use `redis` for a consistent quota across a multi-replica deployment. On a Redis error the check **fails open** (allows the request) so an infrastructure blip never hard-blocks traffic.
+
+### `quota` reference
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `enabled` | bool | `false` | Enable token quotas. |
+| `default.dailyTokens` | int | `0` | Per-key daily token cap applied to keys without their own quota. `0` = unlimited. |
+| `default.monthlyTokens` | int | `0` | Per-key monthly token cap. `0` = unlimited. |
+| `backend.type` | string | `memory` | `memory` (per-replica) or `redis` (shared). Also stores usage for the [admin export](#usage-export-admin-api). |
+| `backend.redis.*` | — | — | Same Redis fields as the [rate-limit backend](#shared-state-for-multi-replica-deployments) (address, password, db, keyPrefix, timeoutMs, tls). |
+
+Per-key overrides live on `auth.apiKeys[].quota.{dailyTokens,monthlyTokens}`.
+
+## Response Cache
+
+The optional response cache returns a stored response for repeated prompts, skipping both Philter and the LLM provider to cut cost and latency. It is **disabled by default**.
+
+```yaml
+cache:
+  enabled: true
+  ttlSeconds: 300       # entry lifetime; default 300
+  maxEntries: 1024      # in-memory cap (memory backend only); default 1024
+  maxBodyBytes: 1048576 # responses larger than this are not cached; default 1 MiB
+  backend:
+    type: memory        # or "redis" to share the cache across replicas
+    # redis:
+    #   address: redis.internal:6379
+```
+
+**Cache key.** Entries are keyed on `(API key, model, sha256(request body))`. Because the tenant key is part of the key, **one tenant can never read another tenant's cached response**, and a different model or any change to the request body is a different entry. When auth is disabled, all clients share an `anon` namespace.
+
+**What is cached.** Only **non-streaming** (`"stream": true` is excluded, as are Gemini `streamGenerateContent` and Bedrock `converse-stream` paths), **`POST`**, **2xx** responses up to `maxBodyBytes`. Larger or streaming responses pass through uncached. Responses carry an `X-Cache: HIT` or `X-Cache: MISS` header so clients and dashboards can see cache behavior. A hit is served without calling Philter or the provider.
+
+**Backends.** `memory` is a per-replica LRU-ish cache bounded by `maxEntries`; `redis` shares entries across replicas (TTL enforced by Redis). A Redis read/write failure is treated as a miss and never fails the request.
+
+### `cache` reference
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `enabled` | bool | `false` | Enable the response cache. |
+| `ttlSeconds` | int | `300` | Lifetime of a cached entry. |
+| `maxEntries` | int | `1024` | Maximum in-memory entries (memory backend only). |
+| `maxBodyBytes` | int | `1048576` | Responses larger than this are not cached. |
+| `backend.type` | string | `memory` | `memory` or `redis`. |
+| `backend.redis.*` | — | — | Same Redis fields as the [rate-limit backend](#shared-state-for-multi-replica-deployments). |
+
+Cache hit/miss counters are exported as `philter_proxy_cache_hits_total` / `philter_proxy_cache_misses_total`; see [Monitoring](monitoring.md).
+
+## Usage Export (Admin API)
+
+When enabled, `GET /admin/usage` returns per-key token usage for billing and quota inspection. It is **disabled by default** and protected by an admin token.
+
+```yaml
+admin:
+  enabled: true
+  token: ${PHILTER_ADMIN_TOKEN}   # required; accepts ${ENV_VAR} / file: references
+  header: x-philter-admin-token   # optional; this is the default
+```
+
+Usage is tracked whenever `admin.enabled` **or** `quota.enabled` is set, using `quota.backend` for storage (so the export and quota enforcement read the same counters).
+
+**Request.** Send the admin token in the configured header. JSON is returned by default; `?format=csv` returns CSV.
+
+```bash
+curl -k https://localhost:8080/admin/usage \
+  -H "x-philter-admin-token: $PHILTER_ADMIN_TOKEN"
+
+curl -k "https://localhost:8080/admin/usage?format=csv" \
+  -H "x-philter-admin-token: $PHILTER_ADMIN_TOKEN"
+```
+
+**JSON response.** Per key: the current UTC day/month windows with their token sums, and lifetime prompt/completion totals.
+
+```json
+{
+  "usage": [
+    {
+      "key_id": "key-0",
+      "day": "2026-05-28", "day_tokens": 1500,
+      "month": "2026-05", "month_tokens": 42000,
+      "total_prompt_tokens": 38000, "total_completion_tokens": 12000
+    }
+  ]
+}
+```
+
+Keys are identified by their stable opaque ID (`key-0`, `key-1`, …, by position in `auth.apiKeys`), never the raw key value — the same identifier used in logs and per-key rate-limit/concurrency buckets.
+
+**Behaviour:**
+
+| Scenario | Result |
+|----------|--------|
+| Valid admin token | `200` with JSON (or CSV) usage |
+| Missing/invalid token | `401 Unauthorized` (constant-time comparison) |
+| Non-GET method | `405 Method Not Allowed` |
+| `admin.enabled: false` | `404 Not Found` |
+
+Every access is logged: a successful export emits an `Admin usage exported` line (with client IP, format, and key count — never the token), and a failed-auth attempt emits an `Admin usage access denied` line.
+
+**Hardening.** The endpoint exposes per-customer billing data, so:
+
+- Use a **high-entropy** admin token (e.g. `openssl rand -hex 32`) supplied via a `${ENV_VAR}` / `file:` reference, not a literal in the YAML.
+- The admin path is **not** subject to the request [rate limiter](#rate-limiting), so token guesses are not throttled by the proxy. Rely on the strong token and keep the endpoint behind network controls (firewall/VPC/service mesh) or `listen.clientCA` mTLS where possible. The `Admin usage access denied` log lines give you a brute-force signal to alert on.
+
+### `admin` reference
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `enabled` | bool | `false` | Enable the `GET /admin/usage` endpoint. |
+| `token` | string | (required when enabled) | Admin token. Accepts `${ENV_VAR}` / `file:` [secret references](#loading-secrets-from-environment-variables-and-files). |
+| `header` | string | `x-philter-admin-token` | Header carrying the admin token. |
+
 ## Error Responses
 
 Every error the proxy generates uses the same structured JSON shape and the same set of stable codes. Clients can parse these reliably to drive retry, alerting, and routing.
@@ -800,10 +946,16 @@ The `(type, code)` set below is part of the proxy's public API. New codes may be
 | 401 | `unauthorized` | `invalid_api_key` | Auth enabled and the supplied key was not recognised | - |
 | 403 | `pii_blocked` | `outbound_blocked` | Outbound scanning is on with `action: block` and PII was found in the provider response | - |
 | 404 | `not_found` | `bedrock_disabled` | A Bedrock path was requested but `providers.bedrock.region` is unset | - |
+| 404 | `not_found` | `admin_disabled` | `/admin/usage` was requested but `admin.enabled` is false | - |
+| 401 | `unauthorized` | `invalid_admin_token` | `/admin/usage` requested with a missing or wrong admin token | - |
+| 405 | `method_not_allowed` | `method_not_allowed` | `/admin/usage` requested with a non-GET method | - |
 | 429 | `rate_limit_error` | `rate_limited` | Rate-limit token bucket exhausted for this client | seconds until refill |
+| 429 | `quota_exceeded` | `daily_quota_exceeded` | Per-key daily token quota reached | seconds until next UTC midnight |
+| 429 | `quota_exceeded` | `monthly_quota_exceeded` | Per-key monthly token quota reached | seconds until first of next UTC month |
 | 500 | `internal_error` | `marshal_failed` | Re-serialising the redacted request body failed (should not occur in normal operation) | - |
 | 500 | `internal_error` | `request_creation_failed` | `http.NewRequest` failed when building the upstream call (typically an invalid target URL) | - |
 | 500 | `internal_error` | `bedrock_sign_failed` | AWS SigV4 signing failed (credentials cannot be retrieved) | - |
+| 500 | `internal_error` | `usage_snapshot_failed` | `/admin/usage` could not read the usage store | - |
 | 502 | `provider_error` | `unreachable` | Upstream LLM provider connection failed (DNS, dial, TLS) | - |
 | 502 | `provider_error` | `response_read_failed` | Connected to the provider but failed to read the response body | - |
 | 502 | `philter_error` | `request_failed` | Philter call failed (network or non-2xx response) and retries were exhausted | - |

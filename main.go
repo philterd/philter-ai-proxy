@@ -158,6 +158,9 @@ type Proxy struct {
 	keyStore        *keyStore // hashed API keys; nil when auth is disabled
 	rateLimiter     *ProxyRateLimiter
 	concurrency     *ConcurrencyLimiter
+	usage           UsageStore     // per-key token accounting; nil when quota & admin both off
+	quota           *QuotaEnforcer // per-key token quotas; nil when disabled
+	cache           ResponseCache  // response cache; nil when disabled
 }
 
 type AuditEntry struct {
@@ -188,6 +191,14 @@ type AuditEntry struct {
 type responseCapture struct {
 	http.ResponseWriter
 	statusCode int
+	// captureBody tees response bytes into buf (up to limit) so the response
+	// can be stored in the cache after the handler returns. Enabled only for
+	// cacheable (non-streaming) cache-miss requests. If the body exceeds limit,
+	// tooLarge is set and the buffer is discarded so we never cache partials.
+	captureBody bool
+	limit       int
+	buf         bytes.Buffer
+	tooLarge    bool
 }
 
 func newResponseCapture(w http.ResponseWriter) *responseCapture {
@@ -197,6 +208,27 @@ func newResponseCapture(w http.ResponseWriter) *responseCapture {
 func (rc *responseCapture) WriteHeader(code int) {
 	rc.statusCode = code
 	rc.ResponseWriter.WriteHeader(code)
+}
+
+func (rc *responseCapture) Write(b []byte) (int, error) {
+	if rc.captureBody && !rc.tooLarge {
+		if rc.buf.Len()+len(b) > rc.limit {
+			rc.tooLarge = true
+			rc.buf.Reset()
+		} else {
+			rc.buf.Write(b)
+		}
+	}
+	return rc.ResponseWriter.Write(b)
+}
+
+// cachedBody returns the buffered response body, or nil if capture was off or
+// the response exceeded the size limit.
+func (rc *responseCapture) cachedBody() []byte {
+	if !rc.captureBody || rc.tooLarge {
+		return nil
+	}
+	return rc.buf.Bytes()
 }
 
 func (rc *responseCapture) Flush() {
@@ -1243,6 +1275,13 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case "/health":
 		p.handleHealth(w, r)
 		return
+	case "/admin/usage":
+		if !p.config.Admin.Enabled {
+			writeError(w, nil, http.StatusNotFound, "not_found", "admin_disabled", "admin endpoint not enabled")
+			return
+		}
+		p.handleAdminUsage(w, r)
+		return
 	}
 
 	// Establish the request_id up front so every downstream error path can
@@ -1340,6 +1379,28 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Token quota. Pre-flight check against accumulated usage; on breach return
+	// 429 + Retry-After pointing at the window reset. Per-key only (quotas are
+	// meaningless without an authenticated key). Fails open on a store error.
+	if p.quota != nil && clientKeyID != "" {
+		allowed, retryAfter, window, qerr := p.quota.Check(r.Context(), clientKeyID, time.Now())
+		if qerr != nil {
+			slog.Warn("Quota check failed; allowing (fail-open)", "error", qerr, "client", clientKeyID, "request_id", requestID)
+		} else if !allowed {
+			retrySecs := int(retryAfter.Seconds())
+			if retrySecs < 1 {
+				retrySecs = 1
+			}
+			slog.Warn("Quota exceeded", "client", clientKeyID, "window", window, "request_id", requestID)
+			if p.metrics != nil {
+				p.metrics.quotaRejections.WithLabelValues(window).Inc()
+			}
+			rc.Header().Set("Retry-After", strconv.Itoa(retrySecs))
+			writeError(rc, audit, http.StatusTooManyRequests, "quota_exceeded", window+"_quota_exceeded", "token quota exceeded")
+			return
+		}
+	}
+
 	// Concurrency guard. Bounds the number of in-flight requests with a graceful
 	// 503 + Retry-After when the configured ceiling is reached. Acquire happens
 	// after auth and rate limiting so shedded requests are charged against the
@@ -1400,6 +1461,39 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	audit.PolicyName = philter_policy_name
 	audit.DocumentID = philter_document_id
 
+	// Response cache lookup. Only non-streaming POSTs are cacheable. A hit is
+	// served directly, skipping Philter and the provider entirely. The key is
+	// (tenant key, model, sha256(body)) so tenants never share cached entries.
+	var cacheKey string
+	cacheable := p.cache != nil && r.Method == http.MethodPost && !isStreamingRequest(r.URL.Path, bodyBytes)
+	if cacheable {
+		tenant := clientKeyID
+		if tenant == "" {
+			tenant = "anon"
+		}
+		cacheKey = cacheKeyFor(tenant, model, bodyBytes)
+		if cached, ok := p.cache.Get(r.Context(), cacheKey); ok {
+			if p.metrics != nil {
+				p.metrics.cacheHits.Inc()
+			}
+			audit.Model = model
+			rc.Header().Set("X-Cache", "HIT")
+			if cached.ContentType != "" {
+				rc.Header().Set("Content-Type", cached.ContentType)
+			}
+			rc.WriteHeader(cached.Status)
+			rc.Write(cached.Body)
+			return
+		}
+		if p.metrics != nil {
+			p.metrics.cacheMisses.Inc()
+		}
+		rc.Header().Set("X-Cache", "MISS")
+		// Buffer the response so it can be stored after the handler returns.
+		rc.captureBody = true
+		rc.limit = p.cacheBodyLimit()
+	}
+
 	if openaiCompatName != "" {
 		audit.Provider = openaiCompatName
 		p.handleOpenAICompatible(rc, r, bodyBytes, philter_context, philter_document_id, philter_policy_name, audit, route.Outbound, openaiCompatTarget, openaiCompatClient, openaiCompatName)
@@ -1426,6 +1520,60 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		audit.Provider = "openai"
 		p.handleOpenAI(rc, r, bodyBytes, philter_context, philter_document_id, philter_policy_name, audit, route.Outbound)
 	}
+
+	// Post-response bookkeeping. Token counts are known now (handlers set them
+	// on the audit entry). Accumulate per-key usage for quotas/export, and
+	// populate the cache on a successful, non-streaming miss.
+	if p.usage != nil && clientKeyID != "" && (audit.PromptTokens > 0 || audit.CompletionTokens > 0) {
+		if err := p.usage.Add(r.Context(), clientKeyID, int64(audit.PromptTokens), int64(audit.CompletionTokens), time.Now()); err != nil {
+			slog.Warn("Usage record failed", "error", err, "client", clientKeyID, "request_id", requestID)
+		}
+	}
+	if cacheable && rc.statusCode >= 200 && rc.statusCode < 300 {
+		if body := rc.cachedBody(); len(body) > 0 {
+			p.cache.Set(r.Context(), cacheKey, &CachedResponse{
+				Status:      rc.statusCode,
+				ContentType: rc.Header().Get("Content-Type"),
+				Body:        append([]byte(nil), body...),
+			})
+		}
+	}
+}
+
+// backendTypeName normalizes an empty backend type to its "memory" default for
+// log lines.
+func backendTypeName(t string) string {
+	if t == "" {
+		return "memory"
+	}
+	return t
+}
+
+// cacheBodyLimit is the maximum response size the cache will store; larger
+// responses are passed through uncached.
+func (p *Proxy) cacheBodyLimit() int {
+	if p.config.Cache.MaxBodyBytes > 0 {
+		return p.config.Cache.MaxBodyBytes
+	}
+	return 1 << 20 // 1 MiB
+}
+
+// isStreamingRequest reports whether the request asks for a streaming response,
+// which must never be cached. Covers the `"stream": true` JSON flag
+// (OpenAI/Anthropic/Ollama) and the streaming URL forms (Gemini
+// streamGenerateContent, Bedrock converse-stream).
+func isStreamingRequest(path string, body []byte) bool {
+	lp := strings.ToLower(path)
+	if strings.Contains(lp, "streamgeneratecontent") || strings.Contains(lp, "converse-stream") {
+		return true
+	}
+	var probe struct {
+		Stream *bool `json:"stream"`
+	}
+	if err := json.Unmarshal(body, &probe); err != nil {
+		return false
+	}
+	return probe.Stream != nil && *probe.Stream
 }
 
 func (p *Proxy) handleOllamaGenerate(w http.ResponseWriter, r *http.Request, bodyBytes []byte, context string, documentId string, policyName string, audit *AuditEntry, outbound OutboundConfig) {
@@ -1912,6 +2060,40 @@ func main() {
 		proxyMetrics.concurrencyLimit.WithLabelValues("global").Set(float64(cfg.Listen.MaxConcurrentRequests))
 	}
 
+	// Usage store backs both quotas and the /admin/usage export, so build it
+	// when either is enabled. Quota enforcement layers on top of it.
+	var usageStore UsageStore
+	var quotaEnforcer *QuotaEnforcer
+	if cfg.Quota.Enabled || cfg.Admin.Enabled {
+		usageStore, err = newUsageStore(cfg.Quota.Backend)
+		if err != nil {
+			slog.Error("Failed to initialize usage store", "error", err)
+			os.Exit(1)
+		}
+	}
+	if cfg.Quota.Enabled {
+		quotaEnforcer = newQuotaEnforcer(cfg.Quota, cfg.Auth.APIKeys, usageStore)
+		slog.Info("Token quotas enabled",
+			"defaultDailyTokens", cfg.Quota.Default.DailyTokens,
+			"defaultMonthlyTokens", cfg.Quota.Default.MonthlyTokens,
+			"backend", backendTypeName(cfg.Quota.Backend.Type))
+	}
+	if cfg.Admin.Enabled {
+		slog.Info("Admin usage endpoint enabled at /admin/usage")
+	}
+
+	var responseCache ResponseCache
+	if cfg.Cache.Enabled {
+		responseCache, err = newResponseCache(cfg.Cache)
+		if err != nil {
+			slog.Error("Failed to initialize response cache", "error", err)
+			os.Exit(1)
+		}
+		slog.Info("Response cache enabled",
+			"ttlSeconds", cfg.Cache.TTLSeconds,
+			"backend", backendTypeName(cfg.Cache.Backend.Type))
+	}
+
 	p := &Proxy{
 		config:          cfg,
 		openaiTarget:    targets[0],
@@ -1933,6 +2115,9 @@ func main() {
 		keyStore:                keyStoreInstance,
 		rateLimiter:             proxyRateLimiter,
 		concurrency:             proxyConcurrency,
+		usage:                   usageStore,
+		quota:                   quotaEnforcer,
+		cache:                   responseCache,
 	}
 
 	port := fmt.Sprintf("%d", cfg.Listen.Port)
@@ -2003,6 +2188,14 @@ func main() {
 
 	if proxyRateLimiter != nil {
 		proxyRateLimiter.Close()
+	}
+
+	if responseCache != nil {
+		responseCache.Close()
+	}
+
+	if usageStore != nil {
+		usageStore.Close()
 	}
 
 	if err := srv.Shutdown(ctx); err != nil {

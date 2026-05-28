@@ -17,6 +17,9 @@ type ProxyMetrics struct {
 	rateLimitBackendDuration *prometheus.HistogramVec
 	rateLimitBackendErrors   *prometheus.CounterVec
 	rateLimitFallback        prometheus.Counter
+	cacheHits                prometheus.Counter
+	cacheMisses              prometheus.Counter
+	quotaRejections          *prometheus.CounterVec
 }
 
 func newMetrics(reg prometheus.Registerer) *ProxyMetrics {
@@ -93,6 +96,21 @@ func newMetrics(reg prometheus.Registerer) *ProxyMetrics {
 			Name: "philter_proxy_ratelimit_fallback_total",
 			Help: "Total rate-limit decisions that fell back to the local in-memory limiter because the configured backend was unreachable.",
 		}),
+
+		cacheHits: prometheus.NewCounter(prometheus.CounterOpts{
+			Name: "philter_proxy_cache_hits_total",
+			Help: "Total response-cache hits (served from cache without calling Philter or the provider).",
+		}),
+
+		cacheMisses: prometheus.NewCounter(prometheus.CounterOpts{
+			Name: "philter_proxy_cache_misses_total",
+			Help: "Total response-cache misses on cacheable requests.",
+		}),
+
+		quotaRejections: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "philter_proxy_quota_rejections_total",
+			Help: "Total requests rejected (HTTP 429) due to a token quota, labeled by window (daily, monthly).",
+		}, []string{"window"}),
 	}
 
 	reg.MustRegister(
@@ -110,6 +128,9 @@ func newMetrics(reg prometheus.Registerer) *ProxyMetrics {
 		m.rateLimitBackendDuration,
 		m.rateLimitBackendErrors,
 		m.rateLimitFallback,
+		m.cacheHits,
+		m.cacheMisses,
+		m.quotaRejections,
 	)
 	return m
 }
