@@ -27,11 +27,18 @@ philter:
     threshold: 5          # consecutive failures before opening; default 5
     timeoutSeconds: 30    # seconds in open state before probe; default 30
     fallback: block       # block (503, default) or passthrough (forward unredacted)
+  # timeouts:             # per-Philter HTTP timeouts; same shape as providers.* below
+  #   responseHeaderMs: 5000   # default 30000; tighten for an in-cluster Philter
 
 providers:
   openai:
     target: https://api.openai.com
     # tlsVerify: true
+    # timeouts:                 # per-provider HTTP timeouts (milliseconds; 0 or omitted = default)
+    #   connectMs: 5000          # default 5000  - TCP dial
+    #   tlsHandshakeMs: 5000     # default 5000  - TLS handshake
+    #   responseHeaderMs: 30000  # default 30000 - wait for upstream to start responding (does NOT bound body reads)
+    #   idleConnMs: 90000        # default 90000 - keep-alive idle eviction
   anthropic:
     target: https://api.anthropic.com
     # tlsVerify: true
@@ -45,6 +52,8 @@ providers:
     region: us-east-1   # AWS region; omit to disable Bedrock support
     # roleArn: arn:aws:iam::123456789012:role/BedrockProxyRole  # optional: assume this role for Bedrock calls
     # tlsVerify: true
+    # timeouts:                 # same shape as the openai block above
+    #   responseHeaderMs: 60000
   # openaiCompatible:
   #   mistral:
   #     target: https://api.mistral.ai
@@ -52,6 +61,8 @@ providers:
   #     target: https://api.cohere.com
   #   vllm:
   #     target: http://vllm.internal:8000
+  #     timeouts:                 # per-provider override (e.g., local vLLM may need a different budget)
+  #       responseHeaderMs: 60000
 
 # Routes select a Philter policy based on request properties.
 # Evaluated in order; first match wins. If no route matches, defaults apply.

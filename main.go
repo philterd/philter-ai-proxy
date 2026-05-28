@@ -11,6 +11,7 @@ import (
 	"io"
 	"io/ioutil"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -442,6 +443,46 @@ func emitAuditLog(logger *slog.Logger, entry AuditEntry) {
 		"error_type", entry.ErrorType,
 		"error_code", entry.ErrorCode,
 	)
+}
+
+// newProviderTransport builds an http.Transport with the four timeouts the
+// proxy treats as a stable contract:
+//
+//   - Dial (connect) timeout — bounds the TCP handshake to a hung host.
+//   - TLS handshake timeout — bounds the TLS handshake after dial succeeds.
+//   - Response header timeout — bounds the wait for the upstream to start
+//     responding. This is the timeout that catches a hung LLM. It does NOT
+//     bound body reads, so streaming responses can run as long as the
+//     upstream is sending data.
+//   - Idle connection timeout — bounds how long keep-alive connections stay
+//     in the pool when not in use.
+//
+// Zero values in t are replaced with the package-level defaults.
+//
+// The returned transport is paired with an http.Client whose own Timeout is
+// left at 0. http.Client.Timeout is a whole-request deadline that would also
+// kill streaming bodies, so it must not be set.
+func newProviderTransport(tlsCfg *tls.Config, t ProviderTimeouts) *http.Transport {
+	if t.ConnectMs <= 0 {
+		t.ConnectMs = DefaultConnectTimeoutMs
+	}
+	if t.TLSHandshakeMs <= 0 {
+		t.TLSHandshakeMs = DefaultTLSHandshakeTimeoutMs
+	}
+	if t.ResponseHeaderMs <= 0 {
+		t.ResponseHeaderMs = DefaultResponseHeaderTimeoutMs
+	}
+	if t.IdleConnMs <= 0 {
+		t.IdleConnMs = DefaultIdleConnTimeoutMs
+	}
+	dialer := &net.Dialer{Timeout: time.Duration(t.ConnectMs) * time.Millisecond}
+	return &http.Transport{
+		TLSClientConfig:       tlsCfg,
+		DialContext:           dialer.DialContext,
+		TLSHandshakeTimeout:   time.Duration(t.TLSHandshakeMs) * time.Millisecond,
+		ResponseHeaderTimeout: time.Duration(t.ResponseHeaderMs) * time.Millisecond,
+		IdleConnTimeout:       time.Duration(t.IdleConnMs) * time.Millisecond,
+	}
 }
 
 func buildTLSConfig(skipVerify bool, caCertPath string) (*tls.Config, error) {
@@ -898,11 +939,9 @@ func sha256Hex(b []byte) string {
 	return hex.EncodeToString(h[:])
 }
 
-func newBedrockHTTPClient(skipVerify bool) *http.Client {
+func newBedrockHTTPClient(skipVerify bool, t ProviderTimeouts) *http.Client {
 	return &http.Client{
-		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: skipVerify},
-		},
+		Transport: newProviderTransport(&tls.Config{InsecureSkipVerify: skipVerify}, t),
 	}
 }
 
@@ -1660,9 +1699,7 @@ func main() {
 	}
 
 	philterHTTPClient := &http.Client{
-		Transport: &http.Transport{
-			TLSClientConfig: philterTLSConfig,
-		},
+		Transport: newProviderTransport(philterTLSConfig, cfg.Philter.Timeouts),
 	}
 	philterClient := newPhilterClient(philterHTTPClient, cfg.Philter.Endpoint, cfg.Philter.Retry, cfg.Philter.CircuitBreaker)
 
@@ -1697,9 +1734,7 @@ func main() {
 			os.Exit(1)
 		}
 		clients[i] = &http.Client{
-			Transport: &http.Transport{
-				TLSClientConfig: tlsCfg,
-			},
+			Transport: newProviderTransport(tlsCfg, prov.config.Timeouts),
 		}
 	}
 
@@ -1730,7 +1765,7 @@ func main() {
 		if cfg.Providers.Bedrock.TLSVerify != nil && !*cfg.Providers.Bedrock.TLSVerify {
 			skipVerify = true
 		}
-		bedrockClient = newBedrockHTTPClient(skipVerify)
+		bedrockClient = newBedrockHTTPClient(skipVerify, cfg.Providers.Bedrock.Timeouts)
 		slog.Info("Bedrock provider configured", "region", bedrockRegion)
 	}
 
@@ -1752,7 +1787,7 @@ func main() {
 			slog.Error("OpenAI-compatible provider TLS configuration error", "provider", name, "error", err)
 			os.Exit(1)
 		}
-		openaiCompatClients[name] = &http.Client{Transport: &http.Transport{TLSClientConfig: tlsCfg}}
+		openaiCompatClients[name] = &http.Client{Transport: newProviderTransport(tlsCfg, pc.Timeouts)}
 		slog.Info("OpenAI-compatible provider configured", "name", name, "target", pc.Target)
 	}
 

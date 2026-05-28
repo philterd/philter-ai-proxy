@@ -70,17 +70,52 @@ type PhilterConfig struct {
 	CACert         string               `yaml:"caCert"`
 	Retry          RetryConfig          `yaml:"retry"`
 	CircuitBreaker CircuitBreakerConfig `yaml:"circuitBreaker"`
+	Timeouts       ProviderTimeouts     `yaml:"timeouts"`
 }
 
+// ProviderTimeouts bounds the network phases of outbound HTTP calls. They are
+// transport-level (not whole-request) timeouts, which matters for streaming:
+// once headers are received, the body can stream indefinitely. The proxy
+// deliberately does NOT set http.Client.Timeout (which would also kill the
+// body stream).
+//
+// All values are milliseconds. A value of 0 means "use the default".
+type ProviderTimeouts struct {
+	// ConnectMs bounds the TCP dial phase. Default: 5000.
+	ConnectMs int `yaml:"connectMs"`
+	// TLSHandshakeMs bounds the TLS handshake. Default: 5000.
+	TLSHandshakeMs int `yaml:"tlsHandshakeMs"`
+	// ResponseHeaderMs bounds the wait for the upstream to send response
+	// headers. This is the timeout that fires for a hung LLM that never
+	// starts responding. It does NOT bound body reads, so streaming
+	// responses are unaffected. Default: 30000.
+	ResponseHeaderMs int `yaml:"responseHeaderMs"`
+	// IdleConnMs bounds how long an idle keep-alive connection in the pool
+	// stays open before being closed. Default: 90000.
+	IdleConnMs int `yaml:"idleConnMs"`
+}
+
+// Default timeout values applied at use-site when a config entry's value is 0
+// (i.e., not set in YAML). Kept as named constants so they can be referenced
+// from tests and docs.
+const (
+	DefaultConnectTimeoutMs        = 5000
+	DefaultTLSHandshakeTimeoutMs   = 5000
+	DefaultResponseHeaderTimeoutMs = 30000
+	DefaultIdleConnTimeoutMs       = 90000
+)
+
 type ProviderConfig struct {
-	Target    string `yaml:"target"`
-	TLSVerify *bool  `yaml:"tlsVerify"`
+	Target    string           `yaml:"target"`
+	TLSVerify *bool            `yaml:"tlsVerify"`
+	Timeouts  ProviderTimeouts `yaml:"timeouts"`
 }
 
 type BedrockConfig struct {
-	Region    string `yaml:"region"`
-	RoleArn   string `yaml:"roleArn"`
-	TLSVerify *bool  `yaml:"tlsVerify"`
+	Region    string           `yaml:"region"`
+	RoleArn   string           `yaml:"roleArn"`
+	TLSVerify *bool            `yaml:"tlsVerify"`
+	Timeouts  ProviderTimeouts `yaml:"timeouts"`
 }
 
 type ProvidersConfig struct {
@@ -216,6 +251,46 @@ func validateConfig(cfg *Config) error {
 
 	if cfg.Metrics.Enabled && (cfg.Metrics.Port < 1 || cfg.Metrics.Port > 65535) {
 		return fmt.Errorf("config: metrics.port %d is out of range (1-65535)", cfg.Metrics.Port)
+	}
+
+	timeoutFields := func(provider string, t ProviderTimeouts) error {
+		fields := []struct {
+			name  string
+			value int
+		}{
+			{"connectMs", t.ConnectMs},
+			{"tlsHandshakeMs", t.TLSHandshakeMs},
+			{"responseHeaderMs", t.ResponseHeaderMs},
+			{"idleConnMs", t.IdleConnMs},
+		}
+		for _, f := range fields {
+			if f.value < 0 {
+				return fmt.Errorf("config: %s.timeouts.%s must be >= 0", provider, f.name)
+			}
+		}
+		return nil
+	}
+	if err := timeoutFields("philter", cfg.Philter.Timeouts); err != nil {
+		return err
+	}
+	for _, p := range []struct {
+		name string
+		t    ProviderTimeouts
+	}{
+		{"providers.openai", cfg.Providers.OpenAI.Timeouts},
+		{"providers.anthropic", cfg.Providers.Anthropic.Timeouts},
+		{"providers.gemini", cfg.Providers.Gemini.Timeouts},
+		{"providers.ollama", cfg.Providers.Ollama.Timeouts},
+		{"providers.bedrock", cfg.Providers.Bedrock.Timeouts},
+	} {
+		if err := timeoutFields(p.name, p.t); err != nil {
+			return err
+		}
+	}
+	for name, pc := range cfg.Providers.OpenAICompatible {
+		if err := timeoutFields("providers.openaiCompatible."+name, pc.Timeouts); err != nil {
+			return err
+		}
 	}
 
 	if cfg.Philter.Retry.MaxAttempts < 0 {

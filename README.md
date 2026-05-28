@@ -134,6 +134,19 @@ curl https://localhost:8080/model/amazon.titan-text-express-v1/converse \
   }'
 ```
 
+## Provider timeouts
+
+Every outbound HTTP client (Philter, each LLM provider, and Bedrock) honors transport-level timeouts so a hung upstream cannot exhaust goroutines or file descriptors. Defaults: 5s connect, 5s TLS handshake, 30s response headers, 90s idle. None of these bound body-read time, so streaming responses can run as long as the upstream keeps producing data. Override per-provider in `config.yaml`:
+
+```yaml
+providers:
+  openai:
+    timeouts:
+      responseHeaderMs: 60000   # raise for slow reasoning models
+```
+
+See [Configuration -> Provider Timeouts](https://philterd.github.io/philter-ai-proxy/configuration/#provider-timeouts) for the full reference.
+
 ## Capacity and concurrency
 
 The proxy can cap the number of requests it processes at any one time. When the cap is reached the proxy responds with `503 Service Unavailable` and a `Retry-After: 1` header instead of queuing or running out of resources.

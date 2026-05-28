@@ -135,6 +135,7 @@ Each of the standard providers (`openai`, `anthropic`, `gemini`, `ollama`) accep
 |-------|------|---------|-------------|
 | `target` | string | (provider default) | Target URL for the provider |
 | `tlsVerify` | bool | `true` | Enable TLS certificate verification for this provider |
+| `timeouts` | object | (see [Provider Timeouts](#provider-timeouts)) | Per-provider HTTP timeouts |
 
 Default provider targets:
 
@@ -520,6 +521,49 @@ providers:
 ```
 
 **Warning:** Disabling TLS verification makes connections vulnerable to man-in-the-middle attacks. Only disable verification in trusted development environments.
+
+## Provider Timeouts
+
+Every outbound HTTP client the proxy creates (Philter, the four built-in LLM providers, every `openaiCompatible` entry, and Bedrock) honors a configurable set of transport-level timeouts. They protect the proxy from a hung upstream (stalled LLM, dropped TCP, slow-loris attack) by bounding the network phases of each call without breaking streaming responses.
+
+```yaml
+providers:
+  openai:
+    target: https://api.openai.com
+    timeouts:
+      connectMs: 5000          # TCP dial
+      tlsHandshakeMs: 5000     # TLS handshake
+      responseHeaderMs: 30000  # wait for upstream to start responding
+      idleConnMs: 90000        # keep-alive idle eviction
+```
+
+The same `timeouts:` block is accepted under `philter:`, `providers.bedrock:`, and each `providers.openaiCompatible.*` entry.
+
+### Fields and defaults
+
+| Field | Default | What it bounds |
+|---|---:|---|
+| `connectMs` | 5000 | TCP dial (`net.Dialer.Timeout`) |
+| `tlsHandshakeMs` | 5000 | TLS handshake (`http.Transport.TLSHandshakeTimeout`) |
+| `responseHeaderMs` | 30000 | Wait for response headers (`http.Transport.ResponseHeaderTimeout`). This is the timeout that catches a hung LLM that never starts responding. |
+| `idleConnMs` | 90000 | Idle keep-alive eviction (`http.Transport.IdleConnTimeout`) |
+
+A value of `0` or an omitted field uses the default. All values are milliseconds.
+
+### Streaming and timeouts
+
+The proxy deliberately does **not** set an overall request deadline (`http.Client.Timeout`). All four timeouts above are *transport-phase* timeouts — once the upstream has sent response headers, the body can stream for as long as the upstream keeps producing data. This means:
+
+- A hung LLM that accepts the connection but never starts streaming is killed by `responseHeaderMs` (default 30s).
+- A long-running streaming completion that takes 5 minutes to finish writing the body is **not** killed by any timeout, and that is the intended behavior.
+
+If you need a hard ceiling on streaming wall-clock time you must enforce it at the client, with an ingress-level connection timeout, or by adding cancellation logic to your application.
+
+### When to tune
+
+- **Faster `responseHeaderMs` for an in-cluster Philter.** The 30s default fits LLM round-trips; a same-cluster Philter typically responds in single-digit milliseconds, and a 1-2s `responseHeaderMs` will surface backend issues much faster.
+- **Slower `responseHeaderMs` for slow models or reasoning APIs.** Some chain-of-thought / o1-style endpoints take 60+ seconds before the first token. Raise the default if you see spurious 502s on otherwise-healthy traffic.
+- **Tighter `connectMs` for in-cluster providers.** Local services should connect in milliseconds; a tighter dial timeout helps shed traffic to dead pods faster than the default 5s.
 
 ## Concurrency Limits
 
