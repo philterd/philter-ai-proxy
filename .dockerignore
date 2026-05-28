@@ -1,0 +1,31 @@
+.git
+.github
+.gitignore
+.dockerignore
+
+# Local build outputs
+philter-ai-proxy
+coverage.out
+
+# Test corpus and test-only fixtures
+testdata
+*_test.go
+docker-compose.test.yaml
+config.test.yaml
+
+# Generated certs from `make cert`
+cert.pem
+key.pem
+
+# Docs source (not needed at runtime)
+docs
+mkdocs.yml
+
+# Editor / IDE
+.idea
+.vscode
+*.swp
+*.swo
+
+# OS junk
+.DS_Store

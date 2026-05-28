@@ -29,10 +29,30 @@ See [Configuration](configuration.md) for the full config reference.
 
 ## Docker
 
-To build a Docker image:
+To build a local Docker image (single arch, no push):
 
 ```bash
 make docker-build
+```
+
+### Publishing multi-arch images
+
+The `docker-build-push.sh` script builds and pushes a multi-arch image (`linux/amd64`, `linux/arm64`) to Docker Hub at `philterd/philter-ai-proxy`. It uses `docker buildx`, which ships with Docker Desktop and is available in modern Docker Engine installs.
+
+```bash
+docker login                          # one-time, as a user with push access
+make docker-push                      # build + push linux/amd64,linux/arm64
+make docker-push-dry-run              # print the plan without touching buildx or the registry
+```
+
+Two tags are pushed: `latest` and a derived version tag.
+
+- The version comes from `git describe --tags --always --dirty`, or `VERSION=` if set explicitly.
+- A `-dirty` working tree is refused unless `ALLOW_DIRTY=1` is set, to prevent accidentally publishing an image that doesn't correspond to any committed state.
+
+```bash
+VERSION=v1.2.3 make docker-push       # explicit version tag
+ALLOW_DIRTY=1 make docker-push        # override the dirty-tree guard
 ```
 
 ## Docker Compose

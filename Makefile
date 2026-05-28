@@ -10,6 +10,12 @@ cert:
 docker-build:
 	docker build -t philter-ai-proxy .
 
+docker-push:
+	./docker-build-push.sh
+
+docker-push-dry-run:
+	DRY_RUN=1 ./docker-build-push.sh
+
 test:
 	go test -v ./...
 

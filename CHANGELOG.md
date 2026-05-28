@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- All proxy-generated error responses are now structured JSON `{"error":{"message":"...","type":"..."}}` with `Content-Type: application/json`. Previously, request-body parse errors and re-marshal errors used Go's default `http.Error`, which returns plain text with `Content-Type: text/plain`. New stable `error.type` codes for proxy-generated errors: `invalid_request` (400), `unauthorized` (401), `pii_blocked` (403), `rate_limit_error` (429), `internal_error` (500), `capacity` (503). Errors forwarded from upstream LLM providers are unchanged. See the new [Error Responses](docs/docs/configuration.md#error-responses) section in the docs. (#117)
+
 ### Added
 
 - Fuzz tests for the four polymorphic request parsers: `FuzzAnthropicRequest` (string-or-array content; tool_result string-or-array), `FuzzOpenAIToolCallArgs` (stringified-JSON tool-call arguments recursed through `redactAny`), `FuzzGeminiRequest` (text and arbitrary `functionResponse` maps), and `FuzzBedrockConverseRequest`. Each target drives `ServeHTTP` end-to-end against in-process Philter and provider mocks and asserts that no panic escapes and a status code is always written. A GitHub Actions workflow runs every target for 60s on each PR; discovered crashes are uploaded as artifacts and the crash file becomes a regression seed. (#117)

@@ -83,6 +83,16 @@ For sustained Philter unavailability, enable the circuit breaker (`philter.circu
 
 See [Configuration](configuration.md#philterretrynew) for retry and circuit breaker settings.
 
+### Can I bound how many concurrent requests the proxy will handle?
+
+Yes. Set `listen.maxConcurrentRequests` to cap the total number of in-flight requests across the whole proxy, and/or `auth.apiKeys[].maxConcurrent` to cap how many concurrent requests a single API key can hold. Both caps are off by default. When either cap is reached, the proxy returns HTTP `503` with `Retry-After: 1` and the JSON body `{"error":{"message":"concurrency limit exceeded","type":"capacity"}}` instead of queuing the request. The two metrics to watch are `philter_proxy_active_requests` (current utilization) and `philter_proxy_concurrency_shed_total{scope}` (rejections by scope). See [Configuration](configuration.md#concurrency-limits) for sizing guidance and [Monitoring](monitoring.md#concurrency) for the PromQL utilization recipe.
+
+### What format are the proxy's error responses in?
+
+All errors the proxy generates itself (bad request body, invalid API key, rate-limit hit, concurrency-limit hit, outbound-block, etc.) are structured JSON with `Content-Type: application/json` and the shape `{"error":{"message":"...","type":"..."}}`. The `type` field is a stable string code (`invalid_request`, `unauthorized`, `rate_limit_error`, `capacity`, `pii_blocked`, `internal_error`). See [Configuration → Error Responses](configuration.md#error-responses) for the full table.
+
+Errors that originate from the upstream LLM provider are forwarded through unchanged and follow the provider's own format, not the schema above.
+
 ### Does the proxy track token usage?
 
 Yes. For non-streaming responses, the proxy reads the token usage reported by the provider and includes it in the audit log (`prompt_tokens`, `completion_tokens`) and as two Prometheus counters (`philter_proxy_prompt_tokens_total`, `philter_proxy_completion_tokens_total`), both labeled by `provider` and `model`. These counters can be used to build cost-attribution dashboards in Grafana. Token counts are not available for streaming responses and are omitted from the audit log in that case. See [Monitoring](monitoring.md) for PromQL examples.

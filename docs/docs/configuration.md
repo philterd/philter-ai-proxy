@@ -82,6 +82,7 @@ defaults:
 | `key` | string | `key.pem` | Path to the TLS private key file |
 | `shutdownTimeout` | int | `30` | Seconds to wait for in-flight requests during graceful shutdown |
 | `clientCA` | string | (none) | Path to a PEM CA certificate used to verify client certificates. When set, mTLS is enabled and the proxy requires a valid client certificate on every connection. See [mTLS](#mtls-mutual-tls) below. |
+| `maxConcurrentRequests` | int | `0` (unlimited) | Maximum number of in-flight requests the proxy will process at once. Excess requests get HTTP 503 with `Retry-After: 1`. See [Concurrency Limits](#concurrency-limits) below. |
 
 ### `logging`
 
@@ -386,6 +387,8 @@ curl -k https://localhost:8080/v1/chat/completions \
 |-------|------|----------|-------------|
 | `key` | string | Yes | The API key value. Keep this secret; treat it like a password. |
 | `policy` | string | No | Philter policy to enforce for all requests authenticated with this key. Overrides route and default policy. |
+| `rateLimit` | object | No | Per-key rate-limit override. See [Rate Limiting](#rate-limiting). |
+| `maxConcurrent` | int | No | Per-key in-flight concurrency cap (0 = unlimited). Applied in addition to the global `listen.maxConcurrentRequests` cap. See [Concurrency Limits](#concurrency-limits). |
 
 **Security note:** API keys are stored in the config file in plaintext. Protect the config file with appropriate filesystem permissions (`chmod 600`). For environments with a secrets manager, inject keys via an included file or environment variable substitution at the infrastructure layer.
 
@@ -515,3 +518,72 @@ providers:
 ```
 
 **Warning:** Disabling TLS verification makes connections vulnerable to man-in-the-middle attacks. Only disable verification in trusted development environments.
+
+## Concurrency Limits
+
+The proxy can cap the number of requests it processes at any one time. When the cap is reached the proxy returns `503 Service Unavailable` with `Retry-After: 1` instead of queuing the request or running out of resources. Concurrency limits are **disabled by default** for backwards compatibility.
+
+```yaml
+listen:
+  maxConcurrentRequests: 200   # global in-flight cap; 0 (default) = unlimited
+
+auth:
+  apiKeys:
+    - key: noisy-tenant
+      maxConcurrent: 20        # per-key in-flight cap; applied in addition to the global cap
+```
+
+The global and per-key caps **compose** — a request must acquire both. The per-key cap protects the shared pool from a single noisy tenant; the global cap protects the proxy as a whole.
+
+### Behaviour when the limit is exceeded
+
+When either cap is reached, the proxy returns:
+
+- HTTP status `503 Service Unavailable`
+- Headers: `Retry-After: 1`, `Content-Type: application/json`
+- JSON body: `{"error":{"message":"concurrency limit exceeded","type":"capacity"}}`
+
+The `Retry-After` value is fixed at 1 second because, unlike rate limits, there is no deterministic time at which a concurrency slot will free up.
+
+A structured warning is logged with the scope (`global` or `per_key`) and the client identifier:
+
+```json
+{"time":"...","level":"WARN","msg":"Concurrency limit exceeded","scope":"per_key","client":"noisy-tenant"}
+```
+
+### Choosing a value
+
+A defensible starting point:
+
+```
+maxConcurrentRequests = 2 × (target_rps × p95_provider_response_seconds)
+```
+
+The `2×` is headroom for tail latency and short bursts. Cross-check against:
+
+- **Your LLM provider's concurrent-request quota.** Set the proxy cap no higher than what your account can actually serve — otherwise you push work into the provider's queue and lose the back-pressure signal here.
+- **File descriptors.** Each in-flight request needs ~3 sockets (client + Philter + provider). Default `ulimit -n` of 1024 is exhausted around ~330 concurrent. Raise it before raising the cap.
+- **Memory.** Each in-flight request holds one goroutine plus buffered request/response bodies (rough estimate: 50–200 KB per request). 1,000 concurrent ≈ 50–200 MB of proxy state.
+
+See the [Monitoring](monitoring.md#concurrency) page for the metrics to watch and a PromQL recipe for computing utilization.
+
+## Error Responses
+
+All error responses produced by the proxy itself are structured JSON:
+
+```json
+{"error":{"message":"...","type":"..."}}
+```
+
+The HTTP `Content-Type` is always `application/json` for these responses.
+
+| Status | `error.type` | Trigger |
+|--------|--------------|---------|
+| 400 | `invalid_request` | Request body is not valid JSON for the matched provider, or the request body cannot be read |
+| 401 | `unauthorized` | API key authentication is enabled and the request has no key or an invalid key |
+| 403 | `pii_blocked` | Outbound scanning is enabled with `action: block` and PII was detected in the provider response |
+| 429 | `rate_limit_error` | Rate limit exceeded for this client. Response carries a `Retry-After` header. |
+| 500 | `internal_error` | Internal error while re-marshalling the redacted request (should not occur in normal operation) |
+| 503 | `capacity` | Concurrency limit exceeded. Response carries a `Retry-After` header. |
+
+**Note:** Responses originated by the upstream LLM provider (e.g., the provider's own 4xx or 5xx) are forwarded through unchanged and follow the provider's own error format, not the schema above. The `error.type` codes above only apply to errors the proxy generates.

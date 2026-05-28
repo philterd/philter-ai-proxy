@@ -40,7 +40,9 @@ scrape_configs:
 | `philter_proxy_completion_tokens_total` | Counter | `provider`, `model` | Total completion (output) tokens reported by providers |
 | `philter_proxy_philter_errors_total` | Counter | — | Failed calls to the Philter backend |
 | `philter_proxy_upstream_errors_total` | Counter | `provider`, `status_code` | Failed calls to LLM providers |
-| `philter_proxy_active_requests` | Gauge | — | Currently in-flight requests |
+| `philter_proxy_active_requests` | Gauge | — | Currently in-flight requests (those holding a concurrency slot) |
+| `philter_proxy_concurrency_limit` | Gauge | `scope` | Configured max-concurrent-requests ceiling. `0` means unlimited. |
+| `philter_proxy_concurrency_shed_total` | Counter | `scope` | Requests rejected (HTTP 503) due to the concurrency guard |
 
 Token counters are populated from each provider's native usage response field. They are not incremented for streaming responses, since token counts are not reliably available mid-stream.
 
@@ -51,6 +53,8 @@ Token counters are populated from each provider's native usage response field. T
 **`entity_type`**: Philter entity type string, e.g. `NER_ENTITY`, `SSN`, `PHONE_NUMBER`, `EMAIL_ADDRESS`. The full list depends on your Philter policy configuration.
 
 **`policy`**: The Philter policy name matched by the route, e.g. `default`, `hipaa-safe-harbor`.
+
+**`scope`** (on concurrency metrics): `global` for the proxy-wide cap, `per_key` for per-API-key caps.
 
 ## Health Endpoint
 
@@ -125,6 +129,21 @@ rate(philter_proxy_philter_errors_total[5m])
 philter_proxy_active_requests
 ```
 
+### Concurrency
+
+**Utilization (% of the global concurrency ceiling currently in use)** — only meaningful when `listen.maxConcurrentRequests > 0`:
+```promql
+philter_proxy_active_requests
+  / on() philter_proxy_concurrency_limit{scope="global"}
+```
+
+**Sustained shed rate by scope** (rejections/sec from the concurrency guard):
+```promql
+sum by (scope) (rate(philter_proxy_concurrency_shed_total[5m]))
+```
+
+If `scope="global"` is rising, you have a real capacity problem — **scale out horizontally first** rather than raising the cap. If only `scope="per_key"` is rising, talk to that tenant or raise their per-key cap; the global pool is fine.
+
 ### Alerting rules
 
 ```yaml
@@ -157,4 +176,12 @@ groups:
           severity: warning
         annotations:
           summary: "Philter redaction p95 latency exceeds 1 second"
+
+      - alert: ConcurrencyGuardShedding
+        expr: rate(philter_proxy_concurrency_shed_total{scope="global"}[5m]) > 0
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Proxy is shedding requests at the global concurrency cap — scale out or raise listen.maxConcurrentRequests"
 ```
