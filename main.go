@@ -174,6 +174,10 @@ type AuditEntry struct {
 	HTTPStatus       int            `json:"http_status"`
 	PromptTokens     int            `json:"prompt_tokens,omitempty"`
 	CompletionTokens int            `json:"completion_tokens,omitempty"`
+	// ErrorType / ErrorCode mirror the values the client received in the
+	// JSON error body. Empty on 2xx responses.
+	ErrorType        string         `json:"error_type,omitempty"`
+	ErrorCode        string         `json:"error_code,omitempty"`
 	EntityTypeCounts map[string]int `json:"-"`
 }
 
@@ -208,18 +212,40 @@ var hopByHopHeaders = map[string]bool{
 	"Upgrade":             true,
 }
 
-// writeJSONError writes a structured JSON error response with the shape
-// {"error":{"message":"...","type":"..."}} that the rest of the proxy uses
-// for auth, rate-limit, concurrency, and outbound-block paths. Replaces
-// http.Error in parser code paths, which otherwise forces Content-Type back
-// to text/plain.
-func writeJSONError(w http.ResponseWriter, status int, errType, message string) {
+// writeJSONError writes the proxy's stable structured error response. The
+// shape is:
+//
+//	{"error":{"message":"...","type":"...","code":"...","request_id":"..."}}
+//
+// (type, code) pairs form the stable contract documented in the
+// "Error Responses" section of the docs. They are part of the proxy's public
+// API and must not change across minor versions. New codes may be added; old
+// codes may not be removed or repurposed.
+// writeError is the canonical error-response helper used throughout the proxy.
+// It writes a structured JSON body via writeJSONError and records the same
+// (type, code) on the audit entry so the audit log mirrors what the client
+// received. Every error path the proxy generates should funnel through here.
+func writeError(w http.ResponseWriter, audit *AuditEntry, status int, errType, code, message string) {
+	if audit != nil {
+		audit.ErrorType = errType
+		audit.ErrorCode = code
+	}
+	var requestID string
+	if audit != nil {
+		requestID = audit.RequestID
+	}
+	writeJSONError(w, status, errType, code, message, requestID)
+}
+
+func writeJSONError(w http.ResponseWriter, status int, errType, code, message, requestID string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	payload, _ := json.Marshal(map[string]any{
 		"error": map[string]any{
-			"message": message,
-			"type":    errType,
+			"message":    message,
+			"type":       errType,
+			"code":       code,
+			"request_id": requestID,
 		},
 	})
 	w.Write(payload)
@@ -238,18 +264,18 @@ func sanitizeQuery(rawQuery string) string {
 	return params.Encode()
 }
 
-func (p *Proxy) philterError(w http.ResponseWriter, err error) {
+func (p *Proxy) philterError(w http.ResponseWriter, audit *AuditEntry, err error) {
 	if p.metrics != nil {
 		p.metrics.philterErrors.Inc()
 	}
 	var cbErr *CircuitOpenError
 	if errors.As(err, &cbErr) {
-		slog.Warn("Philter circuit breaker open, blocking request")
-		http.Error(w, "redaction service unavailable", http.StatusServiceUnavailable)
+		slog.Warn("Philter circuit breaker open, blocking request", "request_id", audit.RequestID)
+		writeError(w, audit, http.StatusServiceUnavailable, "circuit_open", "philter_unavailable", "redaction service unavailable")
 		return
 	}
-	slog.Error("Philter request failed", "error", err)
-	http.Error(w, "philter request failed", http.StatusBadGateway)
+	slog.Error("Philter request failed", "error", err, "request_id", audit.RequestID)
+	writeError(w, audit, http.StatusBadGateway, "philter_error", "request_failed", "philter request failed")
 }
 
 func (p *Proxy) handleHealth(w http.ResponseWriter, r *http.Request) {
@@ -318,8 +344,8 @@ func (p *Proxy) forwardToProvider(w http.ResponseWriter, origReq *http.Request, 
 
 	req, err := http.NewRequest(origReq.Method, targetURL.String(), bytes.NewReader(body))
 	if err != nil {
-		slog.Error("Failed to create provider request", "error", err, "path", origReq.URL.Path)
-		http.Error(w, "failed to create provider request", http.StatusInternalServerError)
+		slog.Error("Failed to create provider request", "error", err, "path", origReq.URL.Path, "request_id", audit.RequestID)
+		writeError(w, audit, http.StatusInternalServerError, "internal_error", "request_creation_failed", "failed to create provider request")
 		return
 	}
 
@@ -340,11 +366,11 @@ func (p *Proxy) forwardToProvider(w http.ResponseWriter, origReq *http.Request, 
 		if origReq.URL.RawQuery != "" {
 			safeURL += "?" + sanitizeQuery(origReq.URL.RawQuery)
 		}
-		slog.Error("Provider request failed", "error", err, "url", safeURL)
+		slog.Error("Provider request failed", "error", err, "url", safeURL, "request_id", audit.RequestID)
 		if p.metrics != nil {
 			p.metrics.upstreamErrors.WithLabelValues(provider, "502").Inc()
 		}
-		http.Error(w, "provider request failed", http.StatusBadGateway)
+		writeError(w, audit, http.StatusBadGateway, "provider_error", "unreachable", "provider request failed")
 		return
 	}
 	defer resp.Body.Close()
@@ -365,8 +391,8 @@ func (p *Proxy) forwardToProvider(w http.ResponseWriter, origReq *http.Request, 
 	if !isStreamingResponse(resp.Header) {
 		respBody, err := io.ReadAll(resp.Body)
 		if err != nil {
-			slog.Error("Failed to read provider response", "error", err)
-			http.Error(w, "failed to read provider response", http.StatusBadGateway)
+			slog.Error("Failed to read provider response", "error", err, "request_id", audit.RequestID)
+			writeError(w, audit, http.StatusBadGateway, "provider_error", "response_read_failed", "failed to read provider response")
 			return
 		}
 		if audit != nil && resp.StatusCode >= 200 && resp.StatusCode < 300 {
@@ -413,6 +439,8 @@ func emitAuditLog(logger *slog.Logger, entry AuditEntry) {
 		"http_status", entry.HTTPStatus,
 		"prompt_tokens", entry.PromptTokens,
 		"completion_tokens", entry.CompletionTokens,
+		"error_type", entry.ErrorType,
+		"error_code", entry.ErrorCode,
 	)
 }
 
@@ -641,7 +669,7 @@ func (p *Proxy) forwardWithOutboundScan(
 ) {
 	statusCode, respHeaders, respBody, err := p.captureFromProvider(r, target, client, body, provider)
 	if err != nil {
-		http.Error(w, "provider request failed", http.StatusBadGateway)
+		writeError(w, audit, http.StatusBadGateway, "provider_error", "unreachable", "provider request failed")
 		return
 	}
 
@@ -664,15 +692,16 @@ func (p *Proxy) forwardWithOutboundScan(
 		modified, blocked, scanErr := scanner(respBody, philterCtx, docID, policy, action, outboundAudit)
 		if scanErr != nil {
 			outboundAudit.HTTPStatus = http.StatusBadGateway
+			outboundAudit.ErrorType, outboundAudit.ErrorCode = "philter_error", "request_failed"
 			emitAuditLog(p.auditLogger, *outboundAudit)
-			p.philterError(w, scanErr)
+			p.philterError(w, audit, scanErr)
 			return
 		}
 		if blocked {
 			outboundAudit.HTTPStatus = http.StatusForbidden
+			outboundAudit.ErrorType, outboundAudit.ErrorCode = "pii_blocked", "outbound_blocked"
 			emitAuditLog(p.auditLogger, *outboundAudit)
-			w.Header().Set("Content-Type", "application/json")
-			http.Error(w, `{"error":{"message":"response blocked: PII detected","type":"pii_blocked"}}`, http.StatusForbidden)
+			writeError(w, audit, http.StatusForbidden, "pii_blocked", "outbound_blocked", "response blocked: PII detected")
 			return
 		}
 		respBody = modified
@@ -889,7 +918,7 @@ func (p *Proxy) signBedrockRequest(ctx context.Context, req *http.Request, body 
 func (p *Proxy) handleBedrock(w http.ResponseWriter, r *http.Request, bodyBytes []byte, philterCtx string, docID string, policyName string, audit *AuditEntry, outbound OutboundConfig) {
 	var req BedrockConverseRequest
 	if err := json.Unmarshal(bodyBytes, &req); err != nil {
-		writeJSONError(w, http.StatusBadRequest, "invalid_request", err.Error())
+		writeError(w, audit, http.StatusBadRequest, "invalid_request", "bad_json", err.Error())
 		return
 	}
 
@@ -901,7 +930,7 @@ func (p *Proxy) handleBedrock(w http.ResponseWriter, r *http.Request, bodyBytes 
 		}
 		fr, err := p.philter.Filter(req.System[i].Text, philterCtx, docID, policyName)
 		if err != nil {
-			p.philterError(w, err)
+			p.philterError(w, audit, err)
 			return
 		}
 		req.System[i].Text = fr.FilteredText
@@ -915,7 +944,7 @@ func (p *Proxy) handleBedrock(w http.ResponseWriter, r *http.Request, bodyBytes 
 			}
 			fr, err := p.philter.Filter(req.Messages[i].Content[j].Text, philterCtx, docID, policyName)
 			if err != nil {
-				p.philterError(w, err)
+				p.philterError(w, audit, err)
 				return
 			}
 			req.Messages[i].Content[j].Text = fr.FilteredText
@@ -925,7 +954,7 @@ func (p *Proxy) handleBedrock(w http.ResponseWriter, r *http.Request, bodyBytes 
 
 	body, err := json.Marshal(req)
 	if err != nil {
-		writeJSONError(w, http.StatusInternalServerError, "internal_error", err.Error())
+		writeError(w, audit, http.StatusInternalServerError, "internal_error", "marshal_failed", err.Error())
 		return
 	}
 
@@ -941,25 +970,25 @@ func (p *Proxy) forwardToBedrockProvider(w http.ResponseWriter, origReq *http.Re
 
 	req, err := http.NewRequestWithContext(origReq.Context(), "POST", targetURL, bytes.NewReader(body))
 	if err != nil {
-		slog.Error("Failed to create Bedrock request", "error", err)
-		http.Error(w, "failed to create provider request", http.StatusInternalServerError)
+		slog.Error("Failed to create Bedrock request", "error", err, "request_id", audit.RequestID)
+		writeError(w, audit, http.StatusInternalServerError, "internal_error", "request_creation_failed", "failed to create provider request")
 		return
 	}
 	req.Header.Set("Content-Type", "application/json")
 
 	if err := p.signBedrockRequest(origReq.Context(), req, body); err != nil {
-		slog.Error("Failed to sign Bedrock request", "error", err)
-		http.Error(w, "failed to sign provider request", http.StatusInternalServerError)
+		slog.Error("Failed to sign Bedrock request", "error", err, "request_id", audit.RequestID)
+		writeError(w, audit, http.StatusInternalServerError, "internal_error", "bedrock_sign_failed", "failed to sign provider request")
 		return
 	}
 
 	resp, err := p.bedrockClient.Do(req)
 	if err != nil {
-		slog.Error("Bedrock request failed", "error", err)
+		slog.Error("Bedrock request failed", "error", err, "request_id", audit.RequestID)
 		if p.metrics != nil {
 			p.metrics.upstreamErrors.WithLabelValues("bedrock", "502").Inc()
 		}
-		http.Error(w, "provider request failed", http.StatusBadGateway)
+		writeError(w, audit, http.StatusBadGateway, "provider_error", "unreachable", "provider request failed")
 		return
 	}
 	defer resp.Body.Close()
@@ -970,8 +999,8 @@ func (p *Proxy) forwardToBedrockProvider(w http.ResponseWriter, origReq *http.Re
 
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
-		slog.Error("Failed to read Bedrock response", "error", err)
-		http.Error(w, "failed to read provider response", http.StatusBadGateway)
+		slog.Error("Failed to read Bedrock response", "error", err, "request_id", audit.RequestID)
+		writeError(w, audit, http.StatusBadGateway, "provider_error", "response_read_failed", "failed to read provider response")
 		return
 	}
 	if audit != nil && resp.StatusCode >= 200 && resp.StatusCode < 300 {
@@ -1031,7 +1060,7 @@ func (p *Proxy) forwardBedrockWithOutboundScan(
 ) {
 	statusCode, respHeaders, respBody, err := p.captureFromBedrockProvider(r, body)
 	if err != nil {
-		http.Error(w, "provider request failed", http.StatusBadGateway)
+		writeError(w, audit, http.StatusBadGateway, "provider_error", "unreachable", "provider request failed")
 		return
 	}
 
@@ -1054,15 +1083,16 @@ func (p *Proxy) forwardBedrockWithOutboundScan(
 		modified, blocked, scanErr := p.scanBedrockResponse(respBody, philterCtx, docID, policy, action, outboundAudit)
 		if scanErr != nil {
 			outboundAudit.HTTPStatus = http.StatusBadGateway
+			outboundAudit.ErrorType, outboundAudit.ErrorCode = "philter_error", "request_failed"
 			emitAuditLog(p.auditLogger, *outboundAudit)
-			p.philterError(w, scanErr)
+			p.philterError(w, audit, scanErr)
 			return
 		}
 		if blocked {
 			outboundAudit.HTTPStatus = http.StatusForbidden
+			outboundAudit.ErrorType, outboundAudit.ErrorCode = "pii_blocked", "outbound_blocked"
 			emitAuditLog(p.auditLogger, *outboundAudit)
-			w.Header().Set("Content-Type", "application/json")
-			http.Error(w, `{"error":{"message":"response blocked: PII detected","type":"pii_blocked"}}`, http.StatusForbidden)
+			writeError(w, audit, http.StatusForbidden, "pii_blocked", "outbound_blocked", "response blocked: PII detected")
 			return
 		}
 		respBody = modified
@@ -1130,6 +1160,49 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Establish the request_id up front so every downstream error path can
+	// reference it. An inbound X-Request-Id is honored for tracing across
+	// hops; otherwise we generate one.
+	requestID := r.Header.Get("X-Request-Id")
+	if requestID == "" {
+		requestID = uuid.New().String()
+	}
+	w.Header().Set("X-Request-Id", requestID)
+
+	// Build the audit entry early so even auth / rate-limit / concurrency
+	// rejections produce a log line. Fields that aren't known yet stay empty;
+	// later code fills them in as the request progresses.
+	audit := &AuditEntry{
+		RequestID: requestID,
+		Direction: "inbound",
+		ClientIP:  clientIP(r),
+	}
+	rc := newResponseCapture(w)
+	start := time.Now()
+
+	defer func() {
+		audit.HTTPStatus = rc.statusCode
+		emitAuditLog(p.auditLogger, *audit)
+		if p.metrics != nil {
+			dur := time.Since(start).Seconds()
+			statusStr := strconv.Itoa(rc.statusCode)
+			p.metrics.requestsTotal.WithLabelValues(audit.Provider, statusStr, audit.PolicyName).Inc()
+			p.metrics.requestDuration.WithLabelValues(audit.Provider).Observe(dur)
+			if audit.RedactLatency > 0 {
+				p.metrics.redactionDuration.WithLabelValues(audit.Provider, audit.PolicyName).Observe(audit.RedactLatency.Seconds())
+			}
+			for entityType, count := range audit.EntityTypeCounts {
+				p.metrics.entitiesRedacted.WithLabelValues(entityType, audit.Provider).Add(float64(count))
+			}
+			if audit.PromptTokens > 0 {
+				p.metrics.promptTokensTotal.WithLabelValues(audit.Provider, audit.Model).Add(float64(audit.PromptTokens))
+			}
+			if audit.CompletionTokens > 0 {
+				p.metrics.completionTokensTotal.WithLabelValues(audit.Provider, audit.Model).Add(float64(audit.CompletionTokens))
+			}
+		}
+	}()
+
 	// API key authentication. Enforced only when keys are configured; disabled by default.
 	var clientKey string
 	var keyBoundPolicy string
@@ -1140,14 +1213,12 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		clientKey = r.Header.Get(headerName)
 		if clientKey == "" {
-			w.Header().Set("Content-Type", "application/json")
-			http.Error(w, `{"error":{"message":"missing API key","type":"unauthorized"}}`, http.StatusUnauthorized)
+			writeError(rc, audit, http.StatusUnauthorized, "unauthorized", "missing_api_key", "missing API key")
 			return
 		}
 		boundPolicy, ok := p.keyIndex[clientKey]
 		if !ok {
-			w.Header().Set("Content-Type", "application/json")
-			http.Error(w, `{"error":{"message":"invalid API key","type":"unauthorized"}}`, http.StatusUnauthorized)
+			writeError(rc, audit, http.StatusUnauthorized, "unauthorized", "invalid_api_key", "invalid API key")
 			return
 		}
 		keyBoundPolicy = boundPolicy
@@ -1163,14 +1234,13 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			id = clientIP(r)
 		}
 		if allowed, retryAfter := p.rateLimiter.Allow(id); !allowed {
-			slog.Warn("Rate limit exceeded", "client", id)
+			slog.Warn("Rate limit exceeded", "client", id, "request_id", requestID)
 			retrySecs := int(retryAfter.Seconds())
 			if retrySecs < 1 {
 				retrySecs = 1
 			}
-			w.Header().Set("Retry-After", strconv.Itoa(retrySecs))
-			w.Header().Set("Content-Type", "application/json")
-			http.Error(w, `{"error":{"message":"rate limit exceeded","type":"rate_limit_error"}}`, http.StatusTooManyRequests)
+			rc.Header().Set("Retry-After", strconv.Itoa(retrySecs))
+			writeError(rc, audit, http.StatusTooManyRequests, "rate_limit_error", "rate_limited", "rate limit exceeded")
 			return
 		}
 	}
@@ -1182,14 +1252,12 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if p.concurrency != nil {
 		allowed, scope, release := p.concurrency.Acquire(clientKey)
 		if !allowed {
-			slog.Warn("Concurrency limit exceeded", "scope", scope, "client", clientKey)
+			slog.Warn("Concurrency limit exceeded", "scope", scope, "client", clientKey, "request_id", requestID)
 			if p.metrics != nil {
 				p.metrics.concurrencyShed.WithLabelValues(scope).Inc()
 			}
-			w.Header().Set("Retry-After", "1")
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusServiceUnavailable)
-			w.Write([]byte(`{"error":{"message":"concurrency limit exceeded","type":"capacity"}}`))
+			rc.Header().Set("Retry-After", "1")
+			writeError(rc, audit, http.StatusServiceUnavailable, "capacity", "concurrency_exceeded", "concurrency limit exceeded")
 			return
 		}
 		defer release()
@@ -1199,11 +1267,10 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		p.metrics.activeRequests.Inc()
 		defer p.metrics.activeRequests.Dec()
 	}
-	start := time.Now()
 
 	bodyBytes, err := ioutil.ReadAll(r.Body)
 	if err != nil {
-		writeJSONError(w, http.StatusBadRequest, "invalid_request", err.Error())
+		writeError(rc, audit, http.StatusBadRequest, "invalid_request", "body_read", err.Error())
 		return
 	}
 
@@ -1235,15 +1302,8 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	philter_document_id := uuid.New().String()
 	philter_policy_name := route.Policy
 
-	audit := &AuditEntry{
-		RequestID:  uuid.New().String(),
-		Direction:  "inbound",
-		PolicyName: philter_policy_name,
-		DocumentID: philter_document_id,
-		ClientIP:   clientIP(r),
-	}
-
-	rc := newResponseCapture(w)
+	audit.PolicyName = philter_policy_name
+	audit.DocumentID = philter_document_id
 
 	if openaiCompatName != "" {
 		audit.Provider = openaiCompatName
@@ -1263,7 +1323,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	} else if isBedrockPath(r.URL.Path) {
 		audit.Provider = "bedrock"
 		if p.bedrockRegion == "" {
-			http.Error(rc, "bedrock provider not configured", http.StatusNotFound)
+			writeError(rc, audit, http.StatusNotFound, "not_found", "bedrock_disabled", "bedrock provider not configured")
 		} else {
 			p.handleBedrock(rc, r, bodyBytes, philter_context, philter_document_id, philter_policy_name, audit, route.Outbound)
 		}
@@ -1271,34 +1331,12 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		audit.Provider = "openai"
 		p.handleOpenAI(rc, r, bodyBytes, philter_context, philter_document_id, philter_policy_name, audit, route.Outbound)
 	}
-
-	audit.HTTPStatus = rc.statusCode
-	emitAuditLog(p.auditLogger, *audit)
-
-	if p.metrics != nil {
-		dur := time.Since(start).Seconds()
-		statusStr := strconv.Itoa(rc.statusCode)
-		p.metrics.requestsTotal.WithLabelValues(audit.Provider, statusStr, audit.PolicyName).Inc()
-		p.metrics.requestDuration.WithLabelValues(audit.Provider).Observe(dur)
-		if audit.RedactLatency > 0 {
-			p.metrics.redactionDuration.WithLabelValues(audit.Provider, audit.PolicyName).Observe(audit.RedactLatency.Seconds())
-		}
-		for entityType, count := range audit.EntityTypeCounts {
-			p.metrics.entitiesRedacted.WithLabelValues(entityType, audit.Provider).Add(float64(count))
-		}
-		if audit.PromptTokens > 0 {
-			p.metrics.promptTokensTotal.WithLabelValues(audit.Provider, audit.Model).Add(float64(audit.PromptTokens))
-		}
-		if audit.CompletionTokens > 0 {
-			p.metrics.completionTokensTotal.WithLabelValues(audit.Provider, audit.Model).Add(float64(audit.CompletionTokens))
-		}
-	}
 }
 
 func (p *Proxy) handleOllamaGenerate(w http.ResponseWriter, r *http.Request, bodyBytes []byte, context string, documentId string, policyName string, audit *AuditEntry, outbound OutboundConfig) {
 	var o OllamaGenerateRequest
 	if err := json.Unmarshal(bodyBytes, &o); err != nil {
-		writeJSONError(w, http.StatusBadRequest, "invalid_request", err.Error())
+		writeError(w, audit, http.StatusBadRequest, "invalid_request", "bad_json", err.Error())
 		return
 	}
 
@@ -1307,7 +1345,7 @@ func (p *Proxy) handleOllamaGenerate(w http.ResponseWriter, r *http.Request, bod
 	if o.Prompt != "" {
 		fr, err := p.philter.Filter(o.Prompt, context, documentId, policyName)
 		if err != nil {
-			p.philterError(w, err)
+			p.philterError(w, audit, err)
 			return
 		}
 		o.Prompt = fr.FilteredText
@@ -1317,7 +1355,7 @@ func (p *Proxy) handleOllamaGenerate(w http.ResponseWriter, r *http.Request, bod
 	if o.System != "" {
 		fr, err := p.philter.Filter(o.System, context, documentId, policyName)
 		if err != nil {
-			p.philterError(w, err)
+			p.philterError(w, audit, err)
 			return
 		}
 		o.System = fr.FilteredText
@@ -1326,7 +1364,7 @@ func (p *Proxy) handleOllamaGenerate(w http.ResponseWriter, r *http.Request, bod
 
 	j, err := json.Marshal(o)
 	if err != nil {
-		writeJSONError(w, http.StatusInternalServerError, "internal_error", err.Error())
+		writeError(w, audit, http.StatusInternalServerError, "internal_error", "marshal_failed", err.Error())
 		return
 	}
 
@@ -1341,7 +1379,7 @@ func (p *Proxy) handleOllamaGenerate(w http.ResponseWriter, r *http.Request, bod
 func (p *Proxy) handleOllamaChat(w http.ResponseWriter, r *http.Request, bodyBytes []byte, context string, documentId string, policyName string, audit *AuditEntry, outbound OutboundConfig) {
 	var o OllamaChatRequest
 	if err := json.Unmarshal(bodyBytes, &o); err != nil {
-		writeJSONError(w, http.StatusBadRequest, "invalid_request", err.Error())
+		writeError(w, audit, http.StatusBadRequest, "invalid_request", "bad_json", err.Error())
 		return
 	}
 
@@ -1350,7 +1388,7 @@ func (p *Proxy) handleOllamaChat(w http.ResponseWriter, r *http.Request, bodyByt
 	for i := range o.Messages {
 		fr, err := p.philter.Filter(o.Messages[i].Content, context, documentId, policyName)
 		if err != nil {
-			p.philterError(w, err)
+			p.philterError(w, audit, err)
 			return
 		}
 		o.Messages[i].Content = fr.FilteredText
@@ -1359,7 +1397,7 @@ func (p *Proxy) handleOllamaChat(w http.ResponseWriter, r *http.Request, bodyByt
 
 	j, err := json.Marshal(o)
 	if err != nil {
-		writeJSONError(w, http.StatusInternalServerError, "internal_error", err.Error())
+		writeError(w, audit, http.StatusInternalServerError, "internal_error", "marshal_failed", err.Error())
 		return
 	}
 
@@ -1374,7 +1412,7 @@ func (p *Proxy) handleOllamaChat(w http.ResponseWriter, r *http.Request, bodyByt
 func (p *Proxy) handleGeminiNative(w http.ResponseWriter, r *http.Request, bodyBytes []byte, context string, documentId string, policyName string, audit *AuditEntry, outbound OutboundConfig) {
 	var g GeminiRequest
 	if err := json.Unmarshal(bodyBytes, &g); err != nil {
-		writeJSONError(w, http.StatusBadRequest, "invalid_request", err.Error())
+		writeError(w, audit, http.StatusBadRequest, "invalid_request", "bad_json", err.Error())
 		return
 	}
 
@@ -1401,13 +1439,13 @@ loop:
 		}
 	}
 	if filterErr != nil {
-		p.philterError(w, filterErr)
+		p.philterError(w, audit, filterErr)
 		return
 	}
 
 	j, err := json.Marshal(g)
 	if err != nil {
-		writeJSONError(w, http.StatusInternalServerError, "internal_error", err.Error())
+		writeError(w, audit, http.StatusInternalServerError, "internal_error", "marshal_failed", err.Error())
 		return
 	}
 
@@ -1426,7 +1464,7 @@ func (p *Proxy) handleOpenAI(w http.ResponseWriter, r *http.Request, bodyBytes [
 func (p *Proxy) handleOpenAICompatible(w http.ResponseWriter, r *http.Request, bodyBytes []byte, context string, documentId string, policyName string, audit *AuditEntry, outbound OutboundConfig, target *url.URL, client *http.Client, provider string) {
 	var o OpenAIRequest
 	if err := json.Unmarshal(bodyBytes, &o); err != nil {
-		writeJSONError(w, http.StatusBadRequest, "invalid_request", err.Error())
+		writeError(w, audit, http.StatusBadRequest, "invalid_request", "bad_json", err.Error())
 		return
 	}
 
@@ -1440,7 +1478,7 @@ func (p *Proxy) handleOpenAICompatible(w http.ResponseWriter, r *http.Request, b
 			if json.Unmarshal(msg.Content, &s) == nil && s != "" {
 				fr, err := p.philter.Filter(s, context, documentId, policyName)
 				if err != nil {
-					p.philterError(w, err)
+					p.philterError(w, audit, err)
 					return
 				}
 				msg.Content, _ = json.Marshal(fr.FilteredText)
@@ -1453,7 +1491,7 @@ func (p *Proxy) handleOpenAICompatible(w http.ResponseWriter, r *http.Request, b
 			if tc.Function.Arguments != "" {
 				redacted, err := redactJSONArguments(p.philter.Filter, tc.Function.Arguments, context, documentId, policyName, audit)
 				if err != nil {
-					p.philterError(w, err)
+					p.philterError(w, audit, err)
 					return
 				}
 				tc.Function.Arguments = redacted
@@ -1463,7 +1501,7 @@ func (p *Proxy) handleOpenAICompatible(w http.ResponseWriter, r *http.Request, b
 
 	j, err := json.Marshal(o)
 	if err != nil {
-		writeJSONError(w, http.StatusInternalServerError, "internal_error", err.Error())
+		writeError(w, audit, http.StatusInternalServerError, "internal_error", "marshal_failed", err.Error())
 		return
 	}
 
@@ -1478,7 +1516,7 @@ func (p *Proxy) handleOpenAICompatible(w http.ResponseWriter, r *http.Request, b
 func (p *Proxy) handleAnthropic(w http.ResponseWriter, r *http.Request, bodyBytes []byte, context string, documentId string, policyName string, audit *AuditEntry, outbound OutboundConfig) {
 	var a AnthropicRequest
 	if err := json.Unmarshal(bodyBytes, &a); err != nil {
-		writeJSONError(w, http.StatusBadRequest, "invalid_request", err.Error())
+		writeError(w, audit, http.StatusBadRequest, "invalid_request", "bad_json", err.Error())
 		return
 	}
 
@@ -1489,7 +1527,7 @@ func (p *Proxy) handleAnthropic(w http.ResponseWriter, r *http.Request, bodyByte
 	if a.System != "" {
 		fr, err := p.philter.Filter(a.System, context, documentId, policyName)
 		if err != nil {
-			p.philterError(w, err)
+			p.philterError(w, audit, err)
 			return
 		}
 		a.System = fr.FilteredText
@@ -1557,13 +1595,13 @@ msgloop:
 	}
 
 	if filterErr != nil {
-		p.philterError(w, filterErr)
+		p.philterError(w, audit, filterErr)
 		return
 	}
 
 	j, err := json.Marshal(a)
 	if err != nil {
-		writeJSONError(w, http.StatusInternalServerError, "internal_error", err.Error())
+		writeError(w, audit, http.StatusInternalServerError, "internal_error", "marshal_failed", err.Error())
 		return
 	}
 

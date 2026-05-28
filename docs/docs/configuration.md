@@ -446,6 +446,8 @@ Every proxy request produces a structured JSON log entry (JSONL) to stdout. All 
 | `http_status` | int | HTTP status code of the upstream provider response |
 | `prompt_tokens` | int | Prompt (input) token count reported by the provider. Omitted for streaming responses and when the provider does not return usage data. |
 | `completion_tokens` | int | Completion (output) token count reported by the provider. Omitted under the same conditions as `prompt_tokens`. |
+| `error_type` | string | The `error.type` value the client received. Empty on 2xx responses. See [Error Responses](#error-responses). |
+| `error_code` | string | The `error.code` value the client received. Empty on 2xx responses. See [Error Responses](#error-responses). |
 
 ### Example Log Entries
 
@@ -569,21 +571,53 @@ See the [Monitoring](monitoring.md#concurrency) page for the metrics to watch an
 
 ## Error Responses
 
-All error responses produced by the proxy itself are structured JSON:
+Every error the proxy generates uses the same structured JSON shape and the same set of stable codes. Clients can parse these reliably to drive retry, alerting, and routing.
+
+### Response shape
 
 ```json
-{"error":{"message":"...","type":"..."}}
+{
+  "error": {
+    "message": "human-readable description",
+    "type": "broad-category enum",
+    "code": "specific-reason enum",
+    "request_id": "uuid-or-X-Request-Id-from-caller"
+  }
+}
 ```
 
-The HTTP `Content-Type` is always `application/json` for these responses.
+- `Content-Type: application/json` is set on every error.
+- `X-Request-Id` is set on every response (success and error) with the same value as `error.request_id`.
+- An inbound `X-Request-Id` request header is honored when present; otherwise a UUID is generated.
 
-| Status | `error.type` | Trigger |
-|--------|--------------|---------|
-| 400 | `invalid_request` | Request body is not valid JSON for the matched provider, or the request body cannot be read |
-| 401 | `unauthorized` | API key authentication is enabled and the request has no key or an invalid key |
-| 403 | `pii_blocked` | Outbound scanning is enabled with `action: block` and PII was detected in the provider response |
-| 429 | `rate_limit_error` | Rate limit exceeded for this client. Response carries a `Retry-After` header. |
-| 500 | `internal_error` | Internal error while re-marshalling the redacted request (should not occur in normal operation) |
-| 503 | `capacity` | Concurrency limit exceeded. Response carries a `Retry-After` header. |
+### Stable enum
 
-**Note:** Responses originated by the upstream LLM provider (e.g., the provider's own 4xx or 5xx) are forwarded through unchanged and follow the provider's own error format, not the schema above. The `error.type` codes above only apply to errors the proxy generates.
+The `(type, code)` set below is part of the proxy's public API. New codes may be added in any release. **Existing codes will not be removed or repurposed across minor versions.**
+
+| Status | `type` | `code` | Trigger | `Retry-After` |
+|---|---|---|---|---|
+| 400 | `invalid_request` | `bad_json` | Request body is not valid JSON for the matched provider | — |
+| 400 | `invalid_request` | `body_read` | Request body could not be read from the client connection | — |
+| 401 | `unauthorized` | `missing_api_key` | Auth enabled and no key in the configured header | — |
+| 401 | `unauthorized` | `invalid_api_key` | Auth enabled and the supplied key was not recognised | — |
+| 403 | `pii_blocked` | `outbound_blocked` | Outbound scanning is on with `action: block` and PII was found in the provider response | — |
+| 404 | `not_found` | `bedrock_disabled` | A Bedrock path was requested but `providers.bedrock.region` is unset | — |
+| 429 | `rate_limit_error` | `rate_limited` | Rate-limit token bucket exhausted for this client | seconds until refill |
+| 500 | `internal_error` | `marshal_failed` | Re-serialising the redacted request body failed (should not occur in normal operation) | — |
+| 500 | `internal_error` | `request_creation_failed` | `http.NewRequest` failed when building the upstream call (typically an invalid target URL) | — |
+| 500 | `internal_error` | `bedrock_sign_failed` | AWS SigV4 signing failed (credentials cannot be retrieved) | — |
+| 502 | `provider_error` | `unreachable` | Upstream LLM provider connection failed (DNS, dial, TLS) | — |
+| 502 | `provider_error` | `response_read_failed` | Connected to the provider but failed to read the response body | — |
+| 502 | `philter_error` | `request_failed` | Philter call failed (network or non-2xx response) and retries were exhausted | — |
+| 503 | `capacity` | `concurrency_exceeded` | `listen.maxConcurrentRequests` or a per-key cap was hit | `1` |
+| 503 | `circuit_open` | `philter_unavailable` | Philter circuit breaker is open with `fallback: block` | — |
+
+**Errors forwarded from upstream LLM providers** are passed through unchanged and follow the provider's own error format, not the schema above. The codes here apply only to errors the proxy itself generates.
+
+### Audit correlation
+
+Every error response is mirrored in the audit log: the same `request_id`, `error_type`, and `error_code` fields appear on the inbound audit entry. To trace a single failed request end-to-end:
+
+1. Grab the `X-Request-Id` header from the client's response.
+2. Search audit logs for `request_id=<that value>`.
+3. The matching entry's `error_type` and `error_code` will equal what the client saw.

@@ -93,7 +93,15 @@ Yes. Set `listen.maxConcurrentRequests` to cap the total number of in-flight req
 
 ### What format are the proxy's error responses in?
 
-All errors the proxy generates itself (bad request body, invalid API key, rate-limit hit, concurrency-limit hit, outbound-block, etc.) are structured JSON with `Content-Type: application/json` and the shape `{"error":{"message":"...","type":"..."}}`. The `type` field is a stable string code (`invalid_request`, `unauthorized`, `rate_limit_error`, `capacity`, `pii_blocked`, `internal_error`). See [Configuration → Error Responses](configuration.md#error-responses) for the full table.
+All errors the proxy generates itself are structured JSON with the shape:
+
+```json
+{"error":{"message":"...","type":"...","code":"...","request_id":"..."}}
+```
+
+`Content-Type: application/json` and an `X-Request-Id` header carrying the same `request_id` are always set. The `(type, code)` pair is a stable enum — codes will not be removed or repurposed across minor versions. The full table lives at [Configuration → Error Responses](configuration.md#error-responses).
+
+To trace a failed request: grab the `X-Request-Id` header from the response, then search audit logs for `request_id=<that value>`. The audit entry's `error_type` and `error_code` will match what the client received.
 
 Errors that originate from the upstream LLM provider are forwarded through unchanged and follow the provider's own format, not the schema above.
 

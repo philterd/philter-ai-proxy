@@ -921,7 +921,10 @@ func TestStreaming_HeadersPreserved(t *testing.T) {
 			t.Errorf("Expected Authorization header, got '%s'", r.Header.Get("Authorization"))
 		}
 		w.Header().Set("Content-Type", "text/event-stream")
-		w.Header().Set("X-Request-Id", "req-abc")
+		// X-Provider-Trace-Id stands in for a generic upstream header. We
+		// don't use X-Request-Id here because the proxy owns that header
+		// for its own request_id (see error.request_id contract).
+		w.Header().Set("X-Provider-Trace-Id", "trace-abc")
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("data: {}\n\n"))
 	}))
@@ -942,8 +945,8 @@ func TestStreaming_HeadersPreserved(t *testing.T) {
 
 	proxy.ServeHTTP(w, req)
 
-	if w.Header().Get("X-Request-Id") != "req-abc" {
-		t.Errorf("Expected X-Request-Id header forwarded, got '%s'", w.Header().Get("X-Request-Id"))
+	if got := w.Header().Get("X-Provider-Trace-Id"); got != "trace-abc" {
+		t.Errorf("Expected upstream header forwarded, got %q", got)
 	}
 }
 
