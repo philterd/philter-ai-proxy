@@ -213,8 +213,8 @@ If the host credentials do not have Bedrock access directly (e.g., in a multi-ac
 
 Azure OpenAI is an optional first-class provider. It is enabled by setting `providers.azure.target` to your resource endpoint. Azure uses deployment-based routing rather than OpenAI's model-in-body convention: the proxy routes any request whose path begins with `/openai/deployments/{deployment}/`, preserves the path and the `api-version` query parameter, and forwards it to the configured Azure endpoint. Request and response bodies are OpenAI-compatible, so **inbound redaction and token-usage accounting are identical to the OpenAI provider**.
 
-!!! warning "Redaction scope"
-    As with the OpenAI provider, inbound redaction covers **chat-style message content** (`messages[].content` and `tool_calls[].function.arguments` on `.../chat/completions`). The legacy `.../completions` (`prompt`) and `.../embeddings` (`input`) endpoints are routed and forwarded but their inputs are **not yet redacted** — do not send PII through them until embeddings/completions redaction lands ([#153](https://github.com/philterd/philterd-website/issues/153)). This limitation is shared with the OpenAI provider.
+!!! note "Redaction scope"
+    Inbound redaction covers the text-bearing fields of all JSON endpoints the proxy understands — see the [Redacted Fields](api.md#redacted-fields) table for the full per-endpoint list. Multipart/binary uploads (file uploads, audio transcriptions, image edits) are **not supported**: the proxy expects a JSON body and rejects multipart requests with `400 invalid_request`.
 
 ```yaml
 providers:

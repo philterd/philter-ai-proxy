@@ -292,14 +292,11 @@ func TestAzure_StreamingResponsePassedThrough(t *testing.T) {
 	}
 }
 
-// TestAzure_EmbeddingsRoutedButInputNotYetRedacted documents a known limitation:
-// /embeddings requests route to Azure but their `input` is NOT redacted yet
-// (redaction covers chat message content only). Cross-provider embeddings
-// redaction is tracked in #153. When that lands, this test should be updated to
-// assert the input IS redacted — its failure is the signal to do so.
-func TestAzure_EmbeddingsRoutedButInputNotYetRedacted(t *testing.T) {
+// TestAzure_EmbeddingsInputRedacted verifies the Azure embeddings path redacts
+// its `input` (cross-provider embeddings redaction, #153).
+func TestAzure_EmbeddingsInputRedacted(t *testing.T) {
 	philterSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write(explainJSON("{{{REDACTED}}}", "doc-id", nil))
+		w.Write(explainJSON("REDACTED", "doc-id", nil))
 	}))
 	defer philterSrv.Close()
 
@@ -315,9 +312,8 @@ func TestAzure_EmbeddingsRoutedButInputNotYetRedacted(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("embeddings request should route to Azure (200), got %d", w.Code)
 	}
-	// Documents current behavior: input is forwarded unredacted (see #153).
-	if !strings.Contains(cap.body, "123-45-6789") {
-		t.Skip("embeddings input is now being redacted — update this test and the docs warning (#153 likely landed)")
+	if strings.Contains(cap.body, "123-45-6789") {
+		t.Errorf("Azure embeddings input must be redacted, got: %s", cap.body)
 	}
 }
 

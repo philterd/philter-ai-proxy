@@ -405,9 +405,20 @@ func extractTokenUsage(provider string, body []byte) (promptTokens, completionTo
 	case "bedrock":
 		usage, _ := raw["usage"].(map[string]interface{})
 		return fi(usage, "inputTokens"), fi(usage, "outputTokens")
-	default: // openai, openai-compatible
+	default: // openai, openai-compatible, azure
 		usage, _ := raw["usage"].(map[string]interface{})
-		return fi(usage, "prompt_tokens"), fi(usage, "completion_tokens")
+		// Chat/embeddings report prompt_tokens/completion_tokens; the Responses
+		// API reports input_tokens/output_tokens. Fall back so all OpenAI-style
+		// endpoints are accounted for. (Embeddings omit completion entirely.)
+		prompt := fi(usage, "prompt_tokens")
+		if prompt == 0 {
+			prompt = fi(usage, "input_tokens")
+		}
+		completion := fi(usage, "completion_tokens")
+		if completion == 0 {
+			completion = fi(usage, "output_tokens")
+		}
+		return prompt, completion
 	}
 }
 
@@ -1735,48 +1746,13 @@ func (p *Proxy) handleOpenAICompatible(w http.ResponseWriter, r *http.Request, b
 		audit.Model = m
 	}
 
-	if rawMsgs, ok := root["messages"]; ok && len(rawMsgs) > 0 {
-		var messages []OpenAIMessage
-		if err := json.Unmarshal(rawMsgs, &messages); err != nil {
-			writeError(w, audit, http.StatusBadRequest, "invalid_request", "bad_json", err.Error())
-			return
-		}
-
-		for i := range messages {
-			msg := &messages[i]
-
-			if len(msg.Content) > 0 {
-				var s string
-				if json.Unmarshal(msg.Content, &s) == nil && s != "" {
-					fr, err := p.philter.Filter(r.Context(), s, context, documentId, policyName)
-					if err != nil {
-						p.philterError(w, audit, err)
-						return
-					}
-					msg.Content, _ = json.Marshal(fr.FilteredText)
-					audit.recordFilterResult(fr)
-				}
-			}
-
-			for j := range msg.ToolCalls {
-				tc := &msg.ToolCalls[j]
-				if tc.Function.Arguments != "" {
-					redacted, err := redactJSONArguments(r.Context(), p.philter.Filter, tc.Function.Arguments, context, documentId, policyName, audit)
-					if err != nil {
-						p.philterError(w, audit, err)
-						return
-					}
-					tc.Function.Arguments = redacted
-				}
-			}
-		}
-
-		newMsgs, err := json.Marshal(messages)
-		if err != nil {
-			writeError(w, audit, http.StatusInternalServerError, "internal_error", "marshal_failed", err.Error())
-			return
-		}
-		root["messages"] = newMsgs
+	// Redact the text-bearing fields appropriate to this endpoint (chat
+	// messages, embeddings/moderations input, Responses input/instructions,
+	// image/completions prompt, ...). All non-redacted top-level fields are
+	// preserved.
+	if err := p.redactOpenAIEndpoint(r.Context(), classifyOpenAIEndpoint(r.URL.Path), root, context, documentId, policyName, audit); err != nil {
+		p.philterError(w, audit, err)
+		return
 	}
 
 	j, err := json.Marshal(root)

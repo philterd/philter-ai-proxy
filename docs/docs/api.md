@@ -12,6 +12,12 @@ The proxy inspects and redacts all text-bearing fields in the request body befor
 | OpenAI / OpenAI-compatible / Azure OpenAI | `role: system` | `content` (string) |
 | OpenAI / OpenAI-compatible / Azure OpenAI | `role: tool` | `content` (string) |
 | OpenAI / OpenAI-compatible / Azure OpenAI | `role: assistant` with tool calls | `tool_calls[].function.arguments` - parsed as JSON, string values redacted, re-serialized |
+| OpenAI family — `/embeddings` | `input` (string or array of strings; integer token-ID inputs are passed through unchanged) |
+| OpenAI family — `/responses` (Responses API) | `input` (string, or message items incl. nested `content[].text`) and `instructions` |
+| OpenAI family — `/moderations` | `input` (string or array of strings) |
+| OpenAI family — `/images/generations` | `prompt` |
+| OpenAI family — `/audio/speech` (TTS) | `input` |
+| OpenAI family — `/completions` (legacy) | `prompt` (string or array) |
 | Anthropic | Top-level | `system` (string) |
 | Anthropic | `text` content block | `text` |
 | Anthropic | `tool_result` content block | `content` (string or nested `text` blocks) |
@@ -22,7 +28,11 @@ The proxy inspects and redacts all text-bearing fields in the request body befor
 | Bedrock Converse | Top-level | `system[].text` |
 | Bedrock Converse | `messages[].content[]` | `text` |
 
-Fields not in the table (e.g., model names, IDs, non-string values) are forwarded unchanged.
+Fields not in the table (e.g., model names, IDs, non-string values) are forwarded unchanged. The OpenAI-family endpoint rows apply equally to the OpenAI, Azure OpenAI, and openai-compatible providers, since they share one request handler.
+
+**Passed through unchanged:** the `/batches` JSON request body — a batch references an uploaded file by ID rather than carrying inline prompts, so there is no inline text to redact.
+
+**Not supported:** **multipart/binary** uploads — file uploads (`/files`), audio transcriptions (`/audio/transcriptions`), and image edits/variations. The proxy expects a JSON request body and rejects multipart requests with `400 invalid_request`. (The audio payload is binary; the image-edit `prompt` lives in a multipart form field. Parsing multipart for redaction is a possible future enhancement.) (The audio payload is binary; the image-edit `prompt` lives in a multipart form field. Parsing multipart for redaction is a possible future enhancement.)
 
 ## Response Scanning (Outbound)
 
