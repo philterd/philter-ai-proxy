@@ -7,6 +7,7 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"errors"
+	"flag"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -18,6 +19,7 @@ import (
 	"os/signal"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -1571,6 +1573,112 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// handshakeTimeoutListener wraps a tls.Listener and bounds how long any single
+// client may take to complete the TLS handshake.
+//
+// net/http's implicit handshake timeout is derived from min(ReadHeaderTimeout,
+// ReadTimeout, WriteTimeout) and is not independently configurable. We want
+// an independent, operator-set value -- so this listener performs the
+// handshake EAGERLY (one goroutine per accepted conn, so slow handshakes do
+// not stall the accept loop) with its own deadline, and only releases the
+// connection to net/http once the handshake has succeeded. Failed handshakes
+// are closed and never reach net/http. After a successful handshake the
+// underlying TCP deadline is cleared, so this does not affect post-handshake
+// reads or response streaming.
+//
+// timeout <= 0 disables handshake gating (conns pass through unchanged).
+//
+// Construct via newHandshakeTimeoutListener so the internal channels and
+// accept goroutine are wired before any Accept or Close call.
+type handshakeTimeoutListener struct {
+	net.Listener
+	timeout time.Duration
+
+	ready     chan acceptResult
+	closing   chan struct{}
+	closeOnce sync.Once
+}
+
+type acceptResult struct {
+	c   net.Conn
+	err error
+}
+
+func newHandshakeTimeoutListener(inner net.Listener, timeout time.Duration) *handshakeTimeoutListener {
+	l := &handshakeTimeoutListener{
+		Listener: inner,
+		timeout:  timeout,
+		ready:    make(chan acceptResult),
+		closing:  make(chan struct{}),
+	}
+	go l.acceptLoop()
+	return l
+}
+
+func (l *handshakeTimeoutListener) acceptLoop() {
+	for {
+		c, err := l.Listener.Accept()
+		if err != nil {
+			// Unconditionally deliver the final error so the consumer's
+			// blocked Accept unblocks and net/http's Serve loop exits.
+			// l.closing is for in-flight handshake goroutines, not for
+			// this terminal hand-off.
+			l.ready <- acceptResult{err: err}
+			return
+		}
+		go l.handshake(c)
+	}
+}
+
+func (l *handshakeTimeoutListener) handshake(c net.Conn) {
+	deliver := func(r acceptResult) {
+		select {
+		case l.ready <- r:
+		case <-l.closing:
+			if r.c != nil {
+				r.c.Close()
+			}
+		}
+	}
+	if l.timeout <= 0 {
+		deliver(acceptResult{c: c})
+		return
+	}
+	tc, ok := c.(*tls.Conn)
+	if !ok {
+		deliver(acceptResult{c: c})
+		return
+	}
+	if err := tc.SetDeadline(time.Now().Add(l.timeout)); err != nil {
+		tc.Close()
+		return
+	}
+	if err := tc.HandshakeContext(context.Background()); err != nil {
+		// Slow/incomplete/invalid handshake: drop silently. The listener
+		// loop is unaffected; net/http never sees this conn.
+		tc.Close()
+		return
+	}
+	if err := tc.SetDeadline(time.Time{}); err != nil {
+		tc.Close()
+		return
+	}
+	deliver(acceptResult{c: tc})
+}
+
+func (l *handshakeTimeoutListener) Accept() (net.Conn, error) {
+	r, ok := <-l.ready
+	if !ok {
+		return nil, net.ErrClosed
+	}
+	return r.c, r.err
+}
+
+func (l *handshakeTimeoutListener) Close() error {
+	l.closeOnce.Do(func() { close(l.closing) })
+	return l.Listener.Close()
+}
+
 // hardenedServer builds an http.Server with inbound request-hardening applied:
 // a header read deadline (slowloris mitigation) and a header size cap, with
 // secure defaults when unset. WriteTimeout is deliberately omitted so streaming
@@ -1923,13 +2031,51 @@ func setupAuditLogger(enabled bool, filePath string) *slog.Logger {
 	return slog.New(slog.NewJSONHandler(w, nil))
 }
 
+// parseCLI parses the proxy's command-line flags. It is split out from main so
+// it can be tested without invoking the full startup path. `args` is the
+// process's argv tail (os.Args[1:]); `errOut` receives flag-package usage and
+// error output. configPath falls back to PHILTER_PROXY_CONFIG when --config is
+// not supplied.
+func parseCLI(args []string, errOut io.Writer) (configPath string, validateOnly bool, err error) {
+	fs := flag.NewFlagSet("philter-ai-proxy", flag.ContinueOnError)
+	fs.SetOutput(errOut)
+	cfgFlag := fs.String("config", "", "path to the YAML config file (or set PHILTER_PROXY_CONFIG)")
+	validateFlag := fs.Bool("validate-config", false, "load and validate the config, then exit (0 = ok, 1 = invalid)")
+	if err := fs.Parse(args); err != nil {
+		return "", false, err
+	}
+	path := *cfgFlag
+	if path == "" {
+		path = os.Getenv("PHILTER_PROXY_CONFIG")
+	}
+	return path, *validateFlag, nil
+}
+
+// runValidateConfig implements `--validate-config`. It loads the config from
+// `path` and reports the result. Returns 0 on success, 1 on failure. The
+// success line goes to `out` and any error to `errOut`; using io.Writers lets
+// tests capture both.
+func runValidateConfig(path string, out, errOut io.Writer) int {
+	if _, err := loadConfig(path); err != nil {
+		fmt.Fprintf(errOut, "config invalid: %s\n", err)
+		return 1
+	}
+	fmt.Fprintf(out, "config OK: %s\n", path)
+	return 0
+}
+
 func main() {
 
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
 
-	configPath := os.Getenv("PHILTER_PROXY_CONFIG")
-	if len(os.Args) > 2 && os.Args[1] == "--config" {
-		configPath = os.Args[2]
+	configPath, validateOnly, err := parseCLI(os.Args[1:], os.Stderr)
+	if err != nil {
+		// flag package already printed a usage hint to stderr.
+		os.Exit(2)
+	}
+
+	if validateOnly {
+		os.Exit(runValidateConfig(configPath, os.Stdout, os.Stderr))
 	}
 
 	cfg, err := loadConfig(configPath)
@@ -2248,9 +2394,34 @@ func main() {
 		}()
 	}
 
+	tlsHandshakeTimeout := cfg.Listen.effectiveTLSHandshakeTimeout()
+
+	// Build the TLS listener chain explicitly so handshakeTimeoutListener can
+	// wrap the inner tls.Listener and enforce its own handshake deadline
+	// (net/http's implicit deadline is derived from ReadHeaderTimeout and
+	// cannot be independently configured). We then call srv.Serve, not
+	// srv.ServeTLS, since ServeTLS would unconditionally re-wrap with another
+	// tls.NewListener.
+	cert, err := tls.LoadX509KeyPair(cert_file, key_file)
+	if err != nil {
+		slog.Error("Failed to load TLS certificate", "error", err)
+		os.Exit(1)
+	}
+	if srv.TLSConfig == nil {
+		srv.TLSConfig = &tls.Config{}
+	}
+	srv.TLSConfig.Certificates = append(srv.TLSConfig.Certificates, cert)
+
+	tcpListener, err := net.Listen("tcp", srv.Addr)
+	if err != nil {
+		slog.Error("Listen error", "error", err)
+		os.Exit(1)
+	}
+	tlsListener := newHandshakeTimeoutListener(tls.NewListener(tcpListener, srv.TLSConfig), tlsHandshakeTimeout)
+
 	go func() {
-		slog.Info("Started philter-ai-proxy", "port", port)
-		if err := srv.ListenAndServeTLS(cert_file, key_file); err != http.ErrServerClosed {
+		slog.Info("Started philter-ai-proxy", "port", port, "tlsHandshakeTimeoutMs", tlsHandshakeTimeout.Milliseconds())
+		if err := srv.Serve(tlsListener); err != http.ErrServerClosed {
 			slog.Error("Listen error", "error", err)
 			os.Exit(1)
 		}

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -33,6 +34,13 @@ type ListenConfig struct {
 	// default (0) so very large or slow legitimate uploads are not truncated;
 	// set it to bound slow-body attacks under the size cap.
 	ReadTimeoutMs int `yaml:"readTimeoutMs"`
+	// TLSHandshakeTimeoutMs bounds how long a client may take to complete the
+	// TLS handshake. ReadHeaderTimeoutMs only begins ticking after the
+	// handshake completes, so a client that opens a TLS connection and then
+	// dribbles the handshake (or never finishes it) is not bounded by any
+	// other timeout. Default: 10000 (10s). 0 means "use the default";
+	// negative is rejected at validation.
+	TLSHandshakeTimeoutMs int `yaml:"tlsHandshakeTimeoutMs"`
 }
 
 type RateLimitBucket struct {
@@ -218,9 +226,10 @@ const (
 // Inbound request-hardening defaults, applied at use-site when the config value
 // is 0.
 const (
-	DefaultMaxRequestBodyBytes = 10 << 20 // 10 MiB
-	DefaultMaxHeaderBytes      = 1 << 20  // 1 MiB (matches net/http's default)
-	DefaultReadHeaderTimeoutMs = 10000    // 10s slowloris mitigation
+	DefaultMaxRequestBodyBytes         = 10 << 20 // 10 MiB
+	DefaultMaxHeaderBytes              = 1 << 20  // 1 MiB (matches net/http's default)
+	DefaultReadHeaderTimeoutMs         = 10000    // 10s slowloris mitigation
+	DefaultListenTLSHandshakeTimeoutMs = 10000    // 10s slow-handshake slowloris mitigation
 )
 
 // effectiveMaxRequestBodyBytes returns the configured inbound body cap or the
@@ -230,6 +239,15 @@ func (c ListenConfig) effectiveMaxRequestBodyBytes() int64 {
 		return int64(c.MaxRequestBodyBytes)
 	}
 	return DefaultMaxRequestBodyBytes
+}
+
+// effectiveTLSHandshakeTimeout returns the configured TLS handshake timeout or
+// the default (10s) when unset.
+func (c ListenConfig) effectiveTLSHandshakeTimeout() time.Duration {
+	if c.TLSHandshakeTimeoutMs > 0 {
+		return time.Duration(c.TLSHandshakeTimeoutMs) * time.Millisecond
+	}
+	return time.Duration(DefaultListenTLSHandshakeTimeoutMs) * time.Millisecond
 }
 
 type ProviderConfig struct {
@@ -418,6 +436,7 @@ func validateConfig(cfg *Config) error {
 		{"maxHeaderBytes", cfg.Listen.MaxHeaderBytes},
 		{"readHeaderTimeoutMs", cfg.Listen.ReadHeaderTimeoutMs},
 		{"readTimeoutMs", cfg.Listen.ReadTimeoutMs},
+		{"tlsHandshakeTimeoutMs", cfg.Listen.TLSHandshakeTimeoutMs},
 	} {
 		if f.value < 0 {
 			return fmt.Errorf("config: listen.%s must be >= 0", f.name)

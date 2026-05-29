@@ -27,6 +27,22 @@ cp config.example.yaml config.yaml
 
 See [Configuration](configuration.md) for the full config reference.
 
+### Validating a config file
+
+Use `--validate-config` to load and validate a config without starting the proxy. Useful as a CI gate before a deploy reaches a running cluster, or as a pre-restart sanity check.
+
+```bash
+./philter-ai-proxy --validate-config --config config.yaml
+```
+
+Exit codes:
+
+- `0` and `config OK: <path>` on stdout when the file loads, expands all `${ENV_VAR}` / `file:` secret references, and passes schema validation.
+- `1` and `config invalid: <reason>` on stderr otherwise. The reason names the offending field (for example `config: listen.port 999999 is out of range (1-65535)`).
+- `2` for unknown CLI flags.
+
+`--config` may be omitted if `PHILTER_PROXY_CONFIG` is set in the environment.
+
 ## Docker
 
 To build a local Docker image (single arch, no push):

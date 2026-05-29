@@ -1,7 +1,16 @@
 package main
 
 import (
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
 	"io"
+	"math/big"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -163,6 +172,7 @@ func TestValidateConfig_HardeningNegativeRejected(t *testing.T) {
 		func(c *Config) { c.Listen.MaxHeaderBytes = -1 },
 		func(c *Config) { c.Listen.ReadHeaderTimeoutMs = -1 },
 		func(c *Config) { c.Listen.ReadTimeoutMs = -1 },
+		func(c *Config) { c.Listen.TLSHandshakeTimeoutMs = -1 },
 	} {
 		cfg := defaultConfig()
 		mut(cfg)
@@ -170,4 +180,194 @@ func TestValidateConfig_HardeningNegativeRejected(t *testing.T) {
 			t.Error("expected validation error for negative hardening value")
 		}
 	}
+}
+
+func TestEffectiveTLSHandshakeTimeout(t *testing.T) {
+	if got := (ListenConfig{}).effectiveTLSHandshakeTimeout(); got != time.Duration(DefaultListenTLSHandshakeTimeoutMs)*time.Millisecond {
+		t.Errorf("unset = %v, want default %v", got, time.Duration(DefaultListenTLSHandshakeTimeoutMs)*time.Millisecond)
+	}
+	if got := (ListenConfig{TLSHandshakeTimeoutMs: 2500}).effectiveTLSHandshakeTimeout(); got != 2500*time.Millisecond {
+		t.Errorf("configured = %v, want 2.5s", got)
+	}
+}
+
+// TestHandshakeTimeoutListener_DropsSlowHandshake drives a full HTTPS server
+// wrapped with the listener and dials a raw TCP connection that never sends
+// any TLS bytes. The server must close the conn once the handshake deadline
+// passes.
+func TestHandshakeTimeoutListener_DropsSlowHandshake(t *testing.T) {
+	tcpLn, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+
+	certPEM, keyPEM := genSelfSignedForTest(t)
+	cert, err := tls.X509KeyPair(certPEM, keyPEM)
+	if err != nil {
+		t.Fatalf("keypair: %v", err)
+	}
+	tlsCfg := &tls.Config{Certificates: []tls.Certificate{cert}}
+
+	wrapped := newHandshakeTimeoutListener(tls.NewListener(tcpLn, tlsCfg), 100*time.Millisecond)
+
+	srv := &http.Server{
+		Handler:           http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}),
+		ReadHeaderTimeout: 5 * time.Second,
+	}
+	go srv.Serve(wrapped)
+	defer srv.Close()
+
+	addr := tcpLn.Addr().String()
+	conn, err := net.Dial("tcp", addr)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer conn.Close()
+
+	// Don't send any TLS handshake bytes. The server should close us after the
+	// handshake deadline (100ms). Read with a generous bound so we observe the
+	// close even if the deadline fires slightly later than 100ms.
+	conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	buf := make([]byte, 1)
+	start := time.Now()
+	_, err = conn.Read(buf)
+	elapsed := time.Since(start)
+	if err == nil {
+		t.Fatal("expected the server to drop the slow-handshake connection, got read error nil")
+	}
+	if elapsed > 1500*time.Millisecond {
+		t.Errorf("connection dropped too late (%v); deadline did not fire", elapsed)
+	}
+	if elapsed < 50*time.Millisecond {
+		t.Errorf("connection dropped before deadline (%v)", elapsed)
+	}
+}
+
+// TestHandshakeTimeoutListener_EstablishedConnUnaffected confirms that once
+// the TLS handshake completes, request reads and response writes are not
+// bounded by the handshake deadline.
+func TestHandshakeTimeoutListener_EstablishedConnUnaffected(t *testing.T) {
+	tcpLn, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+
+	certPEM, keyPEM := genSelfSignedForTest(t)
+	cert, err := tls.X509KeyPair(certPEM, keyPEM)
+	if err != nil {
+		t.Fatalf("keypair: %v", err)
+	}
+	tlsCfg := &tls.Config{Certificates: []tls.Certificate{cert}}
+
+	wrapped := newHandshakeTimeoutListener(tls.NewListener(tcpLn, tlsCfg), 200*time.Millisecond)
+
+	srv := &http.Server{
+		// Sleep longer than the handshake timeout to prove that, post-
+		// handshake, the deadline no longer constrains the connection.
+		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			time.Sleep(500 * time.Millisecond)
+			w.Write([]byte("ok"))
+		}),
+		ReadHeaderTimeout: 5 * time.Second,
+	}
+	go srv.Serve(wrapped)
+	defer srv.Close()
+
+	client := &http.Client{
+		Timeout: 3 * time.Second,
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		},
+	}
+	resp, err := client.Get("https://" + tcpLn.Addr().String() + "/")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if string(body) != "ok" {
+		t.Errorf("body = %q, want ok", string(body))
+	}
+}
+
+// TestHandshakeTimeoutListener_SlowHandshakeDoesNotStallOtherAccepts is the
+// DoS-resilience check: a stalled handshake on one conn must not block accepts
+// of other conns. We open one slow client, then verify a second client can
+// still complete a handshake well within the slow-client's deadline.
+func TestHandshakeTimeoutListener_SlowHandshakeDoesNotStallOtherAccepts(t *testing.T) {
+	tcpLn, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+
+	certPEM, keyPEM := genSelfSignedForTest(t)
+	cert, err := tls.X509KeyPair(certPEM, keyPEM)
+	if err != nil {
+		t.Fatalf("keypair: %v", err)
+	}
+	tlsCfg := &tls.Config{Certificates: []tls.Certificate{cert}}
+
+	wrapped := newHandshakeTimeoutListener(tls.NewListener(tcpLn, tlsCfg), 2*time.Second)
+
+	srv := &http.Server{
+		Handler:           http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.Write([]byte("ok")) }),
+		ReadHeaderTimeout: 5 * time.Second,
+	}
+	go srv.Serve(wrapped)
+	defer srv.Close()
+
+	// Slow client: open TCP, never send TLS bytes.
+	slow, err := net.Dial("tcp", tcpLn.Addr().String())
+	if err != nil {
+		t.Fatalf("dial slow: %v", err)
+	}
+	defer slow.Close()
+
+	// Fast client should complete its handshake and request quickly.
+	client := &http.Client{
+		Timeout: 1 * time.Second,
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		},
+	}
+	start := time.Now()
+	resp, err := client.Get("https://" + tcpLn.Addr().String() + "/")
+	elapsed := time.Since(start)
+	if err != nil {
+		t.Fatalf("fast client failed while slow client was stalling: %v", err)
+	}
+	defer resp.Body.Close()
+	if elapsed > 800*time.Millisecond {
+		t.Errorf("fast client took %v -- slow handshake stalled accept loop", elapsed)
+	}
+}
+
+// genSelfSignedForTest returns a self-signed cert + key pair as PEM bytes,
+// valid for 127.0.0.1 / localhost. Used by handshake-timeout tests that need
+// a real TLS server.
+func genSelfSignedForTest(t *testing.T) (certPEM, keyPEM []byte) {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("genkey: %v", err)
+	}
+	template := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject:      pkix.Name{CommonName: "localhost"},
+		NotBefore:    time.Now(),
+		NotAfter:     time.Now().Add(time.Hour),
+		DNSNames:     []string{"localhost"},
+		IPAddresses:  []net.IP{net.IPv4(127, 0, 0, 1)},
+	}
+	der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	if err != nil {
+		t.Fatalf("createcert: %v", err)
+	}
+	certPEM = pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
+	keyBytes, err := x509.MarshalECPrivateKey(key)
+	if err != nil {
+		t.Fatalf("marshalkey: %v", err)
+	}
+	keyPEM = pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyBytes})
+	return certPEM, keyPEM
 }

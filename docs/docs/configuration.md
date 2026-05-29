@@ -87,6 +87,7 @@ defaults:
 | `maxHeaderBytes` | int | `1048576` (1 MiB) | Maximum total size of inbound request headers. |
 | `readHeaderTimeoutMs` | int | `10000` (10s) | Time a client may take to send the request headers before the connection is dropped (slowloris mitigation). |
 | `readTimeoutMs` | int | `0` (disabled) | Time to read the entire request including body. Bounds slow-body attacks; affects only request reads, never response streaming. Disabled by default so large/slow uploads aren't truncated. |
+| `tlsHandshakeTimeoutMs` | int | `10000` (10s) | Time a client may take to complete the TLS handshake before the connection is dropped (slow-handshake slowloris mitigation). Independent of `readHeaderTimeoutMs`, which only starts ticking after the handshake completes. See [Request Hardening](#request-hardening) below. |
 
 ### `logging`
 
@@ -819,16 +820,18 @@ listen:
   maxHeaderBytes: 1048576         # 1 MiB
   readHeaderTimeoutMs: 10000      # 10s to send headers (slowloris mitigation)
   readTimeoutMs: 0                # 0 = disabled; whole-request (incl. body) read bound
+  tlsHandshakeTimeoutMs: 10000    # 10s to complete the TLS handshake
 ```
 
 | Protection | Field | Default | Behaviour |
 |---|---|---|---|
 | **Body size** | `maxRequestBodyBytes` | 10 MiB | The body is wrapped in a hard limit; exceeding it returns `413 Too Large` (`payload_too_large` / `request_body_too_large`) and the connection is closed. Raise it if you send large multimodal (base64 image) requests. |
 | **Header size** | `maxHeaderBytes` | 1 MiB | Caps total request header bytes (matches net/http's default). |
-| **Slowloris** | `readHeaderTimeoutMs` | 10s | Bounds how long a client may take to send the request headers; a client that dribbles headers to hold the connection open is dropped. |
+| **Slowloris (headers)** | `readHeaderTimeoutMs` | 10s | Bounds how long a client may take to send the request headers; a client that dribbles headers to hold the connection open is dropped. |
 | **Slow body** | `readTimeoutMs` | disabled | Bounds reading the whole request (headers + body). Opt-in, because a too-low value would truncate large or slow legitimate uploads. It affects only request reads. |
+| **Slowloris (handshake)** | `tlsHandshakeTimeoutMs` | 10s | Bounds how long a client may take to complete the TLS handshake. `readHeaderTimeoutMs` only starts ticking **after** the handshake completes, so a client that opens a TLS connection and then dribbles the handshake (or never finishes it) would otherwise tie up the connection indefinitely. Each accepted connection is gated by this deadline on its own goroutine, so one slow client cannot stall accepts of other clients. Once the handshake succeeds the deadline is cleared, so post-handshake reads and response streaming are unaffected. |
 
-**Streaming is unaffected.** The proxy deliberately does **not** set a write timeout, so streamed responses can run arbitrarily long. `readTimeoutMs` bounds only the inbound request, never the response. The same header limits and timeouts are applied to the metrics server.
+**Streaming is unaffected.** The proxy deliberately does **not** set a write timeout, so streamed responses can run arbitrarily long. `readTimeoutMs` bounds only the inbound request, never the response. The same header limits and timeouts are applied to the metrics server; the handshake timeout applies only to the TLS-terminating listener.
 
 These limits apply per request and are independent of the concurrency guard: concurrency bounds *how many* requests run at once, while these bound *how big* and *how slow* any single request may be.
 
