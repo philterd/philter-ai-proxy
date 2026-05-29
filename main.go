@@ -180,6 +180,9 @@ type AuditEntry struct {
 	EntityTypes      []string      `json:"entity_types"`
 	RedactLatency    time.Duration `json:"redact_latency_ms"`
 	ClientIP         string        `json:"client_ip"`
+	// KeyID is the opaque stable identifier (`key-N`) of the authenticated
+	// API key, or empty when no key was authenticated. Never the raw key.
+	KeyID            string        `json:"key_id,omitempty"`
 	HTTPStatus       int           `json:"http_status"`
 	PromptTokens     int           `json:"prompt_tokens,omitempty"`
 	CompletionTokens int           `json:"completion_tokens,omitempty"`
@@ -523,6 +526,7 @@ func emitAuditLog(logger *slog.Logger, entry AuditEntry) {
 		"entity_types", entry.EntityTypes,
 		"redact_latency_ms", entry.RedactLatency.Milliseconds(),
 		"client_ip", entry.ClientIP,
+		"key_id", entry.KeyID,
 		"http_status", entry.HTTPStatus,
 		"prompt_tokens", entry.PromptTokens,
 		"completion_tokens", entry.CompletionTokens,
@@ -1353,6 +1357,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// per-key rate limits and per-key concurrency caps; never the raw key.
 	var clientKeyID string
 	var keyBoundPolicy string
+	var keyScopes *APIKeyScopes
 	if p.keyStore != nil {
 		headerName := p.config.Auth.Header
 		if headerName == "" {
@@ -1363,13 +1368,15 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			writeError(rc, audit, http.StatusUnauthorized, "unauthorized", "missing_api_key", "missing API key")
 			return
 		}
-		id, boundPolicy, ok := p.keyStore.lookup(clientKey)
+		resolved, ok := p.keyStore.lookup(clientKey)
 		if !ok {
 			writeError(rc, audit, http.StatusUnauthorized, "unauthorized", "invalid_api_key", "invalid API key")
 			return
 		}
-		clientKeyID = id
-		keyBoundPolicy = boundPolicy
+		clientKeyID = resolved.ID
+		keyBoundPolicy = resolved.Policy
+		keyScopes = resolved.Scopes
+		audit.KeyID = clientKeyID
 		// Strip the proxy auth header so it is never forwarded to the LLM provider.
 		r.Header.Del(headerName)
 	}
@@ -1473,6 +1480,21 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	model := extractModel(bodyBytes)
+	providerName := resolveProviderName(r.URL.Path, openaiCompatName)
+
+	// Per-key authorization. With no scopes configured the call is unrestricted
+	// (backwards compatible); a configured allow-list rejects requests outside
+	// the key's scope with HTTP 403. The audit entry already carries the key ID
+	// from auth, so the structured-error fields and the existing audit emission
+	// give end-to-end correlation by request_id.
+	if denial := enforceScopes(keyScopes, providerName, model, r.URL.Path); denial != nil {
+		audit.Provider = providerName
+		audit.Model = model
+		slog.Warn("Per-key scope denied", "client", clientKeyID, "field", denial.Field, "value", denial.Value, "request_id", requestID)
+		writeError(rc, audit, http.StatusForbidden, "forbidden", denial.Code, "request not permitted by API key scope")
+		return
+	}
+
 	route := matchRoute(p.config, r.URL.Path, model, r.Header.Get)
 
 	// A per-key policy binding overrides whatever the route matched.
@@ -1571,6 +1593,120 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			})
 		}
 	}
+}
+
+// resolveProviderName returns the canonical provider name for a request, the
+// same name that ends up in audit.Provider. Path-based dispatching the proxy
+// already does (see the handler if/else below) is centralized here so per-key
+// scope enforcement can decide BEFORE the request reaches a handler. The
+// caller passes in the openai-compatible name (when matched) since that has
+// already been resolved by stripping the URL prefix.
+func resolveProviderName(path, openaiCompatName string) string {
+	if openaiCompatName != "" {
+		return openaiCompatName
+	}
+	if strings.HasPrefix(path, "/v1/messages") {
+		return "anthropic"
+	}
+	if strings.Contains(strings.ToLower(path), "generatecontent") {
+		return "gemini"
+	}
+	if path == "/api/generate" || path == "/api/chat" {
+		return "ollama"
+	}
+	if isAzurePath(path) {
+		return "azure"
+	}
+	if isBedrockPath(path) {
+		return "bedrock"
+	}
+	return "openai"
+}
+
+// scopeDenial describes why a per-key scope check rejected a request. The
+// Code is the stable structured error sub-code returned to the client; the
+// Field/Value pair feeds the operator-visible log message.
+type scopeDenial struct {
+	Code  string
+	Field string // "provider", "model", "path"
+	Value string
+}
+
+// matchesScopeEntry implements the matching grammar for one Models / Paths /
+// Providers entry. For Providers and Models, the entry is an exact string
+// unless it ends in `*`, in which case it is a prefix match (e.g. `gpt-4*`).
+// For Paths, the entry is always a prefix match (a key's scope of
+// `/v1/chat/completions` matches `/v1/chat/completions` and any sub-path).
+func matchesScopeEntry(entry, value string, alwaysPrefix bool) bool {
+	if entry == value {
+		return true
+	}
+	if alwaysPrefix {
+		return strings.HasPrefix(value, entry)
+	}
+	if strings.HasSuffix(entry, "*") {
+		return strings.HasPrefix(value, strings.TrimSuffix(entry, "*"))
+	}
+	return false
+}
+
+// enforceScopes checks a request against a key's per-key scope allow-lists.
+// Returns nil when allowed (including when the key has no scopes configured,
+// preserving backwards-compatible full access). On denial returns a scopeDenial
+// describing which dimension failed; the caller is responsible for writing
+// the 403 error response.
+//
+// Each dimension is independent: a non-empty allow-list on one axis only
+// restricts that axis; other axes remain unrestricted unless they too have
+// non-empty lists. An empty (or nil) slice on an axis means "any value is
+// allowed on this axis."
+func enforceScopes(scopes *APIKeyScopes, provider, model, path string) *scopeDenial {
+	if scopes == nil {
+		return nil
+	}
+	if len(scopes.Providers) > 0 {
+		ok := false
+		for _, entry := range scopes.Providers {
+			if matchesScopeEntry(entry, provider, false) {
+				ok = true
+				break
+			}
+		}
+		if !ok {
+			return &scopeDenial{Code: "scope_denied_provider", Field: "provider", Value: provider}
+		}
+	}
+	if len(scopes.Models) > 0 {
+		// An empty model field on the request means the request did not
+		// specify a model. When the key has a model allow-list configured,
+		// require a model so we can authorize against it.
+		if model == "" {
+			return &scopeDenial{Code: "scope_denied_model", Field: "model", Value: ""}
+		}
+		ok := false
+		for _, entry := range scopes.Models {
+			if matchesScopeEntry(entry, model, false) {
+				ok = true
+				break
+			}
+		}
+		if !ok {
+			return &scopeDenial{Code: "scope_denied_model", Field: "model", Value: model}
+		}
+	}
+	if len(scopes.Paths) > 0 {
+		ok := false
+		for _, entry := range scopes.Paths {
+			if matchesScopeEntry(entry, path, true) {
+				ok = true
+				break
+			}
+		}
+		if !ok {
+			return &scopeDenial{Code: "scope_denied_path", Field: "path", Value: path}
+		}
+	}
+	return nil
 }
 
 // handshakeTimeoutListener wraps a tls.Listener and bounds how long any single

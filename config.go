@@ -102,7 +102,36 @@ type APIKeyEntry struct {
 	RateLimit     *RateLimitBucket `yaml:"rateLimit"`
 	MaxConcurrent int              `yaml:"maxConcurrent"` // 0 = unlimited (default)
 	Quota         *QuotaLimits     `yaml:"quota"`         // per-key token quota override
+	Scopes        *APIKeyScopes    `yaml:"scopes"`        // per-key allow-lists (providers/models/paths); nil/empty = full access
+	AdminRole     string           `yaml:"adminRole"`     // "" (none) or "usage-read" (may call GET /admin/usage)
 }
+
+// APIKeyScopes restricts which providers, models, and request paths an API key
+// may access. Empty / unset slices mean "no restriction on this dimension"
+// (full access on that axis); a non-empty slice is a deny-by-default
+// allow-list. A nil *APIKeyScopes (or zero-valued struct) preserves
+// backwards-compatible full access. Each dimension is checked independently:
+// a request must match all configured allow-lists (logical AND across
+// dimensions, OR within each list).
+//
+//	Providers: exact match against the provider name the proxy resolves the
+//	           request to ("openai", "anthropic", "gemini", "ollama", "azure",
+//	           "bedrock", or a configured `openaiCompatible[].name`).
+//	Models:    exact match, or trailing `*` glob (e.g. `gpt-4*`).
+//	Paths:     prefix match against the request path after any
+//	           openai-compatible provider prefix has been stripped.
+type APIKeyScopes struct {
+	Providers []string `yaml:"providers"`
+	Models    []string `yaml:"models"`
+	Paths     []string `yaml:"paths"`
+}
+
+// Recognized values for APIKeyEntry.AdminRole. Kept as constants so callers
+// stay consistent and typo-safe.
+const (
+	AdminRoleNone      = ""
+	AdminRoleUsageRead = "usage-read"
+)
 
 // QuotaLimits caps token consumption per rolling calendar window. 0 means
 // unlimited for that window. Quotas are distinct from rate limits: rate limits
@@ -593,6 +622,28 @@ func validateConfig(cfg *Config) error {
 			}
 			if entry.Quota.MonthlyTokens < 0 {
 				return fmt.Errorf("config: auth.apiKeys[%d].quota.monthlyTokens must be >= 0", i)
+			}
+		}
+		switch entry.AdminRole {
+		case AdminRoleNone, AdminRoleUsageRead:
+		default:
+			return fmt.Errorf("config: auth.apiKeys[%d].adminRole %q is invalid (must be empty or %q)", i, entry.AdminRole, AdminRoleUsageRead)
+		}
+		if entry.Scopes != nil {
+			for j, p := range entry.Scopes.Paths {
+				if p == "" {
+					return fmt.Errorf("config: auth.apiKeys[%d].scopes.paths[%d] must not be empty", i, j)
+				}
+			}
+			for j, m := range entry.Scopes.Models {
+				if m == "" {
+					return fmt.Errorf("config: auth.apiKeys[%d].scopes.models[%d] must not be empty", i, j)
+				}
+			}
+			for j, prov := range entry.Scopes.Providers {
+				if prov == "" {
+					return fmt.Errorf("config: auth.apiKeys[%d].scopes.providers[%d] must not be empty", i, j)
+				}
 			}
 		}
 	}

@@ -42,8 +42,20 @@ type storedKey struct {
 	// for per-key rate limits, per-key concurrency, and log lines. Derived
 	// from the entry's position at load time ("key-0", "key-1", ...) so it
 	// stays useful even when the raw key has been hashed away.
-	id     string
-	policy string
+	id        string
+	policy    string
+	scopes    *APIKeyScopes
+	adminRole string
+}
+
+// resolvedKey is what keyStore.lookup returns on a successful match: the
+// stable opaque ID plus everything the request path needs to authorize the
+// call. The raw key value is never returned.
+type resolvedKey struct {
+	ID        string
+	Policy    string
+	Scopes    *APIKeyScopes
+	AdminRole string
 }
 
 // keyStore is the lookup structure assembled at startup from the auth config.
@@ -59,10 +71,11 @@ type keyStore struct {
 //
 // The plaintext form is convenient for quickstart configs; production users
 // should pre-hash to keep plaintext keys out of the YAML.
-func parseStoredKey(s, id, policy string) (storedKey, error) {
+func parseStoredKey(s, id, policy string, scopes *APIKeyScopes, adminRole string) (storedKey, error) {
 	if s == "" {
 		return storedKey{}, fmt.Errorf("api key value must not be empty")
 	}
+	base := storedKey{id: id, policy: policy, scopes: scopes, adminRole: adminRole}
 	if algo, rest, ok := strings.Cut(s, "$"); ok {
 		switch algo {
 		case hashAlgoSHA256:
@@ -73,7 +86,9 @@ func parseStoredKey(s, id, policy string) (storedKey, error) {
 			if len(h) != sha256.Size {
 				return storedKey{}, fmt.Errorf("sha256 hash must be %d bytes (got %d)", sha256.Size, len(h))
 			}
-			return storedKey{algo: hashAlgoSHA256, hash: h, id: id, policy: policy}, nil
+			base.algo = hashAlgoSHA256
+			base.hash = h
+			return base, nil
 		case hashAlgoBcrypt:
 			// The bcrypt module verifies the hash format on use; reject any
 			// obviously-malformed value here so misconfigurations surface at
@@ -81,14 +96,18 @@ func parseStoredKey(s, id, policy string) (storedKey, error) {
 			if _, err := bcrypt.Cost([]byte(rest)); err != nil {
 				return storedKey{}, fmt.Errorf("bcrypt hash %q: %w", rest, err)
 			}
-			return storedKey{algo: hashAlgoBcrypt, hash: []byte(rest), id: id, policy: policy}, nil
+			base.algo = hashAlgoBcrypt
+			base.hash = []byte(rest)
+			return base, nil
 		}
 		// Unknown algo prefix: fall through to treating as plaintext. This
 		// could mask typos like `sha256:abc` (wrong separator) but the alternative
 		// - rejecting unknown prefixes - prevents future extensibility.
 	}
 	sum := sha256.Sum256([]byte(s))
-	return storedKey{algo: hashAlgoSHA256, hash: sum[:], id: id, policy: policy}, nil
+	base.algo = hashAlgoSHA256
+	base.hash = sum[:]
+	return base, nil
 }
 
 // keyIDForIndex returns the stable identifier assigned to the entry at
@@ -106,7 +125,7 @@ func newKeyStore(entries []APIKeyEntry) (*keyStore, error) {
 	}
 	ks := &keyStore{entries: make([]storedKey, 0, len(entries))}
 	for i, e := range entries {
-		sk, err := parseStoredKey(e.Key, keyIDForIndex(i), e.Policy)
+		sk, err := parseStoredKey(e.Key, keyIDForIndex(i), e.Policy, e.Scopes, e.AdminRole)
 		if err != nil {
 			return nil, fmt.Errorf("auth.apiKeys[%d]: %w", i, err)
 		}
@@ -127,9 +146,9 @@ func newKeyStore(entries []APIKeyEntry) (*keyStore, error) {
 //   - sha256 entries use subtle.ConstantTimeCompare over fixed-size buffers.
 //   - bcrypt entries use bcrypt.CompareHashAndPassword, which is documented
 //     to compare in constant time.
-func (ks *keyStore) lookup(clientKey string) (id, policy string, ok bool) {
+func (ks *keyStore) lookup(clientKey string) (*resolvedKey, bool) {
 	if ks == nil || len(ks.entries) == 0 {
-		return "", "", false
+		return nil, false
 	}
 	keyBytes := []byte(clientKey)
 	sum := sha256.Sum256(keyBytes)
@@ -138,15 +157,15 @@ func (ks *keyStore) lookup(clientKey string) (id, policy string, ok bool) {
 		switch e.algo {
 		case hashAlgoSHA256:
 			if subtle.ConstantTimeCompare(sum[:], e.hash) == 1 {
-				return e.id, e.policy, true
+				return &resolvedKey{ID: e.id, Policy: e.policy, Scopes: e.scopes, AdminRole: e.adminRole}, true
 			}
 		case hashAlgoBcrypt:
 			if bcrypt.CompareHashAndPassword(e.hash, keyBytes) == nil {
-				return e.id, e.policy, true
+				return &resolvedKey{ID: e.id, Policy: e.policy, Scopes: e.scopes, AdminRole: e.adminRole}, true
 			}
 		}
 	}
-	return "", "", false
+	return nil, false
 }
 
 // hashPlaintextKeySHA256 returns the canonical `sha256$<hex>` string for a

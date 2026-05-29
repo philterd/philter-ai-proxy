@@ -34,13 +34,40 @@ func (p *Proxy) handleAdminUsage(w http.ResponseWriter, r *http.Request) {
 	if headerName == "" {
 		headerName = defaultAdminHeader
 	}
-	provided := r.Header.Get(headerName)
-	// Constant-time compare; also reject when no token was supplied. The token
-	// is never logged; a denied attempt is logged so brute-force attempts are
-	// visible (the endpoint is not behind the request rate limiter).
-	if provided == "" || subtle.ConstantTimeCompare([]byte(provided), []byte(p.config.Admin.Token)) != 1 {
+
+	// Two acceptable credentials:
+	//   1. The full admin token (carries all admin privileges).
+	//   2. An API key whose `adminRole: usage-read` is set, presented in the
+	//      regular `auth.header` (default `x-philter-proxy-key`). This is the
+	//      scoped admin role -- read-only access to usage/billing, no full-
+	//      admin capabilities.
+	authorized := false
+	authMode := ""
+	authKeyID := ""
+
+	if provided := r.Header.Get(headerName); provided != "" &&
+		subtle.ConstantTimeCompare([]byte(provided), []byte(p.config.Admin.Token)) == 1 {
+		authorized = true
+		authMode = "admin_token"
+	}
+
+	if !authorized && p.keyStore != nil {
+		apiHeader := p.config.Auth.Header
+		if apiHeader == "" {
+			apiHeader = "x-philter-proxy-key"
+		}
+		if k := r.Header.Get(apiHeader); k != "" {
+			if resolved, ok := p.keyStore.lookup(k); ok && resolved.AdminRole == AdminRoleUsageRead {
+				authorized = true
+				authMode = "api_key_usage_read"
+				authKeyID = resolved.ID
+			}
+		}
+	}
+
+	if !authorized {
 		slog.Warn("Admin usage access denied", "client", clientIP(r), "method", r.Method)
-		writeError(w, nil, http.StatusUnauthorized, "unauthorized", "invalid_admin_token", "invalid or missing admin token")
+		writeError(w, nil, http.StatusUnauthorized, "unauthorized", "invalid_admin_token", "invalid or missing admin credentials")
 		return
 	}
 
@@ -63,7 +90,9 @@ func (p *Proxy) handleAdminUsage(w http.ResponseWriter, r *http.Request) {
 		format = "csv"
 	}
 	// Successful access to per-key billing data is recorded (no token).
-	slog.Info("Admin usage exported", "client", clientIP(r), "format", format, "keys", len(keyIDs))
+	// The auth mode and the opaque key ID (when applicable) are logged so
+	// operators can distinguish admin-token vs scoped-API-key accesses.
+	slog.Info("Admin usage exported", "client", clientIP(r), "format", format, "keys", len(keyIDs), "auth_mode", authMode, "key_id", authKeyID)
 
 	if format == "csv" {
 		p.writeUsageCSV(w, keyIDs, snap)

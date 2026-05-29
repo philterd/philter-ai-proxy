@@ -17,7 +17,7 @@ import (
 // --- parseStoredKey ---------------------------------------------------------
 
 func TestParseStoredKey_Plaintext(t *testing.T) {
-	sk, err := parseStoredKey("my-secret", "key-0", "hipaa")
+	sk, err := parseStoredKey("my-secret", "key-0", "hipaa", nil, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -38,7 +38,7 @@ func TestParseStoredKey_Plaintext(t *testing.T) {
 
 func TestParseStoredKey_PrefixedSHA256(t *testing.T) {
 	stored := hashPlaintextKeySHA256("my-secret")
-	sk, err := parseStoredKey(stored, "k", "")
+	sk, err := parseStoredKey(stored, "k", "", nil, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -56,7 +56,7 @@ func TestParseStoredKey_PrefixedBcrypt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sk, err := parseStoredKey(stored, "k", "")
+	sk, err := parseStoredKey(stored, "k", "", nil, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -70,26 +70,26 @@ func TestParseStoredKey_PrefixedBcrypt(t *testing.T) {
 }
 
 func TestParseStoredKey_InvalidSHA256Hex(t *testing.T) {
-	if _, err := parseStoredKey("sha256$not-hex", "k", ""); err == nil {
+	if _, err := parseStoredKey("sha256$not-hex", "k", "", nil, ""); err == nil {
 		t.Error("expected error for non-hex sha256 payload")
 	}
 }
 
 func TestParseStoredKey_InvalidSHA256Length(t *testing.T) {
 	// Hex-decodable but wrong length.
-	if _, err := parseStoredKey("sha256$"+hex.EncodeToString([]byte("short")), "k", ""); err == nil {
+	if _, err := parseStoredKey("sha256$"+hex.EncodeToString([]byte("short")), "k", "", nil, ""); err == nil {
 		t.Error("expected error for sha256 hash of wrong length")
 	}
 }
 
 func TestParseStoredKey_InvalidBcryptHash(t *testing.T) {
-	if _, err := parseStoredKey("bcrypt$not-a-bcrypt-hash", "k", ""); err == nil {
+	if _, err := parseStoredKey("bcrypt$not-a-bcrypt-hash", "k", "", nil, ""); err == nil {
 		t.Error("expected error for malformed bcrypt payload")
 	}
 }
 
 func TestParseStoredKey_EmptyRejected(t *testing.T) {
-	if _, err := parseStoredKey("", "k", ""); err == nil {
+	if _, err := parseStoredKey("", "k", "", nil, ""); err == nil {
 		t.Error("expected error for empty key")
 	}
 }
@@ -105,15 +105,15 @@ func TestKeyStore_Lookup_PlaintextEntry(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	id, policy, ok := ks.lookup("alpha")
-	if !ok || id != "key-0" || policy != "" {
-		t.Errorf("alpha lookup: got id=%q policy=%q ok=%v", id, policy, ok)
+	r, ok := ks.lookup("alpha")
+	if !ok || r.ID != "key-0" || r.Policy != "" {
+		t.Errorf("alpha lookup: got %+v ok=%v", r, ok)
 	}
-	id, policy, ok = ks.lookup("beta")
-	if !ok || id != "key-1" || policy != "hipaa" {
-		t.Errorf("beta lookup: got id=%q policy=%q ok=%v", id, policy, ok)
+	r, ok = ks.lookup("beta")
+	if !ok || r.ID != "key-1" || r.Policy != "hipaa" {
+		t.Errorf("beta lookup: got %+v ok=%v", r, ok)
 	}
-	_, _, ok = ks.lookup("nope")
+	_, ok = ks.lookup("nope")
 	if ok {
 		t.Error("unrelated key should not match")
 	}
@@ -125,11 +125,11 @@ func TestKeyStore_Lookup_SHA256PrefixedEntry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	id, policy, ok := ks.lookup("alpha")
-	if !ok || id != "key-0" || policy != "p" {
-		t.Errorf("got id=%q policy=%q ok=%v", id, policy, ok)
+	r, ok := ks.lookup("alpha")
+	if !ok || r.ID != "key-0" || r.Policy != "p" {
+		t.Errorf("got %+v ok=%v", r, ok)
 	}
-	if _, _, ok := ks.lookup("wrong-plaintext"); ok {
+	if _, ok := ks.lookup("wrong-plaintext"); ok {
 		t.Error("wrong plaintext should not match")
 	}
 }
@@ -143,18 +143,18 @@ func TestKeyStore_Lookup_BcryptPrefixedEntry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	id, policy, ok := ks.lookup("alpha")
-	if !ok || id != "key-0" || policy != "p" {
-		t.Errorf("got id=%q policy=%q ok=%v", id, policy, ok)
+	r, ok := ks.lookup("alpha")
+	if !ok || r.ID != "key-0" || r.Policy != "p" {
+		t.Errorf("got %+v ok=%v", r, ok)
 	}
-	if _, _, ok := ks.lookup("wrong-plaintext"); ok {
+	if _, ok := ks.lookup("wrong-plaintext"); ok {
 		t.Error("wrong plaintext should not match")
 	}
 }
 
 func TestKeyStore_NilSafe(t *testing.T) {
 	var ks *keyStore
-	if _, _, ok := ks.lookup("anything"); ok {
+	if _, ok := ks.lookup("anything"); ok {
 		t.Error("nil keyStore must never match")
 	}
 }
@@ -377,7 +377,7 @@ func TestKeyStore_NearMissNotShortCircuited(t *testing.T) {
 	wrongHash[31] ^= 0xff // flip the last byte
 	// Lookup with a plaintext whose hash equals wrongHash is intractable,
 	// so we instead verify the property by direct comparison.
-	if _, _, ok := ks.lookup("not-alpha"); ok {
+	if _, ok := ks.lookup("not-alpha"); ok {
 		t.Error("unrelated plaintext should not match")
 	}
 	_ = wrongHash // referenced to keep the comment honest

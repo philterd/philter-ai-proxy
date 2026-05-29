@@ -500,6 +500,67 @@ curl -k https://localhost:8080/v1/chat/completions \
 | `policy` | string | No | Philter policy to enforce for all requests authenticated with this key. Overrides route and default policy. |
 | `rateLimit` | object | No | Per-key rate-limit override. See [Rate Limiting](#rate-limiting). |
 | `maxConcurrent` | int | No | Per-key in-flight concurrency cap (0 = unlimited). Applied in addition to the global `listen.maxConcurrentRequests` cap. See [Concurrency Limits](#concurrency-limits). |
+| `quota` | object | No | Per-key token-quota override (daily/monthly). See [Token Quotas](#token-quotas). |
+| `scopes` | object | No | Per-key allow-lists for providers, models, and request paths. Empty / unset means full access (backwards compatible). See [Per-key Authorization](#per-key-authorization-scopes). |
+| `adminRole` | string | No | Optional scoped admin role for this key. Currently the only value is `usage-read`, which lets this key call `GET /admin/usage` without the full admin token. Empty (default) means no admin access. See [Admin Roles](#admin-roles). |
+
+#### Per-key Authorization (scopes)
+
+By default, a configured API key may call **any** provider, model, and request path the proxy supports. Multi-tenant deployments often want to constrain individual keys: a tenant's key should only call the providers / models / endpoints that tenant is paying for, and nothing else.
+
+`auth.apiKeys[].scopes` declares per-key allow-lists. **Empty or unset is full access** (the existing behavior); a non-empty list on any axis is deny-by-default for that axis.
+
+```yaml
+auth:
+  apiKeys:
+    - key: team-a-key
+      scopes:
+        providers: [openai, anthropic]   # team A can use OpenAI and Anthropic
+        models: ["gpt-4*", "claude-3*"]  # only these model families
+        paths: ["/v1/"]                  # everything under /v1/, nothing else
+    - key: team-b-key
+      scopes:
+        providers: [bedrock]             # team B is Bedrock-only
+        # models / paths empty -> any model / path on bedrock
+    - key: legacy-key
+      # no scopes block at all -> unrestricted (backwards compat)
+```
+
+| Field | Type | Default | Matching |
+|---|---|---|---|
+| `providers` | string list | empty (allow all) | Exact match against the resolved provider name: `openai`, `anthropic`, `gemini`, `ollama`, `azure`, `bedrock`, or a configured `openaiCompatible[].name`. A trailing `*` on an entry makes it a prefix match. |
+| `models` | string list | empty (allow all) | Exact match against the request's `model` field, or trailing-`*` glob (e.g. `gpt-4*`). When set, requests with no model field are denied. |
+| `paths` | string list | empty (allow all) | Prefix match against the request path **after** any `openaiCompatible[]` provider prefix has been stripped. |
+
+A request must satisfy **every** non-empty axis (logical AND across axes; logical OR within each axis). Denied requests receive `HTTP 403` with one of:
+
+| `error.type` | `error.code` | When |
+|---|---|---|
+| `forbidden` | `scope_denied_provider` | Resolved provider not in the key's `providers` allow-list. |
+| `forbidden` | `scope_denied_model` | Request `model` not in the key's `models` allow-list (or no `model` set when the allow-list is configured). |
+| `forbidden` | `scope_denied_path` | Request path not in any of the key's `paths` prefix entries. |
+
+The denial is mirrored in the audit log: the `key_id`, `provider`, `model`, `error_type`, and `error_code` fields all appear on the inbound audit entry with `http_status: 403`, so a denied call is fully traceable by `request_id` without ever exposing the raw key. See [Error Responses](#error-responses) for the full client-error contract.
+
+#### Admin Roles
+
+The `GET /admin/usage` endpoint is gated by either:
+
+1. **The full admin token** (`admin.token`), sent in the configured admin header (default `x-philter-admin-token`). This is the existing all-or-nothing credential and remains unchanged.
+2. **An API key with `adminRole: usage-read`**, sent in the regular auth header (default `x-philter-proxy-key`). This is a scoped read-only role for billing or reporting clients that should be able to read usage but not act as a full admin or make LLM calls outside their own scopes.
+
+```yaml
+admin:
+  enabled: true
+  token: ${ADMIN_TOKEN}
+
+auth:
+  apiKeys:
+    - key: ${BILLING_READER_KEY}
+      adminRole: usage-read   # this key can read /admin/usage, nothing else admin-y
+```
+
+`adminRole` is independent of `scopes`: the role grants admin-API access only, while `scopes` restricts the proxy's normal LLM-call surface. A successful admin export logs `auth_mode=admin_token` or `auth_mode=api_key_usage_read` plus the opaque `key_id` for the latter, so operators can distinguish the two paths in audit trails.
 
 #### API Key Hashing
 
@@ -640,6 +701,7 @@ Every proxy request produces a structured JSON log entry (JSONL) to stdout. All 
 | `entity_types` | string[] | Distinct entity types detected (e.g., `["NER_ENTITY", "SSN"]`) |
 | `redact_latency_ms` | int | Total time spent on Philter redaction calls (milliseconds) |
 | `client_ip` | string | Client IP address (supports `X-Forwarded-For`) |
+| `key_id` | string | Opaque stable identifier (`key-N`) of the authenticated API key, or empty when no key was authenticated. Never the raw key. Use this to correlate per-key authorization decisions (including [scope denials](#per-key-authorization-scopes)) end-to-end. |
 | `http_status` | int | HTTP status code of the upstream provider response |
 | `prompt_tokens` | int | Prompt (input) token count reported by the provider. Omitted for streaming responses and when the provider does not return usage data. |
 | `completion_tokens` | int | Completion (output) token count reported by the provider. Omitted under the same conditions as `prompt_tokens`. |
@@ -1014,6 +1076,9 @@ The `(type, code)` set below is part of the proxy's public API. New codes may be
 | 401 | `unauthorized` | `missing_api_key` | Auth enabled and no key in the configured header | - |
 | 401 | `unauthorized` | `invalid_api_key` | Auth enabled and the supplied key was not recognised | - |
 | 403 | `pii_blocked` | `outbound_blocked` | Outbound scanning is on with `action: block` and PII was found in the provider response | - |
+| 403 | `forbidden` | `scope_denied_provider` | Resolved provider is not in the authenticated key's `auth.apiKeys[].scopes.providers` allow-list | - |
+| 403 | `forbidden` | `scope_denied_model` | Request `model` is not in the key's `scopes.models` allow-list (or no `model` set when the allow-list is configured) | - |
+| 403 | `forbidden` | `scope_denied_path` | Request path is not in any of the key's `scopes.paths` prefix entries | - |
 | 404 | `not_found` | `bedrock_disabled` | A Bedrock path was requested but `providers.bedrock.region` is unset | - |
 | 404 | `not_found` | `azure_disabled` | An Azure path (`/openai/deployments/...`) was requested but `providers.azure.target` is unset | - |
 | 404 | `not_found` | `admin_disabled` | `/admin/usage` was requested but `admin.enabled` is false | - |
