@@ -1166,15 +1166,28 @@ func TestAuditLog_Disabled(t *testing.T) {
 }
 
 func TestClientIP(t *testing.T) {
+	p := &Proxy{}
 	r := httptest.NewRequest("GET", "/", nil)
 	r.RemoteAddr = "10.0.0.1:1234"
-	if ip := clientIP(r); ip != "10.0.0.1" {
+
+	if ip := p.clientIP(r); ip != "10.0.0.1" {
 		t.Errorf("Expected '10.0.0.1', got '%s'", ip)
 	}
 
+	// X-Forwarded-For is ignored by default (no trustedProxies configured),
+	// regardless of header content. This is the safe-by-default behaviour
+	// when the proxy is exposed directly to the internet -- clients cannot
+	// spoof their source IP via XFF.
 	r.Header.Set("X-Forwarded-For", "203.0.113.50, 70.41.3.18")
-	if ip := clientIP(r); ip != "203.0.113.50" {
-		t.Errorf("Expected '203.0.113.50', got '%s'", ip)
+	if ip := p.clientIP(r); ip != "10.0.0.1" {
+		t.Errorf("Untrusted XFF must be ignored; got %q", ip)
+	}
+
+	// With the peer's CIDR in trustedProxies, the left-most XFF entry wins.
+	_, cidr, _ := net.ParseCIDR("10.0.0.0/8")
+	p.trustedProxies = []*net.IPNet{cidr}
+	if ip := p.clientIP(r); ip != "203.0.113.50" {
+		t.Errorf("Trusted peer XFF: got %q, want 203.0.113.50", ip)
 	}
 }
 
@@ -1828,18 +1841,23 @@ func TestSanitizeQuery_SensitiveParams(t *testing.T) {
 	}
 }
 
-func TestSanitizeQuery_NoSensitiveParams(t *testing.T) {
+// sanitizeQuery now operates on an allow-list: any parameter not in the
+// known-safe set is redacted regardless of its name. This is intentionally
+// stricter than the old deny-list behavior, because the proxy cannot
+// statically know which future provider treats which query parameter as a
+// credential. The corresponding allow-list test lives next to the rest of
+// the security tests as TestSecurity_SanitizeQuery_AllowList.
+func TestSanitizeQuery_NonAllowListedParamsRedacted(t *testing.T) {
 	out := sanitizeQuery("model=gpt-4&stream=true")
-	if strings.Contains(out, "REDACTED") {
-		t.Errorf("Expected no redaction, got: %s", out)
+	if !strings.Contains(out, "REDACTED") {
+		t.Errorf("non-allow-listed params must be redacted, got: %s", out)
 	}
 }
 
-func TestSanitizeQuery_InvalidQuery(t *testing.T) {
-	raw := "%z invalid"
-	out := sanitizeQuery(raw)
-	if out != raw {
-		t.Errorf("Expected raw query returned unchanged, got: %s", out)
+func TestSanitizeQuery_InvalidQueryReducesToREDACTED(t *testing.T) {
+	out := sanitizeQuery("%z invalid")
+	if out != "REDACTED" {
+		t.Errorf("unparseable query must reduce to REDACTED, got: %s", out)
 	}
 }
 

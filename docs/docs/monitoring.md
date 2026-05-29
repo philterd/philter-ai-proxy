@@ -36,8 +36,8 @@ scrape_configs:
 | `philter_proxy_request_duration_seconds` | Histogram | `provider` | End-to-end request latency |
 | `philter_proxy_redaction_duration_seconds` | Histogram | `provider`, `policy` | Time spent on Philter redaction calls |
 | `philter_proxy_entities_redacted_total` | Counter | `entity_type`, `provider` | Total entities redacted |
-| `philter_proxy_prompt_tokens_total` | Counter | `provider`, `model` | Total prompt (input) tokens reported by providers |
-| `philter_proxy_completion_tokens_total` | Counter | `provider`, `model` | Total completion (output) tokens reported by providers |
+| `philter_proxy_prompt_tokens_total` | Counter | `provider`, `model` | Total prompt (input) tokens reported by providers. The `model` label is bounded to 64 distinct values per provider; any additional unseen model is reported under `model="other"`. |
+| `philter_proxy_completion_tokens_total` | Counter | `provider`, `model` | Total completion (output) tokens reported by providers. Same `model` cardinality cap as above. |
 | `philter_proxy_philter_errors_total` | Counter | - | Failed calls to the Philter backend |
 | `philter_proxy_upstream_errors_total` | Counter | `provider`, `status_code` | Failed calls to LLM providers |
 | `philter_proxy_active_requests` | Gauge | - | Currently in-flight requests (those holding a concurrency slot) |

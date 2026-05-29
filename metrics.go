@@ -1,6 +1,64 @@
 package main
 
-import "github.com/prometheus/client_golang/prometheus"
+import (
+	"sync"
+
+	"github.com/prometheus/client_golang/prometheus"
+)
+
+// maxModelLabelsPerProvider bounds the cardinality of the `model` Prometheus
+// label per provider. The label value is set from the client-supplied
+// `model` field of every request: an attacker holding a valid API key
+// can otherwise emit one label set per arbitrary string, exhausting the
+// metric scraper's memory. After the cap, additional unique model names
+// are collapsed to the sentinel "other". 64 is generous compared to the
+// real number of distinct production model identifiers (typically <20
+// per provider) while bounding worst-case memory.
+const (
+	maxModelLabelsPerProvider = 64
+	overflowModelLabel        = "other"
+)
+
+// modelLabelLimiter caps the cardinality of the `model` Prometheus label
+// on per-provider token-usage counters. Each provider gets its own
+// fixed-size set; once full, all subsequent unseen models are reported
+// under "other". The limiter is safe for concurrent use.
+type modelLabelLimiter struct {
+	mu          sync.Mutex
+	perProvider map[string]map[string]struct{}
+	limit       int
+}
+
+func newModelLabelLimiter(limit int) *modelLabelLimiter {
+	return &modelLabelLimiter{
+		perProvider: make(map[string]map[string]struct{}),
+		limit:       limit,
+	}
+}
+
+// reduce returns the model name to use as the Prometheus label value:
+// either `model` itself (if it is already in the per-provider set or
+// admission still has headroom) or `overflowModelLabel`.
+func (l *modelLabelLimiter) reduce(provider, model string) string {
+	if model == "" {
+		return ""
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	seen, ok := l.perProvider[provider]
+	if !ok {
+		seen = make(map[string]struct{})
+		l.perProvider[provider] = seen
+	}
+	if _, exists := seen[model]; exists {
+		return model
+	}
+	if len(seen) >= l.limit {
+		return overflowModelLabel
+	}
+	seen[model] = struct{}{}
+	return model
+}
 
 type ProxyMetrics struct {
 	requestsTotal            *prometheus.CounterVec
@@ -20,6 +78,11 @@ type ProxyMetrics struct {
 	cacheHits                prometheus.Counter
 	cacheMisses              prometheus.Counter
 	quotaRejections          *prometheus.CounterVec
+	// modelLabels caps the `model` label cardinality on the token-usage
+	// counters. The model is supplied by the client; without this bound,
+	// an attacker holding any valid key can drive the scraper out of
+	// memory by emitting one request per random model name.
+	modelLabels *modelLabelLimiter
 }
 
 func newMetrics(reg prometheus.Registerer) *ProxyMetrics {
@@ -111,6 +174,8 @@ func newMetrics(reg prometheus.Registerer) *ProxyMetrics {
 			Name: "philter_proxy_quota_rejections_total",
 			Help: "Total requests rejected (HTTP 429) due to a token quota, labeled by window (daily, monthly).",
 		}, []string{"window"}),
+
+		modelLabels: newModelLabelLimiter(maxModelLabelsPerProvider),
 	}
 
 	reg.MustRegister(

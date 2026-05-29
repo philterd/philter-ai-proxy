@@ -88,6 +88,7 @@ defaults:
 | `readHeaderTimeoutMs` | int | `10000` (10s) | Time a client may take to send the request headers before the connection is dropped (slowloris mitigation). |
 | `readTimeoutMs` | int | `0` (disabled) | Time to read the entire request including body. Bounds slow-body attacks; affects only request reads, never response streaming. Disabled by default so large/slow uploads aren't truncated. |
 | `tlsHandshakeTimeoutMs` | int | `10000` (10s) | Time a client may take to complete the TLS handshake before the connection is dropped (slow-handshake slowloris mitigation). Independent of `readHeaderTimeoutMs`, which only starts ticking after the handshake completes. See [Request Hardening](#request-hardening) below. |
+| `trustedProxies` | string list | empty (XFF ignored) | CIDR ranges of upstream load balancers / reverse proxies whose `X-Forwarded-For` header should be honored. Empty (default) means XFF is **never** trusted -- the safe behavior when the proxy is exposed directly to the internet. Operators behind a trusted LB **must** populate this with the LB's source CIDR(s) to restore accurate per-IP rate limits and audit-log IPs. See [Trusted Proxies / X-Forwarded-For](#trusted-proxies--x-forwarded-for). |
 
 ### `logging`
 
@@ -251,6 +252,54 @@ curl -k "https://localhost:8080/openai/deployments/gpt-4o/chat/completions?api-v
 ```
 
 Note Azure encodes the model in the deployment name (URL), so the request body's `model` field is optional; the audit log records whatever the body supplies. When the proxy is not configured for Azure, `/openai/deployments/...` requests return `404` (`not_found` / `azure_disabled`).
+
+### `providers.vertex`
+
+Vertex AI (Gemini on Google Cloud) is an optional first-class provider. It is enabled by setting `providers.vertex.project` (and typically `providers.vertex.location`). Vertex's API surface differs from the public Gemini API:
+
+- **Regional endpoint.** Requests go to `https://{location}-aiplatform.googleapis.com` (e.g. `us-central1-aiplatform.googleapis.com`), not `generativelanguage.googleapis.com`. The proxy derives this from `location`, or you can override it with `endpoint`.
+- **Resource-style paths.** `/v1/projects/{project}/locations/{location}/publishers/google/models/{model}:generateContent` and the streaming variant `:streamGenerateContent`. The proxy routes any request whose path matches this shape; the path is preserved verbatim when forwarding (so `{project}` and `{location}` in the URL need not equal the configured values, useful if the proxy fronts multiple projects whose ADC is permitted).
+- **OAuth2 / ADC authentication.** No `?key=` query parameter; the proxy acquires a Google access token via [Application Default Credentials](https://cloud.google.com/docs/authentication/application-default-credentials) and sets it as the `Authorization: Bearer` header on outbound requests. The cached token is refreshed shortly before expiry.
+
+Request and response bodies are the same Gemini schema as the public provider, so **inbound redaction and outbound scanning are identical to the public Gemini provider**.
+
+```yaml
+providers:
+  vertex:
+    project: my-gcp-project
+    location: us-central1
+    # endpoint: https://override.example.com   # optional: override the default regional endpoint
+    # tlsVerify: true
+```
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `project` | string | (none - Vertex disabled) | GCP project ID. Setting this enables the Vertex provider. |
+| `location` | string | (none) | Region used to build the default endpoint (e.g. `us-central1`). Required unless `endpoint` is set. |
+| `endpoint` | string | derived from `location` | Override the target URL. Useful for VPC-SC private endpoints or local-emulator testing. |
+| `tlsVerify` | bool | `true` | Enable TLS certificate verification for the Vertex connection. |
+| `timeouts` | object | (proxy defaults) | Per-provider [HTTP timeouts](#provider-timeouts). |
+
+**Authentication.** The proxy uses [Application Default Credentials](https://cloud.google.com/docs/authentication/application-default-credentials) (workload identity, service-account key, the metadata server on GCE/GKE/Cloud Run, `gcloud auth application-default login`, etc.). The recommended production pattern is a workload identity bound to a service account with the **Vertex AI User** role on the project. The OAuth2 scope used is `https://www.googleapis.com/auth/cloud-platform`. A token-acquisition failure returns `502` (`provider_error` / `vertex_auth_failed`).
+
+**Client example.**
+
+```bash
+curl -k "https://localhost:8080/v1/projects/my-gcp-project/locations/us-central1/publishers/google/models/gemini-1.5-pro:generateContent" \
+  -H "Content-Type: application/json" \
+  -d '{"contents":[{"parts":[{"text":"Hello"}]}]}'
+```
+
+The client does not send any credentials -- the proxy attaches the bearer token.
+
+**Streaming.** Vertex's `:streamGenerateContent` endpoint returns one of two shapes depending on the request:
+
+- With `?alt=sse` -- Vertex emits a true SSE stream (`Content-Type: text/event-stream`). The proxy detects this and passes chunks through to the client as they arrive, without buffering.
+- Without `?alt=sse` (default) -- Vertex returns a single `application/json` array containing all generation chunks. The proxy treats this as a regular non-streaming response: the body is buffered, redacted (when outbound scanning is on), and forwarded in one shot. This is correct behavior given the shape Vertex returns; it just is not "streaming" end-to-end.
+
+If you want token-by-token streaming end to end, your client must add `?alt=sse` to the request URL; the proxy forwards query parameters verbatim.
+
+**Audit log.** The model in a Vertex request is identified by the URL (`/models/{model}`), not the request body. The proxy extracts the model from the path and records it in the audit entry's `model` field; `provider` is `vertex`. When the proxy is not configured for Vertex, requests to `/v1/projects/.../models/...:generateContent` return `404` (`not_found` / `vertex_disabled`).
 
 ### `routes`
 
@@ -497,6 +546,7 @@ curl -k https://localhost:8080/v1/chat/completions \
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `key` | string | Yes | The API key value. Accepts plaintext, a pre-hashed value (see [Hashing](#api-key-hashing)), or a `${ENV_VAR}` / `file:` secret reference (see [Loading secrets from environment variables and files](#loading-secrets-from-environment-variables-and-files)). |
+| `id` | string | No | **Strongly recommended.** Stable opaque identifier used as the rate-limit / concurrency / quota / cache-tenant / audit-log `key_id`. Falls back to the legacy positional `key-N` when unset, which is fragile across `apiKeys` reorders. See [Per-key Stable Identifiers](#per-key-stable-identifiers). |
 | `policy` | string | No | Philter policy to enforce for all requests authenticated with this key. Overrides route and default policy. |
 | `rateLimit` | object | No | Per-key rate-limit override. See [Rate Limiting](#rate-limiting). |
 | `maxConcurrent` | int | No | Per-key in-flight concurrency cap (0 = unlimited). Applied in addition to the global `listen.maxConcurrentRequests` cap. See [Concurrency Limits](#concurrency-limits). |
@@ -528,7 +578,7 @@ auth:
 
 | Field | Type | Default | Matching |
 |---|---|---|---|
-| `providers` | string list | empty (allow all) | Exact match against the resolved provider name: `openai`, `anthropic`, `gemini`, `ollama`, `azure`, `bedrock`, or a configured `openaiCompatible[].name`. A trailing `*` on an entry makes it a prefix match. |
+| `providers` | string list | empty (allow all) | Exact match against the resolved provider name: `openai`, `anthropic`, `gemini`, `ollama`, `azure`, `bedrock`, `vertex`, or a configured `openaiCompatible[].name`. A trailing `*` on an entry makes it a prefix match. |
 | `models` | string list | empty (allow all) | Exact match against the request's `model` field, or trailing-`*` glob (e.g. `gpt-4*`). When set, requests with no model field are denied. |
 | `paths` | string list | empty (allow all) | Prefix match against the request path **after** any `openaiCompatible[]` provider prefix has been stripped. |
 
@@ -604,7 +654,32 @@ python3 -c "import bcrypt; print('bcrypt$' + bcrypt.hashpw(b'SuperSecretAPIKey12
 - Default (SHA256): no tuning needed.
 - bcrypt: pick the lowest cost your compliance requirements allow. cost=4 is appropriate for high-throughput API key use.
 
-**Per-key features (rate-limit, concurrency).** The proxy assigns each `auth.apiKeys[]` entry an opaque stable identifier (`key-0`, `key-1`, ...) based on its position. Per-key rate-limit and per-key concurrency buckets are keyed by this identifier, so the raw API key never has to reach those subsystems. Logs that need a "client" field record the identifier, not the key value.
+**Per-key features (rate-limit, concurrency).** The proxy assigns each `auth.apiKeys[]` entry an opaque stable identifier. Per-key rate-limit, per-key concurrency, the response-cache tenant prefix, the usage store, and audit-log `key_id` are all keyed by this identifier, so the raw API key never has to reach those subsystems. See [Per-key Stable Identifiers](#per-key-stable-identifiers) for the explicit `id:` field (strongly recommended) and the legacy positional fallback (`key-0`, `key-1`, ...).
+
+#### Per-key Stable Identifiers
+
+Each `auth.apiKeys[]` entry can declare an explicit `id:` field, which is used as its stable opaque identifier wherever the proxy needs one (rate-limit bucket, concurrency bucket, quota counter, cache tenant prefix, audit log `key_id`, usage export row):
+
+```yaml
+auth:
+  apiKeys:
+    - key: ${TEAM_A_KEY}
+      id: team-a                 # explicit
+    - key: ${TEAM_B_KEY}
+      id: team-b
+    - key: ${BILLING_READER_KEY}
+      id: billing-reader
+      adminRole: usage-read
+```
+
+When `id:` is omitted the proxy falls back to the legacy positional identifier (`key-0`, `key-1`, ... derived from the entry's position in the list). **Setting `id:` explicitly is strongly recommended** because the positional fallback is fragile: inserting a new entry at the top of the list, removing a middle entry, or even reordering for readability re-shuffles which key owns which historical state. With a response cache enabled, that re-shuffle is a real cross-tenant data leak -- the new `key-0` would inherit the old `key-0`'s cached responses.
+
+Validation:
+
+- Each explicit `id:` must be unique across `auth.apiKeys`.
+- Explicit `id:` values must not start with the reserved prefix `key-` (which would collide with the legacy positional scheme).
+
+Migrating from positional IDs: add `id:` to each entry, choosing a stable label (`team-a`, `billing-reader`, etc.). The transition is opt-in -- entries without `id:` continue to receive their positional identifier so existing rate-limit / quota / cache state is not invalidated mid-flight.
 
 #### Loading secrets from environment variables and files
 
@@ -692,7 +767,7 @@ Every proxy request produces a structured JSON log entry (JSONL) to stdout. All 
 | `time` | string | ISO 8601 timestamp |
 | `request_id` | string | Unique ID for request correlation |
 | `direction` | string | Scan direction: `inbound` (request) or `outbound` (response, when outbound scanning is enabled) |
-| `provider` | string | LLM provider (`openai`, `anthropic`, `gemini`, `ollama`) |
+| `provider` | string | LLM provider (`openai`, `anthropic`, `gemini`, `ollama`, `azure`, `bedrock`, `vertex`, or an `openaiCompatible[].name`) |
 | `model` | string | Model name from the request body |
 | `policy_name` | string | Philter policy used for redaction |
 | `document_id` | string | Philter document ID (correlates with Philter's own logs) |
@@ -840,6 +915,9 @@ auth:
 
 The global and per-key caps **compose** - a request must acquire both. The per-key cap protects the shared pool from a single noisy tenant; the global cap protects the proxy as a whole.
 
+!!! warning "Pair concurrency caps with `listen.readTimeoutMs` for hostile clients"
+    The proxy acquires its concurrency slot *before* reading the request body, so a slow-body uploader holds the slot for the duration of its upload. With `listen.readTimeoutMs` disabled (the documented default for large/slow legitimate uploads), a single authenticated key whose value has been compromised can dribble bodies indefinitely and hold `maxConcurrent` slots; with multiple compromised keys the attacker can hold `keys × maxConcurrent` slots. When you configure `maxConcurrent` to defend against this class of abuse, also set `listen.readTimeoutMs` to a value that bounds reasonable upload time (e.g. 60000 for 60s). See [Request Hardening](#request-hardening).
+
 ### Behaviour when the limit is exceeded
 
 When either cap is reached, the proxy returns:
@@ -894,6 +972,30 @@ listen:
 | **Slowloris (handshake)** | `tlsHandshakeTimeoutMs` | 10s | Bounds how long a client may take to complete the TLS handshake. `readHeaderTimeoutMs` only starts ticking **after** the handshake completes, so a client that opens a TLS connection and then dribbles the handshake (or never finishes it) would otherwise tie up the connection indefinitely. Each accepted connection is gated by this deadline on its own goroutine, so one slow client cannot stall accepts of other clients. Once the handshake succeeds the deadline is cleared, so post-handshake reads and response streaming are unaffected. |
 
 **Streaming is unaffected.** The proxy deliberately does **not** set a write timeout, so streamed responses can run arbitrarily long. `readTimeoutMs` bounds only the inbound request, never the response. The same header limits and timeouts are applied to the metrics server; the handshake timeout applies only to the TLS-terminating listener.
+
+### Trusted Proxies / X-Forwarded-For
+
+The proxy uses the apparent client IP for **per-IP rate limiting** (when authentication is disabled), for the **audit log's `client_ip` field**, and for operator-facing log lines such as the admin-endpoint access record.
+
+By default, `r.RemoteAddr` -- the immediate TCP peer -- is used, and `X-Forwarded-For` is ignored. This is the safe behavior when the proxy is exposed directly to clients: any attacker could otherwise set XFF to a value of their choosing, evading per-IP rate limits and corrupting audit-log IPs.
+
+When the proxy runs behind a trusted upstream (ALB, NLB, Nginx, Cloudflare, an Istio sidecar, etc.), `listen.trustedProxies` must list the CIDR ranges those upstreams connect from, so the proxy can recognize them and honor the XFF they set:
+
+```yaml
+listen:
+  trustedProxies:
+    - 10.0.0.0/8         # internal LB subnet
+    - 172.16.0.0/12      # peered VPC
+    - 192.168.1.0/24
+```
+
+Behavior:
+
+- If `r.RemoteAddr`'s IP falls inside any configured CIDR, the **left-most** non-empty `X-Forwarded-For` entry is taken as the client IP.
+- If the peer is not in any CIDR (or no CIDRs are configured at all), XFF is silently ignored and `r.RemoteAddr` is used.
+- Each CIDR is validated at startup; a malformed entry fails the config.
+
+This is a **behavioral change vs earlier releases**, which trusted XFF unconditionally. Deployments that legitimately relied on XFF (those running behind a real LB) need to add the LB's source CIDR(s) to restore the previous behavior.
 
 These limits apply per request and are independent of the concurrency guard: concurrency bounds *how many* requests run at once, while these bound *how big* and *how slow* any single request may be.
 
@@ -1072,6 +1174,7 @@ The `(type, code)` set below is part of the proxy's public API. New codes may be
 |---|---|---|---|---|
 | 400 | `invalid_request` | `bad_json` | Request body is not valid JSON for the matched provider | - |
 | 400 | `invalid_request` | `body_read` | Request body could not be read from the client connection | - |
+| 400 | `invalid_request` | `path_not_canonical` | Request path contained `.` / `..` segments, redundant slashes, or a trailing slash. Real LLM clients construct canonical paths; the proxy refuses non-canonical paths up front to close a class of path-traversal-based scope bypass. | - |
 | 413 | `payload_too_large` | `request_body_too_large` | Request body exceeded `listen.maxRequestBodyBytes` | - |
 | 401 | `unauthorized` | `missing_api_key` | Auth enabled and no key in the configured header | - |
 | 401 | `unauthorized` | `invalid_api_key` | Auth enabled and the supplied key was not recognised | - |
@@ -1081,6 +1184,8 @@ The `(type, code)` set below is part of the proxy's public API. New codes may be
 | 403 | `forbidden` | `scope_denied_path` | Request path is not in any of the key's `scopes.paths` prefix entries | - |
 | 404 | `not_found` | `bedrock_disabled` | A Bedrock path was requested but `providers.bedrock.region` is unset | - |
 | 404 | `not_found` | `azure_disabled` | An Azure path (`/openai/deployments/...`) was requested but `providers.azure.target` is unset | - |
+| 404 | `not_found` | `vertex_disabled` | A Vertex path (`/v1/projects/.../models/...:generateContent`) was requested but `providers.vertex.project` is unset | - |
+| 502 | `provider_error` | `vertex_auth_failed` | The proxy could not acquire a Google ADC bearer token for Vertex | - |
 | 404 | `not_found` | `admin_disabled` | `/admin/usage` was requested but `admin.enabled` is false | - |
 | 401 | `unauthorized` | `invalid_admin_token` | `/admin/usage` requested with a missing or wrong admin token | - |
 | 405 | `method_not_allowed` | `method_not_allowed` | `/admin/usage` requested with a non-GET method | - |

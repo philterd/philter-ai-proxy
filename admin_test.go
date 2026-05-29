@@ -20,8 +20,11 @@ func adminTestProxy(t *testing.T, token string) *Proxy {
 	store.Add(context.Background(), "key-1", 7, 3, now)
 
 	cfg := testConfig("https://localhost:8080")
-	cfg.Admin = AdminConfig{Enabled: true, Token: token}
-	return &Proxy{config: cfg, usage: store}
+	// Production hashes the admin token on the Proxy and zeros the
+	// plaintext config field. Mirror that so the comparison path is the
+	// same one production uses.
+	cfg.Admin = AdminConfig{Enabled: true}
+	return &Proxy{config: cfg, usage: store, adminTokenHash: hashAdminToken(token)}
 }
 
 func TestAdminUsage_RequiresToken(t *testing.T) {

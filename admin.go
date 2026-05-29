@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/csv"
 	"encoding/json"
@@ -30,6 +31,28 @@ func (p *Proxy) handleAdminUsage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Per-IP rate limit. The main request-path rate limiter does not cover
+	// admin routes (they return early before its checkpoint), so we apply
+	// a dedicated, deliberately tight bucket. 5 requests per second with
+	// a burst of 10 is enough for legitimate operator polling and
+	// dashboard refreshes; it bounds brute-force attempts on the admin
+	// token. The bucket is keyed on the client IP -- not the supplied
+	// token -- so a single attacker cannot rotate guesses faster than
+	// the bucket refill rate.
+	if p.adminLimiter != nil {
+		peer := p.clientIP(r)
+		if allowed, retryAfter, _ := p.adminLimiter.Allow(r.Context(), "admin|"+peer, 5, 10); !allowed {
+			retrySecs := int(retryAfter.Seconds())
+			if retrySecs < 1 {
+				retrySecs = 1
+			}
+			w.Header().Set("Retry-After", strconv.Itoa(retrySecs))
+			slog.Warn("Admin usage rate limit exceeded", "client", peer)
+			writeError(w, nil, http.StatusTooManyRequests, "rate_limit_error", "admin_rate_limited", "admin endpoint rate limit exceeded")
+			return
+		}
+	}
+
 	headerName := p.config.Admin.Header
 	if headerName == "" {
 		headerName = defaultAdminHeader
@@ -45,10 +68,17 @@ func (p *Proxy) handleAdminUsage(w http.ResponseWriter, r *http.Request) {
 	authMode := ""
 	authKeyID := ""
 
-	if provided := r.Header.Get(headerName); provided != "" &&
-		subtle.ConstantTimeCompare([]byte(provided), []byte(p.config.Admin.Token)) == 1 {
-		authorized = true
-		authMode = "admin_token"
+	// The admin token is held only as a SHA256 hash on the Proxy. We hash
+	// the supplied value and compare the two 32-byte arrays in constant
+	// time; an unconfigured token (zero-valued hash) is treated as a hard
+	// reject so an attacker who finds an undocumented "" path cannot
+	// authenticate.
+	if provided := r.Header.Get(headerName); provided != "" && !isZeroHash(p.adminTokenHash) {
+		providedHash := sha256.Sum256([]byte(provided))
+		if subtle.ConstantTimeCompare(providedHash[:], p.adminTokenHash[:]) == 1 {
+			authorized = true
+			authMode = "admin_token"
+		}
 	}
 
 	if !authorized && p.keyStore != nil {
@@ -66,14 +96,14 @@ func (p *Proxy) handleAdminUsage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !authorized {
-		slog.Warn("Admin usage access denied", "client", clientIP(r), "method", r.Method)
+		slog.Warn("Admin usage access denied", "client", p.clientIP(r), "method", r.Method)
 		writeError(w, nil, http.StatusUnauthorized, "unauthorized", "invalid_admin_token", "invalid or missing admin credentials")
 		return
 	}
 
 	snap, err := p.usage.Snapshot(r.Context(), time.Now().UTC())
 	if err != nil {
-		slog.Error("Admin usage snapshot failed", "client", clientIP(r), "error", err)
+		slog.Error("Admin usage snapshot failed", "client", p.clientIP(r), "error", err)
 		writeError(w, nil, http.StatusInternalServerError, "internal_error", "usage_snapshot_failed", "failed to read usage")
 		return
 	}
@@ -92,7 +122,7 @@ func (p *Proxy) handleAdminUsage(w http.ResponseWriter, r *http.Request) {
 	// Successful access to per-key billing data is recorded (no token).
 	// The auth mode and the opaque key ID (when applicable) are logged so
 	// operators can distinguish admin-token vs scoped-API-key accesses.
-	slog.Info("Admin usage exported", "client", clientIP(r), "format", format, "keys", len(keyIDs), "auth_mode", authMode, "key_id", authKeyID)
+	slog.Info("Admin usage exported", "client", p.clientIP(r), "format", format, "keys", len(keyIDs), "auth_mode", authMode, "key_id", authKeyID)
 
 	if format == "csv" {
 		p.writeUsageCSV(w, keyIDs, snap)

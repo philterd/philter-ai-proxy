@@ -149,7 +149,7 @@ func newProxyRateLimiter(cfg RateLimitConfig, apiKeys []APIKeyEntry, metrics *Pr
 	// looked up anyway.
 	for i, entry := range apiKeys {
 		if entry.RateLimit != nil {
-			id := keyIDForIndex(i)
+			id := keyIDFor(entry, i)
 			rl.perKeyLimit[id] = rate.Limit(entry.RateLimit.RequestsPerSecond)
 			rl.perKeyBurst[id] = entry.RateLimit.Burst
 		}

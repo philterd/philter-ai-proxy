@@ -143,7 +143,10 @@ func (b *redisBackend) Close() error {
 // buildRedisTLSConfig assembles a *tls.Config supporting an optional custom CA
 // (server verification) and an optional client certificate (mTLS to Redis).
 func buildRedisTLSConfig(cfg RedisTLSConfig) (*tls.Config, error) {
-	tlsCfg := &tls.Config{InsecureSkipVerify: cfg.InsecureSkipVerify}
+	tlsCfg := &tls.Config{
+		InsecureSkipVerify: cfg.InsecureSkipVerify,
+		MinVersion:         tls.VersionTLS12,
+	}
 
 	if cfg.CACert != "" {
 		caCert, err := os.ReadFile(cfg.CACert)

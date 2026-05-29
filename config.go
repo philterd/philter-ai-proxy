@@ -2,8 +2,10 @@ package main
 
 import (
 	"fmt"
+	"net"
 	"net/url"
 	"os"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -41,6 +43,17 @@ type ListenConfig struct {
 	// other timeout. Default: 10000 (10s). 0 means "use the default";
 	// negative is rejected at validation.
 	TLSHandshakeTimeoutMs int `yaml:"tlsHandshakeTimeoutMs"`
+	// TrustedProxies is a list of CIDR ranges (e.g. ["10.0.0.0/8",
+	// "192.168.1.0/24"]) whose connections may legitimately set
+	// `X-Forwarded-For`. The proxy reads the header only when the immediate
+	// peer (`r.RemoteAddr`) is inside one of these CIDRs; otherwise it uses
+	// `r.RemoteAddr` directly. **Default is empty**, which means
+	// X-Forwarded-For is NEVER trusted -- the safe behavior when the proxy
+	// is exposed directly to the internet. Operators running behind a
+	// trusted load balancer (ALB, Nginx, Cloudflare, etc.) must add the
+	// load balancer's source CIDR here to keep their per-IP rate limits and
+	// audit-log IPs accurate.
+	TrustedProxies []string `yaml:"trustedProxies"`
 }
 
 type RateLimitBucket struct {
@@ -97,7 +110,16 @@ type RedisTLSConfig struct {
 }
 
 type APIKeyEntry struct {
-	Key           string           `yaml:"key"`
+	Key string `yaml:"key"`
+	// ID is the stable opaque identifier used in audit logs, the per-key
+	// rate-limit bucket, the per-key concurrency bucket, the response-cache
+	// tenant prefix, and the usage store. **Setting this explicitly is
+	// strongly recommended.** When unset, the proxy falls back to the
+	// positional `key-N` identifier; reordering or inserting entries in
+	// `auth.apiKeys` will then re-shuffle which key owns which historical
+	// state -- a real cross-tenant leak when a response cache is enabled.
+	// See [Per-key Stable Identifiers](docs/docs/configuration.md#per-key-stable-identifiers).
+	ID            string           `yaml:"id"`
 	Policy        string           `yaml:"policy"`
 	RateLimit     *RateLimitBucket `yaml:"rateLimit"`
 	MaxConcurrent int              `yaml:"maxConcurrent"` // 0 = unlimited (default)
@@ -323,7 +345,35 @@ type ProvidersConfig struct {
 	Ollama           ProviderConfig            `yaml:"ollama"`
 	Bedrock          BedrockConfig             `yaml:"bedrock"`
 	Azure            AzureConfig               `yaml:"azure"`
+	Vertex           VertexConfig              `yaml:"vertex"`
 	OpenAICompatible map[string]ProviderConfig `yaml:"openaiCompatible"`
+}
+
+// VertexConfig configures the first-class Vertex AI provider (Gemini on
+// Google Cloud). Enabled by setting `project` (and typically `location`).
+// Vertex's API surface differs from the public Gemini API:
+//
+//   - Regional endpoint: https://{location}-aiplatform.googleapis.com.
+//   - Resource-style paths:
+//     /v1/projects/{project}/locations/{location}/publishers/google/models/{model}:generateContent
+//     and the `:streamGenerateContent` variant.
+//   - Authentication via a Google OAuth2 bearer token (Application Default
+//     Credentials). No `?key=` query parameter.
+//
+// Request and response bodies are the same Gemini schema as the public
+// provider, so inbound redaction and outbound-scan behavior reuse the
+// existing Gemini path verbatim.
+type VertexConfig struct {
+	// Project is the GCP project ID. Required to enable Vertex.
+	Project string `yaml:"project"`
+	// Location is the regional endpoint to use (e.g. "us-central1"). Used
+	// to build the default target URL when `endpoint` is empty.
+	Location string `yaml:"location"`
+	// Endpoint overrides the target URL. Leave empty to use the regional
+	// default https://{location}-aiplatform.googleapis.com.
+	Endpoint  string           `yaml:"endpoint"`
+	TLSVerify *bool            `yaml:"tlsVerify"`
+	Timeouts  ProviderTimeouts `yaml:"timeouts"`
 }
 
 type RouteMatch struct {
@@ -454,6 +504,12 @@ func validateConfig(cfg *Config) error {
 		return fmt.Errorf("config: listen.port %d is out of range (1-65535)", cfg.Listen.Port)
 	}
 
+	for i, cidr := range cfg.Listen.TrustedProxies {
+		if _, _, err := net.ParseCIDR(cidr); err != nil {
+			return fmt.Errorf("config: listen.trustedProxies[%d] %q is not a valid CIDR: %w", i, cidr, err)
+		}
+	}
+
 	if cfg.Listen.MaxConcurrentRequests < 0 {
 		return fmt.Errorf("config: listen.maxConcurrentRequests must be >= 0")
 	}
@@ -506,6 +562,7 @@ func validateConfig(cfg *Config) error {
 		{"providers.ollama", cfg.Providers.Ollama.Timeouts},
 		{"providers.bedrock", cfg.Providers.Bedrock.Timeouts},
 		{"providers.azure", cfg.Providers.Azure.Timeouts},
+		{"providers.vertex", cfg.Providers.Vertex.Timeouts},
 	} {
 		if err := timeoutFields(p.name, p.t); err != nil {
 			return err
@@ -516,6 +573,20 @@ func validateConfig(cfg *Config) error {
 	if cfg.Providers.Azure.Target != "" {
 		if _, err := url.Parse(cfg.Providers.Azure.Target); err != nil {
 			return fmt.Errorf("config: providers.azure has invalid URL %q: %w", cfg.Providers.Azure.Target, err)
+		}
+	}
+
+	// Vertex is optional (enabled by setting `project`). When enabled, a
+	// location is required so we can build the regional endpoint URL, unless
+	// an explicit endpoint override is supplied.
+	if cfg.Providers.Vertex.Project != "" {
+		if cfg.Providers.Vertex.Location == "" && cfg.Providers.Vertex.Endpoint == "" {
+			return fmt.Errorf("config: providers.vertex.location is required when providers.vertex.project is set (or set providers.vertex.endpoint explicitly)")
+		}
+		if cfg.Providers.Vertex.Endpoint != "" {
+			if _, err := url.Parse(cfg.Providers.Vertex.Endpoint); err != nil {
+				return fmt.Errorf("config: providers.vertex.endpoint has invalid URL %q: %w", cfg.Providers.Vertex.Endpoint, err)
+			}
 		}
 	}
 	for name, pc := range cfg.Providers.OpenAICompatible {
@@ -597,6 +668,7 @@ func validateConfig(cfg *Config) error {
 	}
 
 	seen := map[string]bool{}
+	seenIDs := map[string]int{}
 	for i, entry := range cfg.Auth.APIKeys {
 		if entry.Key == "" {
 			return fmt.Errorf("config: auth.apiKeys[%d].key must not be empty", i)
@@ -605,6 +677,19 @@ func validateConfig(cfg *Config) error {
 			return fmt.Errorf("config: auth.apiKeys contains duplicate key at index %d", i)
 		}
 		seen[entry.Key] = true
+		if entry.ID != "" {
+			// Explicit IDs must be unique across the list and must not
+			// collide with the legacy `key-N` positional identifier scheme
+			// (otherwise an explicit `id: key-3` could shadow position 3's
+			// historical state).
+			if prev, ok := seenIDs[entry.ID]; ok {
+				return fmt.Errorf("config: auth.apiKeys[%d].id %q duplicates auth.apiKeys[%d]", i, entry.ID, prev)
+			}
+			if strings.HasPrefix(entry.ID, "key-") {
+				return fmt.Errorf("config: auth.apiKeys[%d].id %q must not start with the reserved prefix %q", i, entry.ID, "key-")
+			}
+			seenIDs[entry.ID] = i
+		}
 		if entry.RateLimit != nil {
 			if entry.RateLimit.RequestsPerSecond <= 0 {
 				return fmt.Errorf("config: auth.apiKeys[%d].rateLimit.requestsPerSecond must be > 0", i)

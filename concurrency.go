@@ -98,7 +98,7 @@ func perKeyConcurrencyMap(keys []APIKeyEntry) map[string]int {
 	out := make(map[string]int)
 	for i, k := range keys {
 		if k.MaxConcurrent > 0 {
-			out[keyIDForIndex(i)] = k.MaxConcurrent
+			out[keyIDFor(k, i)] = k.MaxConcurrent
 		}
 	}
 	if len(out) == 0 {

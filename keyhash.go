@@ -110,11 +110,22 @@ func parseStoredKey(s, id, policy string, scopes *APIKeyScopes, adminRole string
 	return base, nil
 }
 
-// keyIDForIndex returns the stable identifier assigned to the entry at
-// position i. The format is intentionally opaque ("key-N") so it can appear
-// in logs without leaking any property of the underlying key.
+// keyIDForIndex returns the legacy positional identifier `key-N` for the
+// entry at position `i`. Use `keyIDFor(entry, i)` from the wiring code so
+// an explicit `auth.apiKeys[].id` overrides the positional default.
 func keyIDForIndex(i int) string {
 	return fmt.Sprintf("key-%d", i)
+}
+
+// keyIDFor returns the stable identifier for an APIKeyEntry: its explicit
+// `id` when set, otherwise the legacy positional `key-N`. Use this from the
+// rate-limit, concurrency, and quota wiring so all per-key buckets agree on
+// the same identifier the keyStore will later return from lookup().
+func keyIDFor(entry APIKeyEntry, i int) string {
+	if entry.ID != "" {
+		return entry.ID
+	}
+	return keyIDForIndex(i)
 }
 
 // newKeyStore builds a keyStore from the auth config. Returns nil when no
@@ -125,7 +136,14 @@ func newKeyStore(entries []APIKeyEntry) (*keyStore, error) {
 	}
 	ks := &keyStore{entries: make([]storedKey, 0, len(entries))}
 	for i, e := range entries {
-		sk, err := parseStoredKey(e.Key, keyIDForIndex(i), e.Policy, e.Scopes, e.AdminRole)
+		id := e.ID
+		if id == "" {
+			// Backwards-compatible fallback. Positional IDs are unstable
+			// across `auth.apiKeys` edits; configuration.md flags this and
+			// the documentation strongly recommends setting `id:` explicitly.
+			id = keyIDForIndex(i)
+		}
+		sk, err := parseStoredKey(e.Key, id, e.Policy, e.Scopes, e.AdminRole)
 		if err != nil {
 			return nil, fmt.Errorf("auth.apiKeys[%d]: %w", i, err)
 		}
@@ -134,18 +152,21 @@ func newKeyStore(entries []APIKeyEntry) (*keyStore, error) {
 	return ks, nil
 }
 
-// lookup returns the bound policy (possibly empty) and ok=true when clientKey
-// matches a configured entry. Otherwise returns ("", false).
+// lookup returns the resolved key on a successful match, or (nil, false)
+// otherwise. The loop walks **every** configured entry regardless of an
+// early hit so the elapsed time is independent of the position of the
+// matching entry (or whether a match exists at all). Closing that timing
+// oracle is essential for bcrypt-configured deployments, where the
+// per-entry cost is on the order of milliseconds and the position of a
+// matching key would otherwise be trivially observable from the network.
 //
-// All configured entries are checked. The function breaks on the first match
-// to avoid spending bcrypt verifications past the matching entry; this leaks
-// the POSITION of the matching entry via timing (early match returns faster
-// than a no-match) but does not leak which key matched.
-//
-// Each individual comparison is constant-time:
+// Per-entry comparison itself is already constant-time:
 //   - sha256 entries use subtle.ConstantTimeCompare over fixed-size buffers.
-//   - bcrypt entries use bcrypt.CompareHashAndPassword, which is documented
-//     to compare in constant time.
+//   - bcrypt entries use bcrypt.CompareHashAndPassword, documented to
+//     compare in constant time.
+//
+// When multiple entries match (which the config-load duplicate check
+// already rejects, so this is a defensive choice) the first match wins.
 func (ks *keyStore) lookup(clientKey string) (*resolvedKey, bool) {
 	if ks == nil || len(ks.entries) == 0 {
 		return nil, false
@@ -153,19 +174,25 @@ func (ks *keyStore) lookup(clientKey string) (*resolvedKey, bool) {
 	keyBytes := []byte(clientKey)
 	sum := sha256.Sum256(keyBytes)
 
-	for _, e := range ks.entries {
+	matchIdx := -1
+	for i := range ks.entries {
+		e := &ks.entries[i]
+		var hit bool
 		switch e.algo {
 		case hashAlgoSHA256:
-			if subtle.ConstantTimeCompare(sum[:], e.hash) == 1 {
-				return &resolvedKey{ID: e.id, Policy: e.policy, Scopes: e.scopes, AdminRole: e.adminRole}, true
-			}
+			hit = subtle.ConstantTimeCompare(sum[:], e.hash) == 1
 		case hashAlgoBcrypt:
-			if bcrypt.CompareHashAndPassword(e.hash, keyBytes) == nil {
-				return &resolvedKey{ID: e.id, Policy: e.policy, Scopes: e.scopes, AdminRole: e.adminRole}, true
-			}
+			hit = bcrypt.CompareHashAndPassword(e.hash, keyBytes) == nil
+		}
+		if hit && matchIdx == -1 {
+			matchIdx = i
 		}
 	}
-	return nil, false
+	if matchIdx == -1 {
+		return nil, false
+	}
+	e := &ks.entries[matchIdx]
+	return &resolvedKey{ID: e.id, Policy: e.policy, Scopes: e.scopes, AdminRole: e.adminRole}, true
 }
 
 // hashPlaintextKeySHA256 returns the canonical `sha256$<hex>` string for a

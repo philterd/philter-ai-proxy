@@ -266,15 +266,20 @@ func adminRoleProxy(t *testing.T, entries []APIKeyEntry, adminTok string) *Proxy
 	cfg := defaultConfig()
 	cfg.Auth.APIKeys = entries
 	cfg.Admin.Enabled = true
-	cfg.Admin.Token = adminTok
+	// The production startup path hashes the admin token onto the Proxy
+	// struct and zeros the plaintext config field. Mirror that here so the
+	// test exercises the same comparison path.
+	hash := hashAdminToken(adminTok)
+	cfg.Admin.Token = ""
 	ks, err := newKeyStore(entries)
 	if err != nil {
 		t.Fatalf("newKeyStore: %v", err)
 	}
 	return &Proxy{
-		config:   cfg,
-		keyStore: ks,
-		usage:    newMemUsageStore(),
+		config:         cfg,
+		keyStore:       ks,
+		usage:          newMemUsageStore(),
+		adminTokenHash: hash,
 	}
 }
 
@@ -326,6 +331,169 @@ func TestAdminRole_InvalidAdminRoleRejectedAtValidation(t *testing.T) {
 	cfg.Auth.APIKeys = []APIKeyEntry{{Key: "alpha", AdminRole: "not-a-role"}}
 	if err := validateConfig(cfg); err == nil {
 		t.Error("expected validation error for unknown adminRole")
+	}
+}
+
+// --- modelForScopeCheck ----------------------------------------------------
+
+func TestModelForScopeCheck_VertexFromPath(t *testing.T) {
+	got := modelForScopeCheck("vertex",
+		"/v1/projects/p/locations/us-central1/publishers/google/models/gemini-1.5-pro:generateContent",
+		[]byte(`{"contents":[{"parts":[{"text":"hi"}]}]}`))
+	if got != "gemini-1.5-pro" {
+		t.Errorf("vertex model from URL: got %q, want gemini-1.5-pro", got)
+	}
+}
+
+func TestModelForScopeCheck_BedrockFromPath(t *testing.T) {
+	got := modelForScopeCheck("bedrock",
+		"/model/anthropic.claude-3-sonnet/converse",
+		[]byte(`{"messages":[]}`))
+	if got != "anthropic.claude-3-sonnet" {
+		t.Errorf("bedrock model from URL: got %q, want anthropic.claude-3-sonnet", got)
+	}
+}
+
+func TestModelForScopeCheck_OpenAIFromBody(t *testing.T) {
+	got := modelForScopeCheck("openai",
+		"/v1/chat/completions",
+		[]byte(`{"model":"gpt-4","messages":[]}`))
+	if got != "gpt-4" {
+		t.Errorf("openai model from body: got %q, want gpt-4", got)
+	}
+}
+
+// --- End-to-end: model scope enforcement for URL-model providers ----------
+
+func TestScopes_VertexModelAllowedViaURL(t *testing.T) {
+	philterSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write(explainJSON("hi", "doc-id", nil))
+	}))
+	defer philterSrv.Close()
+	vertexSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"candidates":[{"content":{"parts":[{"text":"ok"}]}}]}`))
+	}))
+	defer vertexSrv.Close()
+
+	cfg := testConfig(philterSrv.URL)
+	cfg.Providers.Vertex = VertexConfig{Project: "p", Location: "us-central1"}
+	entry := APIKeyEntry{
+		Key: "alpha",
+		Scopes: &APIKeyScopes{
+			Models: []string{"gemini-1.5-pro"}, // only gemini-1.5-pro allowed
+		},
+	}
+	cfg.Auth.APIKeys = []APIKeyEntry{entry}
+	ks, _ := newKeyStore([]APIKeyEntry{entry})
+	u, _ := url.Parse(vertexSrv.URL)
+	p := &Proxy{
+		config:            cfg,
+		philter:           testPhilterClient(philterSrv.URL),
+		vertexTarget:      u,
+		vertexClient:      http.DefaultClient,
+		vertexTokenSource: staticTokenSource{value: "tok"},
+		keyStore:          ks,
+	}
+
+	// Allowed model -> 200 (proves URL-extracted model satisfies the scope).
+	w := sendRequest(p,
+		"/v1/projects/p/locations/us-central1/publishers/google/models/gemini-1.5-pro:generateContent",
+		`{"contents":[{"parts":[{"text":"hi"}]}]}`,
+		map[string]string{"x-philter-proxy-key": "alpha"})
+	if w.Code != http.StatusOK {
+		t.Fatalf("URL model matches scope -> expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestScopes_VertexModelDeniedViaURL(t *testing.T) {
+	philterSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write(explainJSON("hi", "doc-id", nil))
+	}))
+	defer philterSrv.Close()
+	vertexSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("upstream must not be called when scope denies the request")
+	}))
+	defer vertexSrv.Close()
+
+	cfg := testConfig(philterSrv.URL)
+	cfg.Providers.Vertex = VertexConfig{Project: "p", Location: "us-central1"}
+	entry := APIKeyEntry{
+		Key: "alpha",
+		Scopes: &APIKeyScopes{
+			Models: []string{"gemini-1.5-pro"}, // only 1.5-pro
+		},
+	}
+	cfg.Auth.APIKeys = []APIKeyEntry{entry}
+	ks, _ := newKeyStore([]APIKeyEntry{entry})
+	u, _ := url.Parse(vertexSrv.URL)
+	p := &Proxy{
+		config:            cfg,
+		philter:           testPhilterClient(philterSrv.URL),
+		vertexTarget:      u,
+		vertexClient:      http.DefaultClient,
+		vertexTokenSource: staticTokenSource{value: "tok"},
+		keyStore:          ks,
+	}
+
+	// gemini-1.0-flash is NOT in the allow-list -> 403 scope_denied_model.
+	w := sendRequest(p,
+		"/v1/projects/p/locations/us-central1/publishers/google/models/gemini-1.0-flash:generateContent",
+		`{"contents":[{"parts":[{"text":"hi"}]}]}`,
+		map[string]string{"x-philter-proxy-key": "alpha"})
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d: %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "scope_denied_model") {
+		t.Errorf("expected scope_denied_model; got %s", w.Body.String())
+	}
+}
+
+func TestScopes_BedrockModelDeniedViaURL(t *testing.T) {
+	// The Bedrock "allow" case requires standing up SigV4 credentials and a
+	// fake AWS endpoint, which is more than this targeted test needs. The
+	// "deny" case 403s before any of that, so we drive it end-to-end via
+	// ServeHTTP; the "allow" case is covered by the direct
+	// modelForScopeCheck + enforceScopes assertion below.
+	philterSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write(explainJSON("hi", "doc-id", nil))
+	}))
+	defer philterSrv.Close()
+
+	cfg := testConfig(philterSrv.URL)
+	entry := APIKeyEntry{
+		Key: "alpha",
+		Scopes: &APIKeyScopes{
+			Models: []string{"anthropic.claude-3*"}, // glob: all claude-3 variants
+		},
+	}
+	cfg.Auth.APIKeys = []APIKeyEntry{entry}
+	ks, _ := newKeyStore([]APIKeyEntry{entry})
+	p := &Proxy{
+		config:        cfg,
+		philter:       testPhilterClient(philterSrv.URL),
+		keyStore:      ks,
+		bedrockRegion: "us-east-1", // any non-empty value to pass the disabled check
+	}
+
+	// Disallowed model -> 403 (the scope check denies before the handler).
+	w := sendRequest(p,
+		"/model/amazon.titan-text-express/converse",
+		`{"messages":[{"role":"user","content":[{"text":"hi"}]}]}`,
+		map[string]string{"x-philter-proxy-key": "alpha"})
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 for unallowed bedrock model, got %d: %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "scope_denied_model") {
+		t.Errorf("expected scope_denied_model; got %s", w.Body.String())
+	}
+
+	// Direct assertion: an allowed model from the URL satisfies the scope.
+	scope := &APIKeyScopes{Models: []string{"anthropic.claude-3*"}}
+	if d := enforceScopes(scope, "bedrock",
+		modelForScopeCheck("bedrock", "/model/anthropic.claude-3-sonnet/converse", nil),
+		"/model/anthropic.claude-3-sonnet/converse"); d != nil {
+		t.Errorf("URL-extracted bedrock model should match the glob; got denial %+v", d)
 	}
 }
 

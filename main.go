@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path"
 	"os/signal"
 	"strconv"
 	"strings"
@@ -155,6 +156,9 @@ type Proxy struct {
 	azureTarget             *url.URL // nil when Azure is not configured
 	azureClient             *http.Client
 	azureCred               tokenSource // non-nil only when Entra ID auth is enabled
+	vertexTarget            *url.URL    // nil when Vertex is not configured
+	vertexClient            *http.Client
+	vertexTokenSource       tokenSource // non-nil when Vertex is configured
 	openaiCompatibleTargets map[string]*url.URL
 	openaiCompatibleClients map[string]*http.Client
 	philter                 *PhilterClient
@@ -166,6 +170,23 @@ type Proxy struct {
 	usage                   UsageStore     // per-key token accounting; nil when quota & admin both off
 	quota                   *QuotaEnforcer // per-key token quotas; nil when disabled
 	cache                   ResponseCache  // response cache; nil when disabled
+	// trustedProxies are pre-parsed CIDRs corresponding to
+	// cfg.Listen.TrustedProxies. Used by clientIP() to decide whether to
+	// honor the X-Forwarded-For header from a given peer. Empty = never
+	// trust XFF.
+	trustedProxies []*net.IPNet
+	// adminTokenHash is the SHA256 of the configured admin token, populated
+	// at startup. The plaintext is held in memory only briefly during
+	// hashing; comparison uses constant-time fixed-length hash compare so
+	// neither the value nor its length leaks. Zero-valued [32]byte means no
+	// admin token is configured.
+	adminTokenHash [32]byte
+	// adminLimiter is a small per-IP token bucket gating /admin/usage. The
+	// regular request-path rate limiter does not cover admin routes (those
+	// return early before request-path logic), so a dedicated limiter
+	// provides defense-in-depth against brute-force attempts on the admin
+	// token. Configured at construction time.
+	adminLimiter *memoryBackend
 }
 
 type AuditEntry struct {
@@ -256,6 +277,23 @@ var hopByHopHeaders = map[string]bool{
 	"Upgrade":             true,
 }
 
+// shouldForwardHeader reports whether a header from the inbound request
+// should be copied onto the outbound provider request. Returns false for
+// hop-by-hop headers and for any X-Philter-* header (the proxy's auth key,
+// policy hints, and admin token are all in this namespace; none should
+// reach the LLM provider). Header keys from http.Header iteration are
+// already canonical-cased, so a prefix match against "X-Philter-" is
+// sufficient.
+func shouldForwardHeader(key string) bool {
+	if hopByHopHeaders[key] {
+		return false
+	}
+	if strings.HasPrefix(key, "X-Philter-") {
+		return false
+	}
+	return true
+}
+
 // writeJSONError writes the proxy's stable structured error response. The
 // shape is:
 //
@@ -269,6 +307,43 @@ var hopByHopHeaders = map[string]bool{
 // It writes a structured JSON body via writeJSONError and records the same
 // (type, code) on the audit entry so the audit log mirrors what the client
 // received. Every error path the proxy generates should funnel through here.
+// writeBadJSON emits a generic "invalid request body" client response while
+// logging the underlying parse error server-side. Echoing json.Unmarshal's
+// "invalid character ... at offset N" message to the client is harmless in
+// most cases but tells a probing attacker the structural sensitivity of the
+// parser and helps fingerprint version differences. The audit log carries
+// the request_id so an operator can trace the failure back to this server
+// log line.
+func (p *Proxy) writeBadJSON(w http.ResponseWriter, audit *AuditEntry, err error) {
+	slog.Warn("Invalid JSON request body", "error", err, "request_id", auditRequestID(audit))
+	writeError(w, audit, http.StatusBadRequest, "invalid_request", "bad_json", "invalid JSON in request body")
+}
+
+// writeMarshalFailed emits a generic 500 while logging the marshal error
+// server-side. Reaching this path means an internal data structure failed
+// to re-serialize after redaction; the raw error references field names
+// and struct shapes that are implementation details.
+func (p *Proxy) writeMarshalFailed(w http.ResponseWriter, audit *AuditEntry, err error) {
+	slog.Error("Failed to marshal redacted request", "error", err, "request_id", auditRequestID(audit))
+	writeError(w, audit, http.StatusInternalServerError, "internal_error", "marshal_failed", "failed to re-serialize redacted request")
+}
+
+// writeBodyReadError emits a generic 400 for client-body read failures while
+// logging the underlying error server-side.
+func (p *Proxy) writeBodyReadError(w http.ResponseWriter, audit *AuditEntry, err error) {
+	slog.Warn("Failed to read request body", "error", err, "request_id", auditRequestID(audit))
+	writeError(w, audit, http.StatusBadRequest, "invalid_request", "body_read", "failed to read request body")
+}
+
+// auditRequestID returns the request_id from the audit entry, or empty if
+// the entry is nil. Used by the error helpers above for server-side logs.
+func auditRequestID(a *AuditEntry) string {
+	if a == nil {
+		return ""
+	}
+	return a.RequestID
+}
+
 func writeError(w http.ResponseWriter, audit *AuditEntry, status int, errType, code, message string) {
 	if audit != nil {
 		audit.ErrorType = errType
@@ -295,15 +370,89 @@ func writeJSONError(w http.ResponseWriter, status int, errType, code, message, r
 	w.Write(payload)
 }
 
+// isCanonicalPath reports whether `p` is already in canonical form: it
+// equals `path.Clean(p)`. The check rejects any path containing `.` /
+// `..` segments, redundant slashes, or trailing slashes (other than the
+// root `/`). This is deliberately strict: real LLM API clients construct
+// canonical paths, and refusing the alternatives forecloses every flavor
+// of path-traversal-based scope bypass without the proxy needing to
+// re-canonicalize at every path-sensitive site.
+//
+// Edge case: path.Clean("") returns ".". The check still rejects "".
+func isCanonicalPath(p string) bool {
+	if p == "" {
+		return false
+	}
+	return path.Clean(p) == p
+}
+
+// maxInboundRequestIDLen is the upper bound on the length of a client-
+// supplied X-Request-Id the proxy will adopt. Anything longer is replaced
+// with a freshly-generated UUID. 128 bytes is comfortably larger than any
+// standard identifier (UUID is 36 chars, ULID 26, W3C trace-id 32 hex chars
+// + 16 hex chars span) while bounding memory amplification.
+const maxInboundRequestIDLen = 128
+
+// sanitizeInboundRequestID returns the client-supplied request ID when it
+// is within length bounds and contains only printable ASCII, otherwise
+// returns empty (signaling the caller should mint a fresh UUID). The
+// constraints serve two purposes:
+//
+//  1. Memory amplification cap. The request_id is propagated into the
+//     audit-log entry and possibly other operator-visible logs; without a
+//     length bound, a 10MB header value would balloon every log line.
+//  2. Log-injection / structured-log poisoning. Control characters (CR/LF
+//     in particular) and non-ASCII bytes can break log parsers downstream.
+//     Restricting to printable ASCII removes the surface.
+func sanitizeInboundRequestID(id string) string {
+	if id == "" || len(id) > maxInboundRequestIDLen {
+		return ""
+	}
+	for i := 0; i < len(id); i++ {
+		c := id[i]
+		if c < 0x20 || c > 0x7E {
+			return ""
+		}
+	}
+	return id
+}
+
+// safeQueryParams is the allow-list of query parameters whose values may
+// appear verbatim in operator-facing logs (slog warnings, error log lines,
+// etc.). Every other parameter is replaced with "REDACTED" before logging
+// because the proxy cannot statically know which knobs a given provider
+// (or a future one) treats as a credential. Erring toward redaction is
+// strictly safer than maintaining an ever-growing list of sensitive
+// parameter names. The allow-list covers the few well-known routing /
+// versioning knobs LLM providers use today; add to it only after
+// confirming the value is never sensitive across all supported providers.
+var safeQueryParams = map[string]bool{
+	"api-version": true, // Azure OpenAI routing
+	"alt":         true, // Vertex AI: alt=sse for streaming
+	"format":      true, // /admin/usage CSV vs JSON
+	"prettyPrint": true, // Google APIs convention
+	"prettyprint": true,
+}
+
+// sanitizeQuery redacts every query parameter that is not in
+// safeQueryParams. Used for log lines that include a request URL (e.g. the
+// upstream-failure warning) so credentials accidentally placed in the query
+// string by a misbehaving client never reach disk.
 func sanitizeQuery(rawQuery string) string {
 	params, err := url.ParseQuery(rawQuery)
 	if err != nil {
-		return rawQuery
+		// Unparseable: the safest action is to drop the whole query rather
+		// than echo a possibly-malformed credential string back into the log.
+		return "REDACTED"
 	}
-	for _, sensitive := range []string{"key", "token", "api_key"} {
-		if params.Has(sensitive) {
-			params.Set(sensitive, "REDACTED")
+	for name, vals := range params {
+		if safeQueryParams[name] {
+			continue
 		}
+		for i := range vals {
+			vals[i] = "REDACTED"
+		}
+		params[name] = vals
 	}
 	return params.Encode()
 }
@@ -402,7 +551,9 @@ func extractTokenUsage(provider string, body []byte) (promptTokens, completionTo
 	case "anthropic":
 		usage, _ := raw["usage"].(map[string]interface{})
 		return fi(usage, "input_tokens"), fi(usage, "output_tokens")
-	case "gemini":
+	case "gemini", "vertex":
+		// Vertex returns the same Gemini schema (usageMetadata with
+		// promptTokenCount / candidatesTokenCount).
 		meta, _ := raw["usageMetadata"].(map[string]interface{})
 		return fi(meta, "promptTokenCount"), fi(meta, "candidatesTokenCount")
 	case "ollama":
@@ -440,7 +591,7 @@ func (p *Proxy) forwardToProvider(w http.ResponseWriter, origReq *http.Request, 
 	}
 
 	for key, values := range origReq.Header {
-		if hopByHopHeaders[key] {
+		if !shouldForwardHeader(key) {
 			continue
 		}
 		for _, v := range values {
@@ -577,7 +728,14 @@ func newProviderTransport(tlsCfg *tls.Config, t ProviderTimeouts) *http.Transpor
 }
 
 func buildTLSConfig(skipVerify bool, caCertPath string) (*tls.Config, error) {
-	tlsConfig := &tls.Config{InsecureSkipVerify: skipVerify}
+	tlsConfig := &tls.Config{
+		InsecureSkipVerify: skipVerify,
+		// Pin TLS 1.2 as the minimum. Go 1.25 already defaults to TLS 1.2,
+		// but compliance audits routinely flag implicit defaults; making
+		// this explicit closes that finding and survives any future
+		// stdlib default change.
+		MinVersion: tls.VersionTLS12,
+	}
 
 	if caCertPath != "" && !skipVerify {
 		caCert, err := os.ReadFile(caCertPath)
@@ -621,12 +779,110 @@ func (a *AuditEntry) recordFilterResult(fr FilterResponse) {
 	}
 }
 
-func clientIP(r *http.Request) string {
-	if fwd := r.Header.Get("X-Forwarded-For"); fwd != "" {
-		return strings.SplitN(fwd, ",", 2)[0]
+// hashAdminToken returns the SHA256 of the configured admin token, or the
+// zero array when no token is configured. The hash is kept on the Proxy
+// struct so the comparison path in handleAdminUsage never touches the
+// plaintext token after startup.
+func hashAdminToken(token string) [32]byte {
+	if token == "" {
+		return [32]byte{}
 	}
-	host, _, _ := strings.Cut(r.RemoteAddr, ":")
-	return host
+	return sha256.Sum256([]byte(token))
+}
+
+// isZeroHash reports whether the SHA256 hash is all zeros, i.e. no admin
+// token was configured.
+func isZeroHash(h [32]byte) bool {
+	for _, b := range h {
+		if b != 0 {
+			return false
+		}
+	}
+	return true
+}
+
+// noFollowRedirects is the CheckRedirect policy applied to every outbound
+// http.Client the proxy constructs. LLM APIs do not use redirects, so the
+// only callers a 3xx benefits are a compromised upstream or a DNS-hijacked
+// host attempting to siphon credentials. Returning ErrUseLastResponse tells
+// net/http to surface the 3xx response unchanged, never re-sending the
+// request (with its Authorization / api-key / signed-SigV4 headers) to the
+// redirect target.
+func noFollowRedirects(*http.Request, []*http.Request) error {
+	return http.ErrUseLastResponse
+}
+
+// disableRedirects sets the no-follow policy on `c` and returns it. Used to
+// keep the construction call sites compact (`disableRedirects(&http.Client{...})`).
+func disableRedirects(c *http.Client) *http.Client {
+	c.CheckRedirect = noFollowRedirects
+	return c
+}
+
+// parseTrustedProxies converts the operator-supplied CIDR strings into
+// *net.IPNet values for clientIP() to consult on every request. Invalid
+// entries are rejected at validateConfig before we reach this point; the
+// double-check here returns nil for any unparseable entry so a startup typo
+// (caught upstream) cannot cause a runtime panic.
+func parseTrustedProxies(cidrs []string) []*net.IPNet {
+	out := make([]*net.IPNet, 0, len(cidrs))
+	for _, c := range cidrs {
+		_, ipnet, err := net.ParseCIDR(c)
+		if err != nil || ipnet == nil {
+			continue
+		}
+		out = append(out, ipnet)
+	}
+	return out
+}
+
+// clientIP returns the apparent client IP for `r`. The X-Forwarded-For header
+// is consulted ONLY when the immediate TCP peer (`r.RemoteAddr`) is inside one
+// of the configured trustedProxies CIDRs; otherwise the header is ignored to
+// prevent untrusted clients from spoofing their source IP and evading per-IP
+// rate limits or audit-log correlation. The empty-trustedProxies default is
+// therefore "never trust XFF", which is the safe behavior when the proxy is
+// exposed directly to the internet.
+func (p *Proxy) clientIP(r *http.Request) string {
+	peer := remoteHost(r.RemoteAddr)
+	if peerTrusted(peer, p.trustedProxies) {
+		if fwd := r.Header.Get("X-Forwarded-For"); fwd != "" {
+			// Honor the left-most entry, which is the original client IP per
+			// the X-Forwarded-For convention. Trim whitespace because some
+			// proxies emit ", "-separated lists.
+			first := strings.SplitN(fwd, ",", 2)[0]
+			return strings.TrimSpace(first)
+		}
+	}
+	return peer
+}
+
+// remoteHost extracts the IP portion of a `host:port` address. Supports IPv4
+// and IPv6 (the bracketed form `[::1]:8080`).
+func remoteHost(addr string) string {
+	h, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		return addr
+	}
+	return h
+}
+
+// peerTrusted reports whether the connecting peer IP falls inside any of the
+// configured trusted-proxy CIDRs.
+func peerTrusted(peer string, trusted []*net.IPNet) bool {
+	if len(trusted) == 0 || peer == "" {
+		return false
+	}
+	ip := net.ParseIP(peer)
+	if ip == nil {
+		return false
+	}
+	for _, cidr := range trusted {
+		if cidr.Contains(ip) {
+			return true
+		}
+	}
+	return false
 }
 
 func redactAny(reqCtx context.Context, filter filterFunc, v any, philterCtx, docID, policy string, audit *AuditEntry) (any, error) {
@@ -726,7 +982,7 @@ func (p *Proxy) captureFromProvider(origReq *http.Request, target *url.URL, clie
 	}
 
 	for key, values := range origReq.Header {
-		if hopByHopHeaders[key] {
+		if !shouldForwardHeader(key) {
 			continue
 		}
 		for _, v := range values {
@@ -1031,9 +1287,12 @@ func sha256Hex(b []byte) string {
 }
 
 func newBedrockHTTPClient(skipVerify bool, t ProviderTimeouts) *http.Client {
-	return &http.Client{
-		Transport: newProviderTransport(&tls.Config{InsecureSkipVerify: skipVerify}, t),
-	}
+	return disableRedirects(&http.Client{
+		Transport: newProviderTransport(&tls.Config{
+			InsecureSkipVerify: skipVerify,
+			MinVersion:         tls.VersionTLS12,
+		}, t),
+	})
 }
 
 func (p *Proxy) signBedrockRequest(ctx context.Context, req *http.Request, body []byte) error {
@@ -1048,7 +1307,7 @@ func (p *Proxy) signBedrockRequest(ctx context.Context, req *http.Request, body 
 func (p *Proxy) handleBedrock(w http.ResponseWriter, r *http.Request, bodyBytes []byte, philterCtx string, docID string, policyName string, audit *AuditEntry, outbound OutboundConfig) {
 	var req BedrockConverseRequest
 	if err := json.Unmarshal(bodyBytes, &req); err != nil {
-		writeError(w, audit, http.StatusBadRequest, "invalid_request", "bad_json", err.Error())
+		p.writeBadJSON(w, audit, err)
 		return
 	}
 
@@ -1084,7 +1343,7 @@ func (p *Proxy) handleBedrock(w http.ResponseWriter, r *http.Request, bodyBytes 
 
 	body, err := json.Marshal(req)
 	if err != nil {
-		writeError(w, audit, http.StatusInternalServerError, "internal_error", "marshal_failed", err.Error())
+		p.writeMarshalFailed(w, audit, err)
 		return
 	}
 
@@ -1306,8 +1565,12 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// Establish the request_id up front so every downstream error path can
 	// reference it. An inbound X-Request-Id is honored for tracing across
-	// hops; otherwise we generate one.
-	requestID := r.Header.Get("X-Request-Id")
+	// hops, but only when it looks like a sane identifier: capped at 128
+	// printable ASCII characters and free of control bytes. Otherwise we
+	// generate a fresh UUID. This bounds memory amplification (a client
+	// cannot ship a multi-megabyte X-Request-Id that gets retained in audit
+	// logs) and rules out log-injection vectors via control characters.
+	requestID := sanitizeInboundRequestID(r.Header.Get("X-Request-Id"))
 	if requestID == "" {
 		requestID = uuid.New().String()
 	}
@@ -1323,7 +1586,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	audit := &AuditEntry{
 		RequestID: requestID,
 		Direction: "inbound",
-		ClientIP:  clientIP(r),
+		ClientIP:  p.clientIP(r),
 		TraceID:   traceIDFromContext(r.Context()),
 	}
 	rc := newResponseCapture(w)
@@ -1343,14 +1606,33 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			for entityType, count := range audit.EntityTypeCounts {
 				p.metrics.entitiesRedacted.WithLabelValues(entityType, audit.Provider).Add(float64(count))
 			}
-			if audit.PromptTokens > 0 {
-				p.metrics.promptTokensTotal.WithLabelValues(audit.Provider, audit.Model).Add(float64(audit.PromptTokens))
-			}
-			if audit.CompletionTokens > 0 {
-				p.metrics.completionTokensTotal.WithLabelValues(audit.Provider, audit.Model).Add(float64(audit.CompletionTokens))
+			if audit.PromptTokens > 0 || audit.CompletionTokens > 0 {
+				// modelLabel is reduced through the per-provider
+				// cardinality cap so a client cannot drive Prometheus
+				// OOM by emitting one request per random model string.
+				modelLabel := p.metrics.modelLabels.reduce(audit.Provider, audit.Model)
+				if audit.PromptTokens > 0 {
+					p.metrics.promptTokensTotal.WithLabelValues(audit.Provider, modelLabel).Add(float64(audit.PromptTokens))
+				}
+				if audit.CompletionTokens > 0 {
+					p.metrics.completionTokensTotal.WithLabelValues(audit.Provider, modelLabel).Add(float64(audit.CompletionTokens))
+				}
 			}
 		}
 	}()
+
+	// Path canonicalization gate. We reject any request whose path is not
+	// already in canonical form (i.e. path.Clean(p) != p). This closes a
+	// scope-bypass class: a key restricted to `/v1/chat/` via per-key
+	// scopes would otherwise accept `/v1/chat/../v1/embeddings/x` (the
+	// HasPrefix scope check passes) and forward the un-normalized path to
+	// an upstream that normalizes it before routing -- effectively
+	// reaching `/v1/embeddings/x`. Refusing non-canonical paths up front
+	// is simpler and safer than re-normalizing every path-matching site.
+	if !isCanonicalPath(r.URL.Path) {
+		writeError(rc, audit, http.StatusBadRequest, "invalid_request", "path_not_canonical", "request path is not in canonical form")
+		return
+	}
 
 	// API key authentication. Enforced only when keys are configured; disabled by default.
 	// clientKeyID is the stable per-entry identifier used downstream for
@@ -1388,7 +1670,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if p.rateLimiter != nil {
 		id := clientKeyID
 		if id == "" {
-			id = clientIP(r)
+			id = p.clientIP(r)
 		}
 		if allowed, retryAfter := p.rateLimiter.Allow(r.Context(), id); !allowed {
 			slog.Warn("Rate limit exceeded", "client", id, "request_id", requestID)
@@ -1459,7 +1741,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			writeError(rc, audit, http.StatusRequestEntityTooLarge, "payload_too_large", "request_body_too_large", "request body exceeds the maximum allowed size")
 			return
 		}
-		writeError(rc, audit, http.StatusBadRequest, "invalid_request", "body_read", err.Error())
+		p.writeBodyReadError(rc, audit, err)
 		return
 	}
 
@@ -1486,10 +1768,13 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// (backwards compatible); a configured allow-list rejects requests outside
 	// the key's scope with HTTP 403. The audit entry already carries the key ID
 	// from auth, so the structured-error fields and the existing audit emission
-	// give end-to-end correlation by request_id.
-	if denial := enforceScopes(keyScopes, providerName, model, r.URL.Path); denial != nil {
+	// give end-to-end correlation by request_id. modelForScopeCheck consults
+	// the URL for providers (vertex, bedrock) that carry the model there rather
+	// than in the body.
+	scopeModel := modelForScopeCheck(providerName, r.URL.Path, bodyBytes)
+	if denial := enforceScopes(keyScopes, providerName, scopeModel, r.URL.Path); denial != nil {
 		audit.Provider = providerName
-		audit.Model = model
+		audit.Model = scopeModel
 		slog.Warn("Per-key scope denied", "client", clientKeyID, "field", denial.Field, "value", denial.Value, "request_id", requestID)
 		writeError(rc, audit, http.StatusForbidden, "forbidden", denial.Code, "request not permitted by API key scope")
 		return
@@ -1548,6 +1833,13 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	} else if strings.HasPrefix(r.URL.Path, "/v1/messages") {
 		audit.Provider = "anthropic"
 		p.handleAnthropic(rc, r, bodyBytes, philter_context, philter_document_id, philter_policy_name, audit, route.Outbound)
+	} else if isVertexPath(r.URL.Path) {
+		audit.Provider = "vertex"
+		if p.vertexTarget == nil {
+			writeError(rc, audit, http.StatusNotFound, "not_found", "vertex_disabled", "vertex provider not configured")
+		} else {
+			p.handleVertex(rc, r, bodyBytes, philter_context, philter_document_id, philter_policy_name, audit, route.Outbound)
+		}
 	} else if strings.Contains(strings.ToLower(r.URL.Path), "generatecontent") {
 		audit.Provider = "gemini"
 		p.handleGeminiNative(rc, r, bodyBytes, philter_context, philter_document_id, philter_policy_name, audit, route.Outbound)
@@ -1608,6 +1900,12 @@ func resolveProviderName(path, openaiCompatName string) string {
 	if strings.HasPrefix(path, "/v1/messages") {
 		return "anthropic"
 	}
+	// Vertex must come before the generic Gemini check: Vertex paths also
+	// contain "generatecontent" but resolve to a separate provider with a
+	// different endpoint and auth model.
+	if isVertexPath(path) {
+		return "vertex"
+	}
 	if strings.Contains(strings.ToLower(path), "generatecontent") {
 		return "gemini"
 	}
@@ -1630,6 +1928,26 @@ type scopeDenial struct {
 	Code  string
 	Field string // "provider", "model", "path"
 	Value string
+}
+
+// modelForScopeCheck returns the request's model identifier for per-key
+// scope enforcement. Most providers carry the model in the request body;
+// Vertex and Bedrock embed it in the URL path. Without this dispatch, a
+// per-key `scopes.models` allow-list configured for a Vertex or Bedrock key
+// would deny every request (the body has no `model` field, so the value the
+// scope check sees would be empty).
+func modelForScopeCheck(provider, path string, bodyBytes []byte) string {
+	switch provider {
+	case "vertex":
+		if m := vertexModelFromPath(path); m != "" {
+			return m
+		}
+	case "bedrock":
+		if m := bedrockModelFromPath(path); m != "" {
+			return m
+		}
+	}
+	return extractModel(bodyBytes)
 }
 
 // matchesScopeEntry implements the matching grammar for one Models / Paths /
@@ -1880,7 +2198,7 @@ func isStreamingRequest(path string, body []byte) bool {
 func (p *Proxy) handleOllamaGenerate(w http.ResponseWriter, r *http.Request, bodyBytes []byte, context string, documentId string, policyName string, audit *AuditEntry, outbound OutboundConfig) {
 	var o OllamaGenerateRequest
 	if err := json.Unmarshal(bodyBytes, &o); err != nil {
-		writeError(w, audit, http.StatusBadRequest, "invalid_request", "bad_json", err.Error())
+		p.writeBadJSON(w, audit, err)
 		return
 	}
 
@@ -1908,7 +2226,7 @@ func (p *Proxy) handleOllamaGenerate(w http.ResponseWriter, r *http.Request, bod
 
 	j, err := json.Marshal(o)
 	if err != nil {
-		writeError(w, audit, http.StatusInternalServerError, "internal_error", "marshal_failed", err.Error())
+		p.writeMarshalFailed(w, audit, err)
 		return
 	}
 
@@ -1923,7 +2241,7 @@ func (p *Proxy) handleOllamaGenerate(w http.ResponseWriter, r *http.Request, bod
 func (p *Proxy) handleOllamaChat(w http.ResponseWriter, r *http.Request, bodyBytes []byte, context string, documentId string, policyName string, audit *AuditEntry, outbound OutboundConfig) {
 	var o OllamaChatRequest
 	if err := json.Unmarshal(bodyBytes, &o); err != nil {
-		writeError(w, audit, http.StatusBadRequest, "invalid_request", "bad_json", err.Error())
+		p.writeBadJSON(w, audit, err)
 		return
 	}
 
@@ -1941,7 +2259,7 @@ func (p *Proxy) handleOllamaChat(w http.ResponseWriter, r *http.Request, bodyByt
 
 	j, err := json.Marshal(o)
 	if err != nil {
-		writeError(w, audit, http.StatusInternalServerError, "internal_error", "marshal_failed", err.Error())
+		p.writeMarshalFailed(w, audit, err)
 		return
 	}
 
@@ -1954,9 +2272,16 @@ func (p *Proxy) handleOllamaChat(w http.ResponseWriter, r *http.Request, bodyByt
 }
 
 func (p *Proxy) handleGeminiNative(w http.ResponseWriter, r *http.Request, bodyBytes []byte, context string, documentId string, policyName string, audit *AuditEntry, outbound OutboundConfig) {
+	p.handleGeminiShaped(w, r, bodyBytes, context, documentId, policyName, audit, outbound, p.geminiTarget, p.geminiClient, "gemini")
+}
+
+// handleGeminiShaped redacts a Gemini-shaped request and forwards it to the
+// given target/client/providerName. Used by the public Gemini provider and by
+// Vertex AI (whose request and response bodies are the same Gemini schema).
+func (p *Proxy) handleGeminiShaped(w http.ResponseWriter, r *http.Request, bodyBytes []byte, context string, documentId string, policyName string, audit *AuditEntry, outbound OutboundConfig, target *url.URL, client *http.Client, providerName string) {
 	var g GeminiRequest
 	if err := json.Unmarshal(bodyBytes, &g); err != nil {
-		writeError(w, audit, http.StatusBadRequest, "invalid_request", "bad_json", err.Error())
+		p.writeBadJSON(w, audit, err)
 		return
 	}
 
@@ -1989,16 +2314,16 @@ loop:
 
 	j, err := json.Marshal(g)
 	if err != nil {
-		writeError(w, audit, http.StatusInternalServerError, "internal_error", "marshal_failed", err.Error())
+		p.writeMarshalFailed(w, audit, err)
 		return
 	}
 
 	if outbound.Enabled {
-		p.forwardWithOutboundScan(w, r, p.geminiTarget, p.geminiClient, j, "gemini",
+		p.forwardWithOutboundScan(w, r, target, client, j, providerName,
 			context, documentId, policyName, outbound.Action, audit, p.scanGeminiResponse)
 		return
 	}
-	p.forwardToProvider(w, r, p.geminiTarget, p.geminiClient, j, "gemini", audit)
+	p.forwardToProvider(w, r, target, client, j, providerName, audit)
 }
 
 func (p *Proxy) handleOpenAI(w http.ResponseWriter, r *http.Request, bodyBytes []byte, context string, documentId string, policyName string, audit *AuditEntry, outbound OutboundConfig) {
@@ -2016,7 +2341,7 @@ func (p *Proxy) handleOpenAICompatible(w http.ResponseWriter, r *http.Request, b
 	// provider.
 	var root map[string]json.RawMessage
 	if err := json.Unmarshal(bodyBytes, &root); err != nil {
-		writeError(w, audit, http.StatusBadRequest, "invalid_request", "bad_json", err.Error())
+		p.writeBadJSON(w, audit, err)
 		return
 	}
 
@@ -2037,7 +2362,7 @@ func (p *Proxy) handleOpenAICompatible(w http.ResponseWriter, r *http.Request, b
 
 	j, err := json.Marshal(root)
 	if err != nil {
-		writeError(w, audit, http.StatusInternalServerError, "internal_error", "marshal_failed", err.Error())
+		p.writeMarshalFailed(w, audit, err)
 		return
 	}
 
@@ -2052,7 +2377,7 @@ func (p *Proxy) handleOpenAICompatible(w http.ResponseWriter, r *http.Request, b
 func (p *Proxy) handleAnthropic(w http.ResponseWriter, r *http.Request, bodyBytes []byte, context string, documentId string, policyName string, audit *AuditEntry, outbound OutboundConfig) {
 	var a AnthropicRequest
 	if err := json.Unmarshal(bodyBytes, &a); err != nil {
-		writeError(w, audit, http.StatusBadRequest, "invalid_request", "bad_json", err.Error())
+		p.writeBadJSON(w, audit, err)
 		return
 	}
 
@@ -2137,7 +2462,7 @@ msgloop:
 
 	j, err := json.Marshal(a)
 	if err != nil {
-		writeError(w, audit, http.StatusInternalServerError, "internal_error", "marshal_failed", err.Error())
+		p.writeMarshalFailed(w, audit, err)
 		return
 	}
 
@@ -2246,9 +2571,9 @@ func main() {
 		os.Exit(1)
 	}
 
-	philterHTTPClient := &http.Client{
+	philterHTTPClient := disableRedirects(&http.Client{
 		Transport: newProviderTransport(philterTLSConfig, cfg.Philter.Timeouts),
-	}
+	})
 	philterHTTPClient = instrumentTransport(philterHTTPClient, tracingActive, "philter.filter")
 	philterClient := newPhilterClient(philterHTTPClient, cfg.Philter.Endpoint, cfg.Philter.Retry, cfg.Philter.CircuitBreaker)
 
@@ -2282,9 +2607,9 @@ func main() {
 			slog.Error("Provider TLS configuration error", "provider", prov.name, "error", err)
 			os.Exit(1)
 		}
-		clients[i] = &http.Client{
+		clients[i] = disableRedirects(&http.Client{
 			Transport: newProviderTransport(tlsCfg, prov.config.Timeouts),
-		}
+		})
 		clients[i] = instrumentTransport(clients[i], tracingActive, "provider."+prov.name)
 	}
 
@@ -2339,7 +2664,7 @@ func main() {
 			os.Exit(1)
 		}
 		openaiCompatClients[name] = instrumentTransport(
-			&http.Client{Transport: newProviderTransport(tlsCfg, pc.Timeouts)},
+			disableRedirects(&http.Client{Transport: newProviderTransport(tlsCfg, pc.Timeouts)}),
 			tracingActive, "provider."+name,
 		)
 		slog.Info("OpenAI-compatible provider configured", "name", name, "target", pc.Target)
@@ -2365,7 +2690,7 @@ func main() {
 			os.Exit(1)
 		}
 		azureClient = instrumentTransport(
-			&http.Client{Transport: newProviderTransport(tlsCfg, cfg.Providers.Azure.Timeouts)},
+			disableRedirects(&http.Client{Transport: newProviderTransport(tlsCfg, cfg.Providers.Azure.Timeouts)}),
 			tracingActive, "provider.azure",
 		)
 		if cfg.Providers.Azure.EntraID {
@@ -2380,6 +2705,40 @@ func main() {
 			"target", cfg.Providers.Azure.Target,
 			"auth", azureAuthMode(cfg.Providers.Azure.EntraID),
 			"apiVersionDefault", cfg.Providers.Azure.APIVersion)
+	}
+
+	var vertexTarget *url.URL
+	var vertexClient *http.Client
+	var vertexTokenSrc tokenSource
+	if cfg.Providers.Vertex.Project != "" {
+		vertexTarget, err = vertexTargetURL(cfg.Providers.Vertex)
+		if err != nil {
+			slog.Error("Invalid Vertex configuration", "error", err)
+			os.Exit(1)
+		}
+		verify := true
+		if cfg.Providers.Vertex.TLSVerify != nil {
+			verify = *cfg.Providers.Vertex.TLSVerify
+		}
+		tlsCfg, err := buildTLSConfig(!verify, "")
+		if err != nil {
+			slog.Error("Vertex TLS configuration error", "error", err)
+			os.Exit(1)
+		}
+		vertexClient = instrumentTransport(
+			disableRedirects(&http.Client{Transport: newProviderTransport(tlsCfg, cfg.Providers.Vertex.Timeouts)}),
+			tracingActive, "provider.vertex",
+		)
+		ts, err := newVertexTokenProvider(context.Background())
+		if err != nil {
+			slog.Error("Failed to initialize Vertex ADC credential", "error", err)
+			os.Exit(1)
+		}
+		vertexTokenSrc = ts
+		slog.Info("Vertex AI provider configured",
+			"project", cfg.Providers.Vertex.Project,
+			"location", cfg.Providers.Vertex.Location,
+			"target", vertexTarget.String())
 	}
 
 	var proxyMetrics *ProxyMetrics
@@ -2478,6 +2837,9 @@ func main() {
 		azureTarget:             azureTarget,
 		azureClient:             azureClient,
 		azureCred:               azureCred,
+		vertexTarget:            vertexTarget,
+		vertexClient:            vertexClient,
+		vertexTokenSource:       vertexTokenSrc,
 		openaiCompatibleTargets: openaiCompatTargets,
 		openaiCompatibleClients: openaiCompatClients,
 		philter:                 philterClient,
@@ -2489,7 +2851,15 @@ func main() {
 		usage:                   usageStore,
 		quota:                   quotaEnforcer,
 		cache:                   responseCache,
+		trustedProxies:          parseTrustedProxies(cfg.Listen.TrustedProxies),
+		adminTokenHash:          hashAdminToken(cfg.Admin.Token),
+		adminLimiter:            newMemoryBackend(),
 	}
+	// Clear the plaintext admin token from the config now that we have its
+	// hash on the Proxy. Subsequent code paths read the hash, not the
+	// plaintext; keeping the cleartext field zeroed minimizes its lifetime
+	// in process memory.
+	cfg.Admin.Token = ""
 
 	port := fmt.Sprintf("%d", cfg.Listen.Port)
 	cert_file := cfg.Listen.Cert
@@ -2513,6 +2883,7 @@ func main() {
 		srv.TLSConfig = &tls.Config{
 			ClientAuth: tls.RequireAndVerifyClientCert,
 			ClientCAs:  pool,
+			MinVersion: tls.VersionTLS12,
 		}
 		slog.Info("mTLS enabled", "clientCA", cfg.Listen.ClientCA)
 	}
@@ -2545,6 +2916,9 @@ func main() {
 	}
 	if srv.TLSConfig == nil {
 		srv.TLSConfig = &tls.Config{}
+	}
+	if srv.TLSConfig.MinVersion == 0 {
+		srv.TLSConfig.MinVersion = tls.VersionTLS12
 	}
 	srv.TLSConfig.Certificates = append(srv.TLSConfig.Certificates, cert)
 

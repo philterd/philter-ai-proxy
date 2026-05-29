@@ -20,7 +20,7 @@ func newQuotaEnforcer(cfg QuotaConfig, apiKeys []APIKeyEntry, store UsageStore) 
 	q := &QuotaEnforcer{store: store, def: cfg.Default, perKey: make(map[string]QuotaLimits)}
 	for i, e := range apiKeys {
 		if e.Quota != nil {
-			q.perKey[keyIDForIndex(i)] = *e.Quota
+			q.perKey[keyIDFor(e, i)] = *e.Quota
 		}
 	}
 	return q
