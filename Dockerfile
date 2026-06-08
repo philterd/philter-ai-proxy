@@ -3,7 +3,10 @@ WORKDIR /build
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN go build -o philter-ai-proxy .
+# VERSION is stamped into the binary (reported by --version). Pass it at build
+# time: docker build --build-arg VERSION=v1.0.0 .  Defaults to "dev".
+ARG VERSION=dev
+RUN go build -ldflags "-X main.version=${VERSION}" -o philter-ai-proxy .
 
 FROM alpine:3.21
 RUN apk add --no-cache ca-certificates openssl

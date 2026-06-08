@@ -10,14 +10,14 @@ import (
 func TestParseCLI_ConfigFlag(t *testing.T) {
 	t.Setenv("PHILTER_PROXY_CONFIG", "")
 	var buf bytes.Buffer
-	path, validate, err := parseCLI([]string{"--config", "/tmp/foo.yaml"}, &buf)
+	opts, err := parseCLI([]string{"--config", "/tmp/foo.yaml"}, &buf)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if path != "/tmp/foo.yaml" {
-		t.Errorf("path: got %q", path)
+	if opts.configPath != "/tmp/foo.yaml" {
+		t.Errorf("path: got %q", opts.configPath)
 	}
-	if validate {
+	if opts.validateOnly {
 		t.Error("validate should be false")
 	}
 }
@@ -25,14 +25,14 @@ func TestParseCLI_ConfigFlag(t *testing.T) {
 func TestParseCLI_ValidateFlag(t *testing.T) {
 	t.Setenv("PHILTER_PROXY_CONFIG", "")
 	var buf bytes.Buffer
-	path, validate, err := parseCLI([]string{"--validate-config", "--config", "/tmp/bar.yaml"}, &buf)
+	opts, err := parseCLI([]string{"--validate-config", "--config", "/tmp/bar.yaml"}, &buf)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if path != "/tmp/bar.yaml" {
-		t.Errorf("path: got %q", path)
+	if opts.configPath != "/tmp/bar.yaml" {
+		t.Errorf("path: got %q", opts.configPath)
 	}
-	if !validate {
+	if !opts.validateOnly {
 		t.Error("validate should be true")
 	}
 }
@@ -40,32 +40,54 @@ func TestParseCLI_ValidateFlag(t *testing.T) {
 func TestParseCLI_EnvFallback(t *testing.T) {
 	t.Setenv("PHILTER_PROXY_CONFIG", "/etc/from-env.yaml")
 	var buf bytes.Buffer
-	path, _, err := parseCLI([]string{}, &buf)
+	opts, err := parseCLI([]string{}, &buf)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if path != "/etc/from-env.yaml" {
-		t.Errorf("expected env var fallback, got %q", path)
+	if opts.configPath != "/etc/from-env.yaml" {
+		t.Errorf("expected env var fallback, got %q", opts.configPath)
 	}
 }
 
 func TestParseCLI_FlagOverridesEnv(t *testing.T) {
 	t.Setenv("PHILTER_PROXY_CONFIG", "/etc/from-env.yaml")
 	var buf bytes.Buffer
-	path, _, err := parseCLI([]string{"--config", "/tmp/from-flag.yaml"}, &buf)
+	opts, err := parseCLI([]string{"--config", "/tmp/from-flag.yaml"}, &buf)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if path != "/tmp/from-flag.yaml" {
-		t.Errorf("expected --config to override env, got %q", path)
+	if opts.configPath != "/tmp/from-flag.yaml" {
+		t.Errorf("expected --config to override env, got %q", opts.configPath)
 	}
 }
 
 func TestParseCLI_UnknownFlag(t *testing.T) {
 	var buf bytes.Buffer
-	_, _, err := parseCLI([]string{"--no-such-flag"}, &buf)
+	_, err := parseCLI([]string{"--no-such-flag"}, &buf)
 	if err == nil {
 		t.Fatal("expected error for unknown flag")
+	}
+}
+
+func TestParseCLI_VersionFlag(t *testing.T) {
+	t.Setenv("PHILTER_PROXY_CONFIG", "")
+	var buf bytes.Buffer
+	opts, err := parseCLI([]string{"--version"}, &buf)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !opts.showVersion {
+		t.Error("showVersion should be true")
+	}
+}
+
+func TestVersionString(t *testing.T) {
+	got := versionString()
+	if !strings.HasPrefix(got, "philter-ai-proxy ") {
+		t.Errorf("version string should start with the binary name, got %q", got)
+	}
+	if !strings.Contains(got, version) {
+		t.Errorf("version string should contain the version %q, got %q", version, got)
 	}
 }
 

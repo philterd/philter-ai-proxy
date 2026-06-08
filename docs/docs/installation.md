@@ -27,6 +27,17 @@ cp config.example.yaml config.yaml
 
 See [Configuration](configuration.md) for the full config reference.
 
+### Checking the version
+
+Use `--version` to print the build version and exit:
+
+```bash
+./philter-ai-proxy --version
+# philter-ai-proxy v1.0.0 (commit a1b2c3d4e5f6, built with go1.25)
+```
+
+Release builds stamp the version via `-ldflags "-X main.version=<tag>"` (the `Makefile` and `Dockerfile` derive it from `git describe`). Plain `go build` binaries report `dev` plus the commit recorded by the Go toolchain. The same version is logged at startup.
+
 ### Validating a config file
 
 Use `--validate-config` to load and validate a config without starting the proxy. Useful as a CI gate before a deploy reaches a running cluster, or as a pre-restart sanity check.

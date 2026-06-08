@@ -16,8 +16,9 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"path"
 	"os/signal"
+	"path"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"sync"
@@ -2530,24 +2531,86 @@ func setupAuditLogger(enabled bool, filePath string) *slog.Logger {
 	return slog.New(slog.NewJSONHandler(w, nil))
 }
 
+// version is the build version of the binary. It defaults to "dev" for plain
+// `go build` and is overridden at release time via the linker, e.g.:
+//
+//	go build -ldflags "-X main.version=v1.0.0" .
+//
+// Reported by the --version flag and logged at startup.
+var version = "dev"
+
+// versionString returns a human-readable version line. When the binary carries
+// module/VCS metadata (the default for `go build`), it appends the short commit
+// revision (with a +dirty marker for builds with uncommitted changes) and the
+// Go toolchain version, so even un-stamped local builds identify themselves.
+func versionString() string {
+	v := version
+	rev, dirty, goVer := buildVCSInfo()
+	var extra []string
+	if rev != "" {
+		if len(rev) > 12 {
+			rev = rev[:12]
+		}
+		if dirty {
+			rev += "+dirty"
+		}
+		extra = append(extra, "commit "+rev)
+	}
+	if goVer != "" {
+		extra = append(extra, "built with "+goVer)
+	}
+	if len(extra) > 0 {
+		v += " (" + strings.Join(extra, ", ") + ")"
+	}
+	return "philter-ai-proxy " + v
+}
+
+// buildVCSInfo reads the VCS revision, dirty flag, and Go toolchain version
+// embedded by the Go toolchain at build time. Values are empty when the binary
+// was built without module/VCS info.
+func buildVCSInfo() (revision string, dirty bool, goVersion string) {
+	info, ok := debug.ReadBuildInfo()
+	if !ok {
+		return "", false, ""
+	}
+	goVersion = info.GoVersion
+	for _, s := range info.Settings {
+		switch s.Key {
+		case "vcs.revision":
+			revision = s.Value
+		case "vcs.modified":
+			dirty = s.Value == "true"
+		}
+	}
+	return revision, dirty, goVersion
+}
+
+// cliOptions holds the parsed command-line flags.
+type cliOptions struct {
+	configPath   string
+	validateOnly bool
+	showVersion  bool
+}
+
 // parseCLI parses the proxy's command-line flags. It is split out from main so
 // it can be tested without invoking the full startup path. `args` is the
 // process's argv tail (os.Args[1:]); `errOut` receives flag-package usage and
 // error output. configPath falls back to PHILTER_PROXY_CONFIG when --config is
 // not supplied.
-func parseCLI(args []string, errOut io.Writer) (configPath string, validateOnly bool, err error) {
+func parseCLI(args []string, errOut io.Writer) (cliOptions, error) {
 	fs := flag.NewFlagSet("philter-ai-proxy", flag.ContinueOnError)
 	fs.SetOutput(errOut)
 	cfgFlag := fs.String("config", "", "path to the YAML config file (or set PHILTER_PROXY_CONFIG)")
 	validateFlag := fs.Bool("validate-config", false, "load and validate the config, then exit (0 = ok, 1 = invalid)")
+	versionFlag := fs.Bool("version", false, "print the version and exit")
 	if err := fs.Parse(args); err != nil {
-		return "", false, err
+		return cliOptions{}, err
 	}
 	path := *cfgFlag
 	if path == "" {
 		path = os.Getenv("PHILTER_PROXY_CONFIG")
 	}
-	return path, *validateFlag, nil
+	return cliOptions{configPath: path, validateOnly: *validateFlag, showVersion: *versionFlag}, nil
 }
 
 // runValidateConfig implements `--validate-config`. It loads the config from
@@ -2567,17 +2630,22 @@ func main() {
 
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
 
-	configPath, validateOnly, err := parseCLI(os.Args[1:], os.Stderr)
+	opts, err := parseCLI(os.Args[1:], os.Stderr)
 	if err != nil {
 		// flag package already printed a usage hint to stderr.
 		os.Exit(2)
 	}
 
-	if validateOnly {
-		os.Exit(runValidateConfig(configPath, os.Stdout, os.Stderr))
+	if opts.showVersion {
+		fmt.Println(versionString())
+		os.Exit(0)
 	}
 
-	cfg, err := loadConfig(configPath)
+	if opts.validateOnly {
+		os.Exit(runValidateConfig(opts.configPath, os.Stdout, os.Stderr))
+	}
+
+	cfg, err := loadConfig(opts.configPath)
 	if err != nil {
 		slog.Error("Configuration error", "error", err)
 		os.Exit(1)
@@ -2973,7 +3041,7 @@ func main() {
 	tlsListener := newHandshakeTimeoutListener(tls.NewListener(tcpListener, srv.TLSConfig), tlsHandshakeTimeout, maxTLSHandshakes, onHandshakeShed)
 
 	go func() {
-		slog.Info("Started philter-ai-proxy", "port", port,
+		slog.Info("Started philter-ai-proxy", "version", version, "port", port,
 			"tlsHandshakeTimeoutMs", tlsHandshakeTimeout.Milliseconds(),
 			"maxConcurrentTLSHandshakes", maxTLSHandshakes)
 		if err := srv.Serve(tlsListener); err != http.ErrServerClosed {
