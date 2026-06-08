@@ -2042,11 +2042,23 @@ func enforceScopes(scopes *APIKeyScopes, provider, model, path string) *scopeDen
 //
 // timeout <= 0 disables handshake gating (conns pass through unchanged).
 //
+// A buffered `sem` channel bounds the number of in-flight handshake goroutines
+// (maxConcurrent). When the ceiling is reached the accept loop drops the new
+// connection immediately rather than spawning an unbounded goroutine, so a
+// TCP+ClientHello flood cannot hold tens of thousands of goroutines each pinned
+// for the full handshake timeout. The slot is released as soon as the handshake
+// resolves -- before the (possibly blocking) hand-off to net/http -- so the
+// ceiling bounds only the handshake phase and never throttles established
+// connections. onShed, if set, is invoked once per dropped connection.
+//
 // Construct via newHandshakeTimeoutListener so the internal channels and
 // accept goroutine are wired before any Accept or Close call.
 type handshakeTimeoutListener struct {
 	net.Listener
 	timeout time.Duration
+
+	sem    chan struct{}
+	onShed func()
 
 	ready     chan acceptResult
 	closing   chan struct{}
@@ -2058,10 +2070,15 @@ type acceptResult struct {
 	err error
 }
 
-func newHandshakeTimeoutListener(inner net.Listener, timeout time.Duration) *handshakeTimeoutListener {
+func newHandshakeTimeoutListener(inner net.Listener, timeout time.Duration, maxConcurrent int, onShed func()) *handshakeTimeoutListener {
+	if maxConcurrent <= 0 {
+		maxConcurrent = DefaultMaxConcurrentTLSHandshakes
+	}
 	l := &handshakeTimeoutListener{
 		Listener: inner,
 		timeout:  timeout,
+		sem:      make(chan struct{}, maxConcurrent),
+		onShed:   onShed,
 		ready:    make(chan acceptResult),
 		closing:  make(chan struct{}),
 	}
@@ -2080,44 +2097,65 @@ func (l *handshakeTimeoutListener) acceptLoop() {
 			l.ready <- acceptResult{err: err}
 			return
 		}
-		go l.handshake(c)
+		select {
+		case l.sem <- struct{}{}:
+			go l.handshake(c)
+		default:
+			// Handshake concurrency ceiling reached: shed this connection
+			// immediately instead of spawning an unbounded goroutine. The
+			// accept loop keeps running so established peers are unaffected.
+			c.Close()
+			if l.onShed != nil {
+				l.onShed()
+			}
+		}
 	}
 }
 
 func (l *handshakeTimeoutListener) handshake(c net.Conn) {
-	deliver := func(r acceptResult) {
-		select {
-		case l.ready <- r:
-		case <-l.closing:
-			if r.c != nil {
-				r.c.Close()
-			}
-		}
-	}
-	if l.timeout <= 0 {
-		deliver(acceptResult{c: c})
+	// Perform the handshake, then release the semaphore slot BEFORE the
+	// (possibly blocking) hand-off to net/http, so the ceiling bounds only the
+	// handshake phase -- successful conns waiting to be Accepted do not hold a
+	// slot.
+	conn, ok := l.doHandshake(c)
+	<-l.sem
+	if !ok {
 		return
+	}
+	select {
+	case l.ready <- acceptResult{c: conn}:
+	case <-l.closing:
+		conn.Close()
+	}
+}
+
+// doHandshake completes the TLS handshake under the configured deadline,
+// returning the ready connection and true on success, or (nil, false) when the
+// connection was dropped (slow/invalid handshake, or a deadline error). When
+// gating is disabled or the conn is not a *tls.Conn, it passes through.
+func (l *handshakeTimeoutListener) doHandshake(c net.Conn) (net.Conn, bool) {
+	if l.timeout <= 0 {
+		return c, true
 	}
 	tc, ok := c.(*tls.Conn)
 	if !ok {
-		deliver(acceptResult{c: c})
-		return
+		return c, true
 	}
 	if err := tc.SetDeadline(time.Now().Add(l.timeout)); err != nil {
 		tc.Close()
-		return
+		return nil, false
 	}
 	if err := tc.HandshakeContext(context.Background()); err != nil {
 		// Slow/incomplete/invalid handshake: drop silently. The listener
 		// loop is unaffected; net/http never sees this conn.
 		tc.Close()
-		return
+		return nil, false
 	}
 	if err := tc.SetDeadline(time.Time{}); err != nil {
 		tc.Close()
-		return
+		return nil, false
 	}
-	deliver(acceptResult{c: tc})
+	return tc, true
 }
 
 func (l *handshakeTimeoutListener) Accept() (net.Conn, error) {
@@ -2902,6 +2940,11 @@ func main() {
 	}
 
 	tlsHandshakeTimeout := cfg.Listen.effectiveTLSHandshakeTimeout()
+	maxTLSHandshakes := cfg.Listen.effectiveMaxConcurrentTLSHandshakes()
+	var onHandshakeShed func()
+	if proxyMetrics != nil {
+		onHandshakeShed = proxyMetrics.tlsHandshakesShed.Inc
+	}
 
 	// Build the TLS listener chain explicitly so handshakeTimeoutListener can
 	// wrap the inner tls.Listener and enforce its own handshake deadline
@@ -2927,10 +2970,12 @@ func main() {
 		slog.Error("Listen error", "error", err)
 		os.Exit(1)
 	}
-	tlsListener := newHandshakeTimeoutListener(tls.NewListener(tcpListener, srv.TLSConfig), tlsHandshakeTimeout)
+	tlsListener := newHandshakeTimeoutListener(tls.NewListener(tcpListener, srv.TLSConfig), tlsHandshakeTimeout, maxTLSHandshakes, onHandshakeShed)
 
 	go func() {
-		slog.Info("Started philter-ai-proxy", "port", port, "tlsHandshakeTimeoutMs", tlsHandshakeTimeout.Milliseconds())
+		slog.Info("Started philter-ai-proxy", "port", port,
+			"tlsHandshakeTimeoutMs", tlsHandshakeTimeout.Milliseconds(),
+			"maxConcurrentTLSHandshakes", maxTLSHandshakes)
 		if err := srv.Serve(tlsListener); err != http.ErrServerClosed {
 			slog.Error("Listen error", "error", err)
 			os.Exit(1)

@@ -10,6 +10,8 @@ listen:
   # maxHeaderBytes: 1048576           # max request header bytes (1 MiB default)
   # readHeaderTimeoutMs: 10000        # time to send headers (10s default); slowloris mitigation
   # readTimeoutMs: 0                  # whole-request read bound; 0 = disabled (default), set to bound slow-body uploads
+  # tlsHandshakeTimeoutMs: 10000      # time to complete the TLS handshake (10s default); slow-handshake slowloris mitigation
+  # maxConcurrentTLSHandshakes: 16384 # ceiling on simultaneous in-flight TLS handshakes; flood backstop (default 16384)
 
 logging:
   enabled: true

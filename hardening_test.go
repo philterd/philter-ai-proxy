@@ -15,6 +15,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -173,6 +174,7 @@ func TestValidateConfig_HardeningNegativeRejected(t *testing.T) {
 		func(c *Config) { c.Listen.ReadHeaderTimeoutMs = -1 },
 		func(c *Config) { c.Listen.ReadTimeoutMs = -1 },
 		func(c *Config) { c.Listen.TLSHandshakeTimeoutMs = -1 },
+		func(c *Config) { c.Listen.MaxConcurrentTLSHandshakes = -1 },
 	} {
 		cfg := defaultConfig()
 		mut(cfg)
@@ -208,7 +210,7 @@ func TestHandshakeTimeoutListener_DropsSlowHandshake(t *testing.T) {
 	}
 	tlsCfg := &tls.Config{Certificates: []tls.Certificate{cert}}
 
-	wrapped := newHandshakeTimeoutListener(tls.NewListener(tcpLn, tlsCfg), 100*time.Millisecond)
+	wrapped := newHandshakeTimeoutListener(tls.NewListener(tcpLn, tlsCfg), 100*time.Millisecond, 0, nil)
 
 	srv := &http.Server{
 		Handler:           http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}),
@@ -259,7 +261,7 @@ func TestHandshakeTimeoutListener_EstablishedConnUnaffected(t *testing.T) {
 	}
 	tlsCfg := &tls.Config{Certificates: []tls.Certificate{cert}}
 
-	wrapped := newHandshakeTimeoutListener(tls.NewListener(tcpLn, tlsCfg), 200*time.Millisecond)
+	wrapped := newHandshakeTimeoutListener(tls.NewListener(tcpLn, tlsCfg), 200*time.Millisecond, 0, nil)
 
 	srv := &http.Server{
 		// Sleep longer than the handshake timeout to prove that, post-
@@ -307,7 +309,7 @@ func TestHandshakeTimeoutListener_SlowHandshakeDoesNotStallOtherAccepts(t *testi
 	}
 	tlsCfg := &tls.Config{Certificates: []tls.Certificate{cert}}
 
-	wrapped := newHandshakeTimeoutListener(tls.NewListener(tcpLn, tlsCfg), 2*time.Second)
+	wrapped := newHandshakeTimeoutListener(tls.NewListener(tcpLn, tlsCfg), 2*time.Second, 0, nil)
 
 	srv := &http.Server{
 		Handler:           http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.Write([]byte("ok")) }),
@@ -339,6 +341,156 @@ func TestHandshakeTimeoutListener_SlowHandshakeDoesNotStallOtherAccepts(t *testi
 	defer resp.Body.Close()
 	if elapsed > 800*time.Millisecond {
 		t.Errorf("fast client took %v -- slow handshake stalled accept loop", elapsed)
+	}
+}
+
+func TestEffectiveMaxConcurrentTLSHandshakes(t *testing.T) {
+	if got := (ListenConfig{}).effectiveMaxConcurrentTLSHandshakes(); got != DefaultMaxConcurrentTLSHandshakes {
+		t.Errorf("unset = %d, want default %d", got, DefaultMaxConcurrentTLSHandshakes)
+	}
+	if got := (ListenConfig{MaxConcurrentTLSHandshakes: 4}).effectiveMaxConcurrentTLSHandshakes(); got != 4 {
+		t.Errorf("configured = %d, want 4", got)
+	}
+}
+
+// newTLSTestServer builds an HTTPS server wrapped with a handshakeTimeoutListener
+// using the given handshake timeout, concurrency ceiling, and shed callback. It
+// returns the listen address and registers cleanup.
+func newTLSTestServer(t *testing.T, timeout time.Duration, maxConcurrent int, onShed func(), handler http.HandlerFunc) string {
+	t.Helper()
+	tcpLn, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	certPEM, keyPEM := genSelfSignedForTest(t)
+	cert, err := tls.X509KeyPair(certPEM, keyPEM)
+	if err != nil {
+		t.Fatalf("keypair: %v", err)
+	}
+	tlsCfg := &tls.Config{Certificates: []tls.Certificate{cert}}
+	wrapped := newHandshakeTimeoutListener(tls.NewListener(tcpLn, tlsCfg), timeout, maxConcurrent, onShed)
+	srv := &http.Server{
+		Handler:           handler,
+		ReadHeaderTimeout: 5 * time.Second,
+	}
+	go srv.Serve(wrapped)
+	t.Cleanup(func() { srv.Close() })
+	return tcpLn.Addr().String()
+}
+
+// TestHandshakeTimeoutListener_UnderCapUnaffected confirms that with handshake
+// concurrency headroom, ordinary clients complete requests and nothing is shed.
+func TestHandshakeTimeoutListener_UnderCapUnaffected(t *testing.T) {
+	var shed int64
+	addr := newTLSTestServer(t, 2*time.Second, 8, func() { atomic.AddInt64(&shed, 1) },
+		func(w http.ResponseWriter, r *http.Request) { w.Write([]byte("ok")) })
+
+	client := &http.Client{
+		Timeout:   2 * time.Second,
+		Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}},
+	}
+	for i := 0; i < 6; i++ {
+		resp, err := client.Get("https://" + addr + "/")
+		if err != nil {
+			t.Fatalf("request %d failed under cap: %v", i, err)
+		}
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if string(body) != "ok" {
+			t.Errorf("request %d body = %q, want ok", i, string(body))
+		}
+	}
+	if got := atomic.LoadInt64(&shed); got != 0 {
+		t.Errorf("shed = %d under cap, want 0", got)
+	}
+}
+
+// TestHandshakeTimeoutListener_OverCapSheds is the DoS backstop: with the
+// ceiling set to 1 and a stalled handshake holding the only slot, a second
+// incoming connection is dropped immediately and the shed callback fires.
+func TestHandshakeTimeoutListener_OverCapSheds(t *testing.T) {
+	var shed int64
+	// Long handshake timeout so the stalled conn keeps its slot for the test.
+	addr := newTLSTestServer(t, 3*time.Second, 1, func() { atomic.AddInt64(&shed, 1) },
+		func(w http.ResponseWriter, r *http.Request) { w.Write([]byte("ok")) })
+
+	// Conn 1: raw TCP that never sends TLS bytes. The listener accepts it,
+	// acquires the single handshake slot, and blocks in HandshakeContext.
+	stall, err := net.Dial("tcp", addr)
+	if err != nil {
+		t.Fatalf("dial stall: %v", err)
+	}
+	defer stall.Close()
+
+	// Give the accept loop time to accept conn 1 and fill the slot.
+	time.Sleep(300 * time.Millisecond)
+
+	// Conn 2: another raw TCP conn. The slot is full, so the listener must
+	// close it immediately and invoke onShed -- well before any handshake
+	// deadline could fire.
+	shedConn, err := net.Dial("tcp", addr)
+	if err != nil {
+		t.Fatalf("dial shed: %v", err)
+	}
+	defer shedConn.Close()
+
+	shedConn.SetReadDeadline(time.Now().Add(1 * time.Second))
+	buf := make([]byte, 1)
+	start := time.Now()
+	_, err = shedConn.Read(buf)
+	elapsed := time.Since(start)
+	if err == nil {
+		t.Fatal("expected the over-cap connection to be dropped, got read error nil")
+	}
+	if elapsed > 900*time.Millisecond {
+		t.Errorf("over-cap conn dropped too late (%v); it was not shed immediately", elapsed)
+	}
+	if got := atomic.LoadInt64(&shed); got != 1 {
+		t.Errorf("shed = %d, want 1", got)
+	}
+}
+
+// TestHandshakeTimeoutListener_ShedDoesNotAffectEstablished confirms that while
+// the handshake slots are saturated by stalled connections, an already-counted
+// peer's request still completes -- the ceiling gates only the handshake phase,
+// and the slot is released the moment the handshake resolves.
+func TestHandshakeTimeoutListener_ShedDoesNotAffectEstablished(t *testing.T) {
+	var shed int64
+	addr := newTLSTestServer(t, 3*time.Second, 1, func() { atomic.AddInt64(&shed, 1) },
+		func(w http.ResponseWriter, r *http.Request) { w.Write([]byte("ok")) })
+
+	// A real client completes its handshake (acquiring and immediately
+	// releasing the single slot), then issues requests. Because the slot is
+	// freed as soon as the handshake resolves, the established connection's
+	// keep-alive requests are never gated by the ceiling.
+	client := &http.Client{
+		Timeout:   2 * time.Second,
+		Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}},
+	}
+	resp, err := client.Get("https://" + addr + "/")
+	if err != nil {
+		t.Fatalf("first request failed: %v", err)
+	}
+	io.ReadAll(resp.Body)
+	resp.Body.Close()
+
+	// Now saturate the slot with a stalled handshake.
+	stall, err := net.Dial("tcp", addr)
+	if err != nil {
+		t.Fatalf("dial stall: %v", err)
+	}
+	defer stall.Close()
+	time.Sleep(300 * time.Millisecond)
+
+	// The established keep-alive connection still serves requests.
+	resp2, err := client.Get("https://" + addr + "/")
+	if err != nil {
+		t.Fatalf("established conn request failed while slot saturated: %v", err)
+	}
+	body, _ := io.ReadAll(resp2.Body)
+	resp2.Body.Close()
+	if string(body) != "ok" {
+		t.Errorf("body = %q, want ok", string(body))
 	}
 }
 

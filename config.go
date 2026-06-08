@@ -43,6 +43,17 @@ type ListenConfig struct {
 	// other timeout. Default: 10000 (10s). 0 means "use the default";
 	// negative is rejected at validation.
 	TLSHandshakeTimeoutMs int `yaml:"tlsHandshakeTimeoutMs"`
+	// MaxConcurrentTLSHandshakes caps the number of in-flight TLS handshakes
+	// the listener will process at once. Each accepted TCP connection performs
+	// its handshake on its own goroutine bounded by TLSHandshakeTimeoutMs; this
+	// ceiling bounds how many such goroutines (and their buffers) can exist
+	// simultaneously, so a TCP+ClientHello flood cannot transiently spawn tens
+	// of thousands of goroutines each pinned for the full handshake timeout.
+	// When the ceiling is reached, new connections are dropped immediately
+	// (counted by philter_proxy_tls_handshakes_shed_total). Established
+	// connections are unaffected. Default: 16384 (well above any real
+	// workload). 0 means "use the default"; negative is rejected at validation.
+	MaxConcurrentTLSHandshakes int `yaml:"maxConcurrentTLSHandshakes"`
 	// TrustedProxies is a list of CIDR ranges (e.g. ["10.0.0.0/8",
 	// "192.168.1.0/24"]) whose connections may legitimately set
 	// `X-Forwarded-For`. The proxy reads the header only when the immediate
@@ -281,6 +292,7 @@ const (
 	DefaultMaxHeaderBytes              = 1 << 20  // 1 MiB (matches net/http's default)
 	DefaultReadHeaderTimeoutMs         = 10000    // 10s slowloris mitigation
 	DefaultListenTLSHandshakeTimeoutMs = 10000    // 10s slow-handshake slowloris mitigation
+	DefaultMaxConcurrentTLSHandshakes  = 16384    // ceiling on in-flight handshake goroutines
 )
 
 // effectiveMaxRequestBodyBytes returns the configured inbound body cap or the
@@ -299,6 +311,15 @@ func (c ListenConfig) effectiveTLSHandshakeTimeout() time.Duration {
 		return time.Duration(c.TLSHandshakeTimeoutMs) * time.Millisecond
 	}
 	return time.Duration(DefaultListenTLSHandshakeTimeoutMs) * time.Millisecond
+}
+
+// effectiveMaxConcurrentTLSHandshakes returns the configured ceiling on
+// in-flight TLS handshakes or the default (16384) when unset.
+func (c ListenConfig) effectiveMaxConcurrentTLSHandshakes() int {
+	if c.MaxConcurrentTLSHandshakes > 0 {
+		return c.MaxConcurrentTLSHandshakes
+	}
+	return DefaultMaxConcurrentTLSHandshakes
 }
 
 type ProviderConfig struct {
@@ -522,6 +543,7 @@ func validateConfig(cfg *Config) error {
 		{"readHeaderTimeoutMs", cfg.Listen.ReadHeaderTimeoutMs},
 		{"readTimeoutMs", cfg.Listen.ReadTimeoutMs},
 		{"tlsHandshakeTimeoutMs", cfg.Listen.TLSHandshakeTimeoutMs},
+		{"maxConcurrentTLSHandshakes", cfg.Listen.MaxConcurrentTLSHandshakes},
 	} {
 		if f.value < 0 {
 			return fmt.Errorf("config: listen.%s must be >= 0", f.name)

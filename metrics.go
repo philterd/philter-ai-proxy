@@ -78,6 +78,7 @@ type ProxyMetrics struct {
 	cacheHits                prometheus.Counter
 	cacheMisses              prometheus.Counter
 	quotaRejections          *prometheus.CounterVec
+	tlsHandshakesShed        prometheus.Counter
 	// modelLabels caps the `model` label cardinality on the token-usage
 	// counters. The model is supplied by the client; without this bound,
 	// an attacker holding any valid key can drive the scraper out of
@@ -175,6 +176,11 @@ func newMetrics(reg prometheus.Registerer) *ProxyMetrics {
 			Help: "Total requests rejected (HTTP 429) due to a token quota, labeled by window (daily, monthly).",
 		}, []string{"window"}),
 
+		tlsHandshakesShed: prometheus.NewCounter(prometheus.CounterOpts{
+			Name: "philter_proxy_tls_handshakes_shed_total",
+			Help: "Total inbound TLS connections dropped because the max-concurrent-TLS-handshakes ceiling was reached.",
+		}),
+
 		modelLabels: newModelLabelLimiter(maxModelLabelsPerProvider),
 	}
 
@@ -196,6 +202,7 @@ func newMetrics(reg prometheus.Registerer) *ProxyMetrics {
 		m.cacheHits,
 		m.cacheMisses,
 		m.quotaRejections,
+		m.tlsHandshakesShed,
 	)
 	return m
 }
