@@ -16,7 +16,7 @@ The proxy supports:
 * Anthropic (Claude)
 * Google Gemini
 * Ollama
-* Amazon Bedrock (Converse API)
+* Amazon Bedrock (Converse and ConverseStream APIs)
 * Any OpenAI-compatible provider (Mistral, Cohere, vLLM, LM Studio, etc.) via `providers.openaiCompatible`
 
 Both streaming and non-streaming requests are supported for all providers.
@@ -113,7 +113,7 @@ The proxy handles AWS Signature Version 4 signing internally. The client sends a
 
 ### Does the proxy support streaming with Amazon Bedrock?
 
-Not in the current release. The `converseStream` endpoint is planned for a future release. Non-streaming requests via the Converse API are fully supported.
+Yes. The `/model/{modelId}/converse-stream` endpoint is supported: the inbound request is redacted as usual and the AWS binary event-stream response is forwarded to the client incrementally (no buffering). As with the other providers, the streamed response body is passed through without outbound scanning. Non-streaming requests via the Converse API are also fully supported.
 
 ### What happens if Philter is temporarily unavailable?
 

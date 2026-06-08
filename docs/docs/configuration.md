@@ -188,7 +188,7 @@ Each entry accepts:
 
 ### `providers.bedrock`
 
-Amazon Bedrock is an optional provider. It is enabled by setting `providers.bedrock.region`. When enabled, the proxy accepts requests matching `/model/{modelId}/converse` and forwards them to `https://bedrock-runtime.{region}.amazonaws.com` using AWS Signature Version 4 authentication.
+Amazon Bedrock is an optional provider. It is enabled by setting `providers.bedrock.region`. When enabled, the proxy accepts requests matching `/model/{modelId}/converse` and `/model/{modelId}/converse-stream` and forwards them to `https://bedrock-runtime.{region}.amazonaws.com` using AWS Signature Version 4 authentication. ConverseStream responses (AWS binary event-stream) are forwarded to the client incrementally without buffering.
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|

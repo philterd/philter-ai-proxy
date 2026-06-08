@@ -2629,6 +2629,191 @@ func TestOutbound_Streaming_Passthrough(t *testing.T) {
 	}
 }
 
+// TestOutboundScan_MalformedResponse_FailsOpen locks down the documented
+// fail-open behavior of every outbound response scanner: when a provider
+// returns a 2xx body that does not parse as the expected schema, the scanner
+// returns the body UNCHANGED, does not block, does not error, and never calls
+// Philter. This is a deliberate redaction gap (a broken provider response is
+// passed through rather than failing the client's request), so it is asserted
+// explicitly across all providers to prevent a silent regression.
+func TestOutboundScan_MalformedResponse_FailsOpen(t *testing.T) {
+	var philterCalls int32
+	philterSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&philterCalls, 1)
+		w.Write(explainJSON("[REDACTED]", "doc", []Span{{FilterType: "NER_ENTITY", Confidence: 0.9}}))
+	}))
+	defer philterSrv.Close()
+
+	p := &Proxy{config: testConfig(philterSrv.URL), philter: testPhilterClient(philterSrv.URL)}
+
+	scanners := []struct {
+		name string
+		scan responseScanner
+	}{
+		{"openai", p.scanOpenAIResponse},
+		{"anthropic", p.scanAnthropicResponse},
+		{"gemini", p.scanGeminiResponse},
+		{"ollamaGenerate", p.scanOllamaGenerateResponse},
+		{"ollamaChat", p.scanOllamaChatResponse},
+		{"bedrock", p.scanBedrockResponse},
+	}
+	// Each body is unparseable as any provider's response schema (syntax error,
+	// non-JSON, empty, or a JSON array where an object is required), so every
+	// scanner hits its json.Unmarshal-failed early return.
+	bodies := []struct {
+		name string
+		body []byte
+	}{
+		{"truncated", []byte(`{"choices":[{"message":`)},
+		{"not-json", []byte(`<html>502 Bad Gateway</html>`)},
+		{"empty", []byte(``)},
+		{"json-array", []byte(`[1,2,3]`)},
+	}
+
+	for _, s := range scanners {
+		for _, b := range bodies {
+			t.Run(s.name+"/"+b.name, func(t *testing.T) {
+				atomic.StoreInt32(&philterCalls, 0)
+				audit := &AuditEntry{}
+				out, blocked, err := s.scan(context.Background(), b.body, "ctx", "doc", "", "redact", audit)
+				if err != nil {
+					t.Fatalf("unparseable body must fail open (no error), got %v", err)
+				}
+				if blocked {
+					t.Errorf("unparseable body must not be blocked")
+				}
+				if !bytes.Equal(out, b.body) {
+					t.Errorf("unparseable body must pass through unchanged: got %q, want %q", out, b.body)
+				}
+				if n := atomic.LoadInt32(&philterCalls); n != 0 {
+					t.Errorf("Philter must not be called for an unparseable response, got %d calls", n)
+				}
+			})
+		}
+	}
+}
+
+// TestOutbound_Streaming_NotScanned proves the streaming-skip branch directly:
+// each case takes a provider response that the non-streaming path WOULD redact,
+// and serves it with a streaming Content-Type. Because the response is streamed,
+// outbound scanning is skipped, so the PII-bearing text survives verbatim and is
+// never replaced with the redaction marker. Covers both text/event-stream and
+// application/x-ndjson, across every provider.
+func TestOutbound_Streaming_NotScanned(t *testing.T) {
+	cases := []struct {
+		name        string
+		provider    string
+		path        string
+		reqBody     string
+		contentType string
+		respBody    string
+	}{
+		{"openai-sse", "openai", "/v1/chat/completions",
+			`{"model":"gpt-4","messages":[{"role":"user","content":"hi"}]}`,
+			"text/event-stream",
+			`{"choices":[{"message":{"role":"assistant","content":"Hello John Doe"}}]}`},
+		{"anthropic-sse", "anthropic", "/v1/messages",
+			`{"model":"claude-3","messages":[{"role":"user","content":"hi"}]}`,
+			"text/event-stream",
+			`{"content":[{"type":"text","text":"Hello John Doe"}],"role":"assistant"}`},
+		{"gemini-sse", "gemini", "/v1beta/models/gemini-pro:generateContent",
+			`{"contents":[{"parts":[{"text":"hi"}]}]}`,
+			"text/event-stream",
+			`{"candidates":[{"content":{"parts":[{"text":"Hello John Doe"}],"role":"model"}}]}`},
+		{"ollama-ndjson", "ollama", "/api/chat",
+			`{"model":"llama3","messages":[{"role":"user","content":"hi"}]}`,
+			"application/x-ndjson",
+			`{"model":"llama3","message":{"role":"assistant","content":"Hello John Doe"},"done":true}`},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			philter := philterRedact("[REDACTED]")
+			defer philter.Close()
+
+			provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", c.contentType)
+				w.WriteHeader(http.StatusOK)
+				w.Write([]byte(c.respBody))
+			}))
+			defer provider.Close()
+
+			proxy := newOutboundProxy(philter.URL, provider.URL, c.provider, "redact")
+			req := httptest.NewRequest("POST", c.path, strings.NewReader(c.reqBody))
+			w := httptest.NewRecorder()
+			proxy.ServeHTTP(w, req)
+
+			if w.Code != http.StatusOK {
+				t.Fatalf("want 200, got %d: %s", w.Code, w.Body.String())
+			}
+			if ct := w.Header().Get("Content-Type"); ct != c.contentType {
+				t.Errorf("streaming Content-Type not preserved: got %q, want %q", ct, c.contentType)
+			}
+			if !strings.Contains(w.Body.String(), "Hello John Doe") {
+				t.Errorf("streamed body must pass through un-redacted, got: %s", w.Body.String())
+			}
+			if strings.Contains(w.Body.String(), "[REDACTED]") {
+				t.Errorf("streamed body must NOT be scanned/redacted, got: %s", w.Body.String())
+			}
+		})
+	}
+}
+
+// TestOutbound_Streaming_BlockAction_DoesNotBlock documents the consequence of
+// the streaming-skip: because a streamed response is never scanned, even the
+// "block" action cannot stop PII in a streamed response -- it passes through
+// with HTTP 200. Asserted so the limitation is explicit and intentional.
+func TestOutbound_Streaming_BlockAction_DoesNotBlock(t *testing.T) {
+	philter := philterRedact("[REDACTED]") // would trigger block if the body were scanned
+	defer philter.Close()
+
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"SSN 123-45-6789"}}]}`))
+	}))
+	defer provider.Close()
+
+	proxy := newOutboundProxy(philter.URL, provider.URL, "openai", "block")
+	req := httptest.NewRequest("POST", "/v1/chat/completions",
+		strings.NewReader(`{"model":"gpt-4","messages":[{"role":"user","content":"hi"}]}`))
+	w := httptest.NewRecorder()
+	proxy.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("streamed response is not scanned, so block must not trigger; want 200, got %d", w.Code)
+	}
+	if !strings.Contains(w.Body.String(), "123-45-6789") {
+		t.Errorf("streamed PII should pass through unblocked, got: %s", w.Body.String())
+	}
+}
+
+// TestIsStreamingResponse covers the Content-Type classification that gates
+// outbound scanning, including the charset-parameter and ndjson cases.
+func TestIsStreamingResponse(t *testing.T) {
+	cases := []struct {
+		ct   string
+		want bool
+	}{
+		{"text/event-stream", true},
+		{"text/event-stream; charset=utf-8", true},
+		{"application/x-ndjson", true},
+		{"application/vnd.amazon.eventstream", true},
+		{"application/json", false},
+		{"application/json; charset=utf-8", false},
+		{"", false},
+	}
+	for _, c := range cases {
+		h := http.Header{}
+		if c.ct != "" {
+			h.Set("Content-Type", c.ct)
+		}
+		if got := isStreamingResponse(h); got != c.want {
+			t.Errorf("isStreamingResponse(%q) = %v, want %v", c.ct, got, c.want)
+		}
+	}
+}
+
 func TestOutbound_PhilterError(t *testing.T) {
 	// Philter is unreachable during outbound scan — should return 502.
 	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -3515,6 +3700,8 @@ func TestBedrock_IsBedrockPath(t *testing.T) {
 	yes := []string{
 		"/model/amazon.titan-text-v1/converse",
 		"/model/anthropic.claude-3/converse",
+		"/model/amazon.titan-text-v1/converse-stream",
+		"/model/anthropic.claude-3/converse-stream",
 	}
 	no := []string{
 		"/v1/chat/completions",

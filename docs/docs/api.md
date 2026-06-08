@@ -83,6 +83,7 @@ The proxy routes requests based on the URL path:
 | `/api/generate` | Ollama |
 | `/api/chat` | Ollama |
 | `/model/{modelId}/converse` | Amazon Bedrock |
+| `/model/{modelId}/converse-stream` | Amazon Bedrock (streaming) |
 | `/openai/deployments/{deployment}/...` | Azure OpenAI (configured via `providers.azure`) |
 | `/{name}/v1/...` | OpenAI-compatible (configured via `providers.openaiCompatible`) |
 | `/health` | Health check (no proxying) |

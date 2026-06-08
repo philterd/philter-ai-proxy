@@ -6,6 +6,8 @@ All notable changes to this project will be documented in this file.
 
 - Bound concurrent in-flight TLS handshakes (`listen.maxConcurrentTLSHandshakes`, default 16384) so a connection flood cannot spawn unbounded handshake goroutines.
 - Added a `--version` flag; the build version is stamped via `-ldflags` (derived from `git describe` in the Makefile and Dockerfile) and logged at startup.
+- Token usage is now accounted for streaming responses too: the OpenAI and Anthropic streaming paths extract prompt/completion tokens from the final usage event (without buffering the stream), feeding the same audit-log fields and Prometheus counters as non-streaming responses.
+- Amazon Bedrock ConverseStream (`/model/{id}/converse-stream`) is now supported: the inbound request is redacted as usual and the AWS binary event-stream response is forwarded to the client incrementally (no buffering), matching the streaming behavior of the other providers.
 
 ## [1.0.0] - 2026-06-08
 

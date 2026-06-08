@@ -579,6 +579,134 @@ func extractTokenUsage(provider string, body []byte) (promptTokens, completionTo
 	}
 }
 
+// jsonInt returns m[key] as an int when present and numeric, else 0.
+func jsonInt(m map[string]interface{}, key string) int {
+	if m == nil {
+		return 0
+	}
+	v, _ := m[key].(float64)
+	return int(v)
+}
+
+// streamingUsageSupported reports whether streamed token-usage extraction is
+// implemented for a provider. Only OpenAI-family and Anthropic streams carry a
+// usage event in a shape we parse; the others (Gemini/Vertex/Ollama/Bedrock)
+// are not extracted from streams, so the scanner stays a no-op for them.
+func streamingUsageSupported(provider string) bool {
+	switch provider {
+	case "gemini", "vertex", "ollama", "bedrock":
+		return false
+	default: // openai, azure, openai-compatible custom names, anthropic
+		return true
+	}
+}
+
+// extractStreamingUsage pulls token usage from a single streamed SSE/NDJSON
+// event's JSON object. Streaming usage shapes differ from the non-streaming
+// body: OpenAI emits a final chunk carrying a top-level `usage` object (when the
+// client sets stream_options.include_usage); Anthropic splits usage across
+// `message_start` (input_tokens nested under message.usage) and `message_delta`
+// (output_tokens in a top-level usage). Returns (0, 0) for events without usage.
+func extractStreamingUsage(provider string, eventJSON []byte) (prompt, completion int) {
+	var raw map[string]interface{}
+	if err := json.Unmarshal(eventJSON, &raw); err != nil {
+		return 0, 0
+	}
+	switch provider {
+	case "anthropic":
+		// message_start nests usage under message.usage; message_delta carries
+		// a top-level usage. Read whichever this event has.
+		if msg, ok := raw["message"].(map[string]interface{}); ok {
+			if u, ok := msg["usage"].(map[string]interface{}); ok {
+				return jsonInt(u, "input_tokens"), jsonInt(u, "output_tokens")
+			}
+		}
+		if u, ok := raw["usage"].(map[string]interface{}); ok {
+			return jsonInt(u, "input_tokens"), jsonInt(u, "output_tokens")
+		}
+		return 0, 0
+	default: // openai, azure, openai-compatible
+		u, _ := raw["usage"].(map[string]interface{})
+		prompt = jsonInt(u, "prompt_tokens")
+		if prompt == 0 {
+			prompt = jsonInt(u, "input_tokens")
+		}
+		completion = jsonInt(u, "completion_tokens")
+		if completion == 0 {
+			completion = jsonInt(u, "output_tokens")
+		}
+		return prompt, completion
+	}
+}
+
+// streamUsageScanner extracts token usage from a streamed response without
+// buffering the whole stream: it retains only the current partial line and
+// parses each complete SSE/NDJSON line as it arrives, keeping the last non-zero
+// usage seen for each field. Last-wins is correct for both supported providers
+// (OpenAI reports usage once in the final chunk; Anthropic sets input_tokens in
+// message_start and updates output_tokens across message_delta events).
+type streamUsageScanner struct {
+	provider   string
+	enabled    bool
+	partial    []byte
+	prompt     int
+	completion int
+}
+
+func newStreamUsageScanner(provider string) *streamUsageScanner {
+	return &streamUsageScanner{provider: provider, enabled: streamingUsageSupported(provider)}
+}
+
+// write feeds a chunk of streamed bytes to the scanner, parsing any newly
+// completed lines. It is a no-op for providers without streaming-usage support.
+func (s *streamUsageScanner) write(p []byte) {
+	if !s.enabled {
+		return
+	}
+	s.partial = append(s.partial, p...)
+	for {
+		i := bytes.IndexByte(s.partial, '\n')
+		if i < 0 {
+			break
+		}
+		line := s.partial[:i]
+		s.partial = s.partial[i+1:]
+		s.scanLine(line)
+	}
+}
+
+// close flushes any trailing line not terminated by a newline (e.g. a provider
+// that omits the final newline). Malformed remnants are ignored by the parser.
+func (s *streamUsageScanner) close() {
+	if !s.enabled {
+		return
+	}
+	s.scanLine(s.partial)
+	s.partial = nil
+}
+
+func (s *streamUsageScanner) scanLine(line []byte) {
+	line = bytes.TrimSpace(line)
+	if len(line) == 0 {
+		return
+	}
+	// SSE data lines are "data: {json}"; NDJSON lines are a bare "{json}".
+	if rest, ok := bytes.CutPrefix(line, []byte("data:")); ok {
+		line = bytes.TrimSpace(rest)
+	}
+	if len(line) == 0 || line[0] != '{' {
+		return // "[DONE]", "event: ...", id/retry/comment lines
+	}
+	if prompt, completion := extractStreamingUsage(s.provider, line); prompt > 0 || completion > 0 {
+		if prompt > 0 {
+			s.prompt = prompt
+		}
+		if completion > 0 {
+			s.completion = completion
+		}
+	}
+}
+
 func (p *Proxy) forwardToProvider(w http.ResponseWriter, origReq *http.Request, target *url.URL, client *http.Client, body []byte, provider string, audit *AuditEntry) {
 	targetURL := *target
 	targetURL.Path = origReq.URL.Path
@@ -646,12 +774,36 @@ func (p *Proxy) forwardToProvider(w http.ResponseWriter, origReq *http.Request, 
 	}
 
 	w.WriteHeader(resp.StatusCode)
+	// Tee streamed bytes through a usage scanner so token accounting works for
+	// streaming responses too. Chunks are still written and flushed immediately,
+	// so this does not buffer or delay the stream.
+	usage := newStreamUsageScanner(provider)
+	streamCopy(w, resp.Body, usage.write)
+	usage.close()
+	if audit != nil && resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		if usage.prompt > 0 {
+			audit.PromptTokens = usage.prompt
+		}
+		if usage.completion > 0 {
+			audit.CompletionTokens = usage.completion
+		}
+	}
+}
+
+// streamCopy forwards a response body to the client chunk by chunk, flushing
+// after each write so streamed responses are delivered in real time rather than
+// buffered. When tee is non-nil, each chunk is also handed to it (e.g. a
+// token-usage scanner) before the next read reuses the buffer.
+func streamCopy(w http.ResponseWriter, body io.Reader, tee func([]byte)) {
 	flusher, canFlush := w.(http.Flusher)
 	buf := make([]byte, 4096)
 	for {
-		n, readErr := resp.Body.Read(buf)
+		n, readErr := body.Read(buf)
 		if n > 0 {
 			w.Write(buf[:n])
+			if tee != nil {
+				tee(buf[:n])
+			}
 			if canFlush {
 				flusher.Flush()
 			}
@@ -952,7 +1104,10 @@ func extractModel(body []byte) string {
 
 func isStreamingResponse(headers http.Header) bool {
 	ct := headers.Get("Content-Type")
-	return strings.Contains(ct, "text/event-stream") || strings.Contains(ct, "application/x-ndjson")
+	return strings.Contains(ct, "text/event-stream") ||
+		strings.Contains(ct, "application/x-ndjson") ||
+		// Bedrock ConverseStream returns the AWS binary event-stream framing.
+		strings.Contains(ct, "application/vnd.amazon.eventstream")
 }
 
 func writeBufferedResponse(w http.ResponseWriter, statusCode int, headers http.Header, body []byte) {
@@ -1271,7 +1426,8 @@ func bedrockTargetURL(region string) string {
 
 func isBedrockPath(path string) bool {
 	parts := strings.Split(strings.TrimPrefix(path, "/"), "/")
-	return len(parts) == 3 && parts[0] == "model" && parts[2] == "converse"
+	return len(parts) == 3 && parts[0] == "model" &&
+		(parts[2] == "converse" || parts[2] == "converse-stream")
 }
 
 func bedrockModelFromPath(path string) string {
@@ -1387,6 +1543,26 @@ func (p *Proxy) forwardToBedrockProvider(w http.ResponseWriter, origReq *http.Re
 		p.metrics.upstreamErrors.WithLabelValues("bedrock", strconv.Itoa(resp.StatusCode)).Inc()
 	}
 
+	for key, values := range resp.Header {
+		if hopByHopHeaders[key] {
+			continue
+		}
+		for _, v := range values {
+			w.Header().Add(key, v)
+		}
+	}
+
+	// ConverseStream (/model/{id}/converse-stream) returns the AWS binary
+	// event-stream framing; pass those frames through to the client without
+	// buffering. Token usage is carried in a terminal binary `metadata` frame we
+	// do not parse, so streamed Bedrock usage is not accounted (matching the
+	// other providers, where streamed usage is only extracted for OpenAI/Anthropic).
+	if isStreamingResponse(resp.Header) {
+		w.WriteHeader(resp.StatusCode)
+		streamCopy(w, resp.Body, nil)
+		return
+	}
+
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
 		slog.Error("Failed to read Bedrock response", "error", err, "request_id", audit.RequestID)
@@ -1397,14 +1573,6 @@ func (p *Proxy) forwardToBedrockProvider(w http.ResponseWriter, origReq *http.Re
 		audit.PromptTokens, audit.CompletionTokens = extractTokenUsage("bedrock", respBody)
 	}
 
-	for key, values := range resp.Header {
-		if hopByHopHeaders[key] {
-			continue
-		}
-		for _, v := range values {
-			w.Header().Add(key, v)
-		}
-	}
 	w.WriteHeader(resp.StatusCode)
 	w.Write(respBody)
 }
