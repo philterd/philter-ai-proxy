@@ -2383,6 +2383,25 @@ func hardenedServer(addr string, handler http.Handler, cfg ListenConfig) *http.S
 	return srv
 }
 
+// buildInboundMTLSConfig builds the TLS config that requires and verifies a
+// client certificate against the CA at clientCAPath. Returned as (config, error)
+// rather than exiting, so it is testable and callers control failure handling.
+func buildInboundMTLSConfig(clientCAPath string) (*tls.Config, error) {
+	caCert, err := os.ReadFile(clientCAPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read client CA certificate %s: %w", clientCAPath, err)
+	}
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM(caCert) {
+		return nil, fmt.Errorf("failed to parse client CA certificate %s", clientCAPath)
+	}
+	return &tls.Config{
+		ClientAuth: tls.RequireAndVerifyClientCert,
+		ClientCAs:  pool,
+		MinVersion: tls.VersionTLS12,
+	}, nil
+}
+
 // backendTypeName normalizes an empty backend type to its "memory" default for
 // log lines.
 func backendTypeName(t string) string {
@@ -3161,21 +3180,12 @@ func main() {
 
 	// mTLS: require and verify client certificates when clientCA is configured.
 	if cfg.Listen.ClientCA != "" {
-		caCert, err := os.ReadFile(cfg.Listen.ClientCA)
+		tlsCfg, err := buildInboundMTLSConfig(cfg.Listen.ClientCA)
 		if err != nil {
-			slog.Error("Failed to read client CA certificate", "path", cfg.Listen.ClientCA, "error", err)
+			slog.Error("mTLS setup failed", "error", err)
 			os.Exit(1)
 		}
-		pool := x509.NewCertPool()
-		if !pool.AppendCertsFromPEM(caCert) {
-			slog.Error("Failed to parse client CA certificate", "path", cfg.Listen.ClientCA)
-			os.Exit(1)
-		}
-		srv.TLSConfig = &tls.Config{
-			ClientAuth: tls.RequireAndVerifyClientCert,
-			ClientCAs:  pool,
-			MinVersion: tls.VersionTLS12,
-		}
+		srv.TLSConfig = tlsCfg
 		slog.Info("mTLS enabled", "clientCA", cfg.Listen.ClientCA)
 	}
 

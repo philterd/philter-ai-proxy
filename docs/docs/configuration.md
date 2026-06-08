@@ -71,7 +71,36 @@ defaults:
   context: none
 ```
 
+## Configuration Compatibility
+
+The configuration file carries an optional top-level schema version:
+
+```yaml
+version: 1   # optional; defaults to the current schema when omitted
+```
+
+**Backward-compatibility policy** (the config-schema counterpart of the stable [error-code contract](#error-responses)):
+
+- **Additive changes ship in any release.** New optional fields with safe defaults may be added at any time. A config that is valid for version *N* keeps working on later releases of the same major version without edits.
+- **`version` is optional and defaults to the current schema.** Omitting it is fully supported, so existing configs need no changes. Setting it explicitly (`version: 1`) lets you pin the schema your automation was written against and get a clear startup error if a future build no longer supports it.
+- **No silent breaking changes.** Existing fields will not be removed, renamed, or have their meaning/defaults changed in a way that breaks a valid config across minor versions. Anything breaking is reserved for a major-version bump.
+- **Unsupported version → clear startup failure.** If `version` is set to a value this build does not understand, the proxy exits at startup (and `--validate-config` returns non-zero) with `config: unsupported config version <n> (this build supports version <m>) ...` — it never silently ignores the field.
+
+**Migration guidance.** When a breaking schema change is unavoidable, the schema version is incremented, the release notes document the field-by-field migration, and both the old and new versions are accepted for at least one minor release so deployments can migrate without downtime. Validate a config against the running build before rollout with:
+
+```bash
+./philter-ai-proxy --validate-config --config config.yaml
+```
+
+The current schema version is **1**.
+
 ## Configuration Reference
+
+### `version`
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `version` | int | current schema (`1`) | Optional config schema version. Omit to track the current schema, or pin it (e.g. `1`) so an unsupported future schema fails fast at startup. See [Configuration Compatibility](#configuration-compatibility). |
 
 ### `listen`
 

@@ -423,6 +423,11 @@ type DefaultsConfig struct {
 }
 
 type Config struct {
+	// Version is the config schema version. It is optional and defaults to the
+	// current schema (SupportedConfigVersion) when omitted, so existing configs
+	// keep working. A value the running build does not support fails startup
+	// with a clear error. See the configuration compatibility policy.
+	Version   int             `yaml:"version"`
 	Listen    ListenConfig    `yaml:"listen"`
 	Logging   LoggingConfig   `yaml:"logging"`
 	Metrics   MetricsConfig   `yaml:"metrics"`
@@ -504,7 +509,17 @@ func loadConfig(path string) (*Config, error) {
 	return cfg, nil
 }
 
+// SupportedConfigVersion is the config schema version this build understands.
+// A config may omit `version` (treated as the current version) or set it
+// explicitly; any other value is rejected at startup. Bump this only on a
+// breaking config-shape change, alongside migration guidance in the docs.
+const SupportedConfigVersion = 1
+
 func validateConfig(cfg *Config) error {
+	if cfg.Version != 0 && cfg.Version != SupportedConfigVersion {
+		return fmt.Errorf("config: unsupported config version %d (this build supports version %d) -- see the configuration compatibility policy for migration guidance", cfg.Version, SupportedConfigVersion)
+	}
+
 	targets := map[string]string{
 		"philter.endpoint":    cfg.Philter.Endpoint,
 		"providers.openai":    cfg.Providers.OpenAI.Target,
@@ -811,14 +826,24 @@ func validateConfig(cfg *Config) error {
 		return fmt.Errorf("config: admin.token is required when admin endpoint is enabled")
 	}
 
-	// Reserved path prefixes used by built-in providers.
-	reservedNames := map[string]bool{"v1": true, "api": true, "model": true, "health": true}
+	// A compat name becomes a URL path prefix (/{name}/...) and the provider
+	// label in audit logs and per-key scopes, so it may not collide with a
+	// built-in route prefix or provider identifier, nor contain a path
+	// separator (which would make the prefix ambiguous / unroutable).
+	reservedNames := map[string]bool{
+		"v1": true, "api": true, "model": true, "health": true,
+		"openai": true, "anthropic": true, "gemini": true,
+		"ollama": true, "bedrock": true, "azure": true, "vertex": true,
+	}
 	for name, pc := range cfg.Providers.OpenAICompatible {
 		if name == "" {
 			return fmt.Errorf("config: providers.openaiCompatible has an entry with an empty name")
 		}
+		if strings.ContainsAny(name, "/\\") {
+			return fmt.Errorf("config: providers.openaiCompatible name %q must not contain a path separator", name)
+		}
 		if reservedNames[name] {
-			return fmt.Errorf("config: providers.openaiCompatible name %q conflicts with a built-in route prefix", name)
+			return fmt.Errorf("config: providers.openaiCompatible name %q is reserved (it collides with a built-in provider or route prefix)", name)
 		}
 		if pc.Target == "" {
 			return fmt.Errorf("config: providers.openaiCompatible[%s].target is required", name)

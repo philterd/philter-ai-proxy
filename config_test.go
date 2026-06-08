@@ -130,6 +130,31 @@ func TestValidateConfig_InvalidPort(t *testing.T) {
 	}
 }
 
+func TestValidateConfig_Version(t *testing.T) {
+	// Omitted version (0) is accepted -- existing configs keep working.
+	cfg := defaultConfig()
+	cfg.Version = 0
+	if err := validateConfig(cfg); err != nil {
+		t.Errorf("omitted version should be accepted, got: %v", err)
+	}
+	// The current supported version is accepted.
+	cfg = defaultConfig()
+	cfg.Version = SupportedConfigVersion
+	if err := validateConfig(cfg); err != nil {
+		t.Errorf("supported version %d should be accepted, got: %v", SupportedConfigVersion, err)
+	}
+	// An unsupported version fails with an error that names both versions.
+	cfg = defaultConfig()
+	cfg.Version = SupportedConfigVersion + 1
+	err := validateConfig(cfg)
+	if err == nil {
+		t.Fatal("expected validation error for an unsupported config version")
+	}
+	if !strings.Contains(err.Error(), "unsupported config version") {
+		t.Errorf("error should name the problem, got: %v", err)
+	}
+}
+
 func TestValidateConfig_EmptyTarget(t *testing.T) {
 	cfg := defaultConfig()
 	cfg.Providers.OpenAI.Target = ""
@@ -337,10 +362,10 @@ func TestRouteMatching_EndToEnd(t *testing.T) {
 
 	openaiURL, _ := url.Parse(openaiServer.URL)
 	proxy := &Proxy{
-		config:         cfg,
-		openaiTarget:  openaiURL,
-		openaiClient:  http.DefaultClient,
-		philter: testPhilterClient(cfg.Philter.Endpoint),
+		config:       cfg,
+		openaiTarget: openaiURL,
+		openaiClient: http.DefaultClient,
+		philter:      testPhilterClient(cfg.Philter.Endpoint),
 	}
 
 	reqBody := `{"model": "gpt-4", "messages": [{"role": "user", "content": "patient data"}]}`
@@ -377,10 +402,10 @@ func TestRouteMatching_ModelMatch_EndToEnd(t *testing.T) {
 
 	openaiURL, _ := url.Parse(openaiServer.URL)
 	proxy := &Proxy{
-		config:         cfg,
-		openaiTarget:  openaiURL,
-		openaiClient:  http.DefaultClient,
-		philter: testPhilterClient(cfg.Philter.Endpoint),
+		config:       cfg,
+		openaiTarget: openaiURL,
+		openaiClient: http.DefaultClient,
+		philter:      testPhilterClient(cfg.Philter.Endpoint),
 	}
 
 	reqBody := `{"model": "gpt-4", "messages": [{"role": "user", "content": "data"}]}`

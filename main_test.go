@@ -3458,6 +3458,84 @@ func TestConfig_OpenAICompatible_Validation(t *testing.T) {
 	if err := validateConfig(cfg5); err == nil {
 		t.Error("Expected error for invalid target URL")
 	}
+
+	// Name containing a path separator (#192 / security review).
+	cfg6 := testConfig("http://127.0.0.1:1")
+	cfg6.Providers.OpenAICompatible = map[string]ProviderConfig{
+		"foo/bar": {Target: "https://example.com"},
+	}
+	if err := validateConfig(cfg6); err == nil {
+		t.Error("Expected error for a compat name containing '/'")
+	}
+
+	// Name colliding with a built-in provider identifier.
+	for _, reserved := range []string{"openai", "anthropic", "gemini", "ollama", "bedrock", "azure", "vertex"} {
+		cfg := testConfig("http://127.0.0.1:1")
+		cfg.Providers.OpenAICompatible = map[string]ProviderConfig{
+			reserved: {Target: "https://example.com"},
+		}
+		if err := validateConfig(cfg); err == nil {
+			t.Errorf("Expected error for reserved built-in provider name %q", reserved)
+		}
+	}
+}
+
+// TestOpenAICompat_ScopeEnforced confirms per-key scopes.providers is enforced
+// for an openaiCompatible provider: a key scoped to the compat name is allowed,
+// and a key scoped to a different provider is denied with scope_denied_provider.
+func TestOpenAICompat_ScopeEnforced(t *testing.T) {
+	philterSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write(explainJSON("REDACTED", "doc-id", nil))
+	}))
+	defer philterSrv.Close()
+	providerSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"OK"}}]}`))
+	}))
+	defer providerSrv.Close()
+	u, _ := url.Parse(providerSrv.URL)
+
+	newProxy := func(t *testing.T, scopedProvider string) *Proxy {
+		entry := APIKeyEntry{Key: "secret", Scopes: &APIKeyScopes{Providers: []string{scopedProvider}}}
+		ks, err := newKeyStore([]APIKeyEntry{entry})
+		if err != nil {
+			t.Fatalf("newKeyStore: %v", err)
+		}
+		cfg := testConfig(philterSrv.URL)
+		cfg.Auth.APIKeys = []APIKeyEntry{entry}
+		return &Proxy{
+			config:                  cfg,
+			philter:                 testPhilterClient(philterSrv.URL),
+			keyStore:                ks,
+			openaiCompatibleTargets: map[string]*url.URL{"mistral": u},
+			openaiCompatibleClients: map[string]*http.Client{"mistral": http.DefaultClient},
+		}
+	}
+
+	body := `{"model":"mistral-large","messages":[{"role":"user","content":"hi"}]}`
+
+	// Key scoped to the compat provider -> allowed.
+	allow := newProxy(t, "mistral")
+	req := httptest.NewRequest("POST", "/mistral/v1/chat/completions", strings.NewReader(body))
+	req.Header.Set("x-philter-proxy-key", "secret")
+	w := httptest.NewRecorder()
+	allow.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Errorf("key scoped to mistral should be allowed, got %d: %s", w.Code, w.Body.String())
+	}
+
+	// Key scoped to a different provider -> denied.
+	deny := newProxy(t, "openai")
+	req = httptest.NewRequest("POST", "/mistral/v1/chat/completions", strings.NewReader(body))
+	req.Header.Set("x-philter-proxy-key", "secret")
+	w = httptest.NewRecorder()
+	deny.ServeHTTP(w, req)
+	if w.Code != http.StatusForbidden {
+		t.Errorf("key scoped to openai should be denied for a mistral request, got %d", w.Code)
+	}
+	if !strings.Contains(w.Body.String(), "scope_denied_provider") {
+		t.Errorf("expected scope_denied_provider, got: %s", w.Body.String())
+	}
 }
 
 func TestOpenAICompat_MultipleProviders(t *testing.T) {

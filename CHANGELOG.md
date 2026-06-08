@@ -8,6 +8,8 @@ All notable changes to this project will be documented in this file.
 - Added a `--version` flag; the build version is stamped via `-ldflags` (derived from `git describe` in the Makefile and Dockerfile) and logged at startup.
 - Token usage is now accounted for streaming responses too: the OpenAI and Anthropic streaming paths extract prompt/completion tokens from the final usage event (without buffering the stream), feeding the same audit-log fields and Prometheus counters as non-streaming responses.
 - Amazon Bedrock ConverseStream (`/model/{id}/converse-stream`) is now supported: the inbound request is redacted as usual and the AWS binary event-stream response is forwarded to the client incrementally (no buffering), matching the streaming behavior of the other providers.
+- Tightened `providers.openaiCompatible` name validation: a compat name may no longer contain a path separator (`/`, `\`) or collide with a built-in provider identifier (`openai`, `anthropic`, `gemini`, `ollama`, `bedrock`, `azure`, `vertex`) in addition to the existing reserved route prefixes — these become ambiguous URL prefixes and audit/scope labels. Existing configs using such names (uncommon) must rename the provider.
+- Added an optional top-level config `version` field and a documented configuration backward-compatibility policy. Omitting `version` tracks the current schema (no change for existing configs); an unsupported value fails fast at startup with a clear error. See [Configuration Compatibility](docs/docs/configuration.md#configuration-compatibility).
 
 ## [1.0.0] - 2026-06-08
 
