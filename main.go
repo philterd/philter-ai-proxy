@@ -2061,6 +2061,12 @@ type handshakeTimeoutListener struct {
 	sem    chan struct{}
 	onShed func()
 
+	// onSlotAcquired, if set, is invoked synchronously the instant a connection
+	// acquires a handshake slot. It is a test hook (nil in production) that lets
+	// tests synchronize on slot occupancy instead of sleeping. It is set before
+	// the accept goroutine starts, so reads from acceptLoop are race-free.
+	onSlotAcquired func()
+
 	ready     chan acceptResult
 	closing   chan struct{}
 	closeOnce sync.Once
@@ -2072,16 +2078,24 @@ type acceptResult struct {
 }
 
 func newHandshakeTimeoutListener(inner net.Listener, timeout time.Duration, maxConcurrent int, onShed func()) *handshakeTimeoutListener {
+	return newHandshakeTimeoutListenerWithHook(inner, timeout, maxConcurrent, onShed, nil)
+}
+
+// newHandshakeTimeoutListenerWithHook is newHandshakeTimeoutListener plus an
+// onSlotAcquired test hook fired immediately after a connection acquires a
+// handshake slot. Production code uses the hook-less constructor.
+func newHandshakeTimeoutListenerWithHook(inner net.Listener, timeout time.Duration, maxConcurrent int, onShed, onSlotAcquired func()) *handshakeTimeoutListener {
 	if maxConcurrent <= 0 {
 		maxConcurrent = DefaultMaxConcurrentTLSHandshakes
 	}
 	l := &handshakeTimeoutListener{
-		Listener: inner,
-		timeout:  timeout,
-		sem:      make(chan struct{}, maxConcurrent),
-		onShed:   onShed,
-		ready:    make(chan acceptResult),
-		closing:  make(chan struct{}),
+		Listener:       inner,
+		timeout:        timeout,
+		sem:            make(chan struct{}, maxConcurrent),
+		onShed:         onShed,
+		onSlotAcquired: onSlotAcquired,
+		ready:          make(chan acceptResult),
+		closing:        make(chan struct{}),
 	}
 	go l.acceptLoop()
 	return l
@@ -2100,6 +2114,9 @@ func (l *handshakeTimeoutListener) acceptLoop() {
 		}
 		select {
 		case l.sem <- struct{}{}:
+			if l.onSlotAcquired != nil {
+				l.onSlotAcquired()
+			}
 			go l.handshake(c)
 		default:
 			// Handshake concurrency ceiling reached: shed this connection

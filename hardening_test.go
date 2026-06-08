@@ -356,7 +356,7 @@ func TestEffectiveMaxConcurrentTLSHandshakes(t *testing.T) {
 // newTLSTestServer builds an HTTPS server wrapped with a handshakeTimeoutListener
 // using the given handshake timeout, concurrency ceiling, and shed callback. It
 // returns the listen address and registers cleanup.
-func newTLSTestServer(t *testing.T, timeout time.Duration, maxConcurrent int, onShed func(), handler http.HandlerFunc) string {
+func newTLSTestServer(t *testing.T, timeout time.Duration, maxConcurrent int, onShed, onSlotAcquired func(), handler http.HandlerFunc) string {
 	t.Helper()
 	tcpLn, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -368,7 +368,7 @@ func newTLSTestServer(t *testing.T, timeout time.Duration, maxConcurrent int, on
 		t.Fatalf("keypair: %v", err)
 	}
 	tlsCfg := &tls.Config{Certificates: []tls.Certificate{cert}}
-	wrapped := newHandshakeTimeoutListener(tls.NewListener(tcpLn, tlsCfg), timeout, maxConcurrent, onShed)
+	wrapped := newHandshakeTimeoutListenerWithHook(tls.NewListener(tcpLn, tlsCfg), timeout, maxConcurrent, onShed, onSlotAcquired)
 	srv := &http.Server{
 		Handler:           handler,
 		ReadHeaderTimeout: 5 * time.Second,
@@ -382,7 +382,7 @@ func newTLSTestServer(t *testing.T, timeout time.Duration, maxConcurrent int, on
 // concurrency headroom, ordinary clients complete requests and nothing is shed.
 func TestHandshakeTimeoutListener_UnderCapUnaffected(t *testing.T) {
 	var shed int64
-	addr := newTLSTestServer(t, 2*time.Second, 8, func() { atomic.AddInt64(&shed, 1) },
+	addr := newTLSTestServer(t, 2*time.Second, 8, func() { atomic.AddInt64(&shed, 1) }, nil,
 		func(w http.ResponseWriter, r *http.Request) { w.Write([]byte("ok")) })
 
 	client := &http.Client{
@@ -410,8 +410,16 @@ func TestHandshakeTimeoutListener_UnderCapUnaffected(t *testing.T) {
 // incoming connection is dropped immediately and the shed callback fires.
 func TestHandshakeTimeoutListener_OverCapSheds(t *testing.T) {
 	var shed int64
+	slotAcquired := make(chan struct{}, 1)
 	// Long handshake timeout so the stalled conn keeps its slot for the test.
-	addr := newTLSTestServer(t, 3*time.Second, 1, func() { atomic.AddInt64(&shed, 1) },
+	addr := newTLSTestServer(t, 3*time.Second, 1,
+		func() { atomic.AddInt64(&shed, 1) },
+		func() {
+			select {
+			case slotAcquired <- struct{}{}:
+			default:
+			}
+		},
 		func(w http.ResponseWriter, r *http.Request) { w.Write([]byte("ok")) })
 
 	// Conn 1: raw TCP that never sends TLS bytes. The listener accepts it,
@@ -422,8 +430,13 @@ func TestHandshakeTimeoutListener_OverCapSheds(t *testing.T) {
 	}
 	defer stall.Close()
 
-	// Give the accept loop time to accept conn 1 and fill the slot.
-	time.Sleep(300 * time.Millisecond)
+	// Wait until the stalled handshake has definitely occupied the only slot,
+	// rather than racing a fixed sleep (which is flaky under CI scheduling).
+	select {
+	case <-slotAcquired:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for the stalled handshake to occupy the only slot")
+	}
 
 	// Conn 2: another raw TCP conn. The slot is full, so the listener must
 	// close it immediately and invoke onShed -- well before any handshake
@@ -456,7 +469,15 @@ func TestHandshakeTimeoutListener_OverCapSheds(t *testing.T) {
 // and the slot is released the moment the handshake resolves.
 func TestHandshakeTimeoutListener_ShedDoesNotAffectEstablished(t *testing.T) {
 	var shed int64
-	addr := newTLSTestServer(t, 3*time.Second, 1, func() { atomic.AddInt64(&shed, 1) },
+	slotAcquired := make(chan struct{}, 1)
+	addr := newTLSTestServer(t, 3*time.Second, 1,
+		func() { atomic.AddInt64(&shed, 1) },
+		func() {
+			select {
+			case slotAcquired <- struct{}{}:
+			default:
+			}
+		},
 		func(w http.ResponseWriter, r *http.Request) { w.Write([]byte("ok")) })
 
 	// A real client completes its handshake (acquiring and immediately
@@ -474,13 +495,26 @@ func TestHandshakeTimeoutListener_ShedDoesNotAffectEstablished(t *testing.T) {
 	io.ReadAll(resp.Body)
 	resp.Body.Close()
 
-	// Now saturate the slot with a stalled handshake.
+	// Discard the slot signal from the first client's handshake so the wait
+	// below observes the stalled connection specifically.
+	select {
+	case <-slotAcquired:
+	default:
+	}
+
+	// Now saturate the slot with a stalled handshake, and wait until it has
+	// definitely occupied the only slot before proving the established
+	// connection is unaffected.
 	stall, err := net.Dial("tcp", addr)
 	if err != nil {
 		t.Fatalf("dial stall: %v", err)
 	}
 	defer stall.Close()
-	time.Sleep(300 * time.Millisecond)
+	select {
+	case <-slotAcquired:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for the stalled handshake to occupy the only slot")
+	}
 
 	// The established keep-alive connection still serves requests.
 	resp2, err := client.Get("https://" + addr + "/")
