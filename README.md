@@ -8,6 +8,13 @@ Outbound response scanning is also supported on an opt-in basis: LLM responses c
 
 View the [documentation](http://philterd.github.io/philter-ai-proxy).
 
+## Scope
+
+The proxy does redaction and the audit trail that goes with it. Two boundaries are deliberate:
+
+- **It is not an AI gateway.** Routing, failover, token quotas, and per-tenant billing belong to a gateway such as LiteLLM, Portkey, or Kong AI Gateway. The proxy is designed to run alongside one, redacting on the last hop before traffic leaves your network. See [Using with an AI Gateway](https://philterd.github.io/philter-ai-proxy/ai-gateway/).
+- **It handles text conversations only.** Multipart requests (file uploads, audio transcriptions, image edits) are rejected with `400 invalid_request` and should be routed directly to the provider. Tracked in [#30](https://github.com/philterd/philter-ai-proxy/issues/30).
+
 ## Running the Proxy
 
 Copy `config.example.yaml` to `config.yaml`, edit the values to match your environment, then run:
