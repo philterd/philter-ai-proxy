@@ -18,6 +18,15 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 )
 
+// philterPassThrough is a stub Philter that echoes a fixed explain response,
+// letting the stress tests exercise the proxy path without a real Philter.
+func philterPassThrough(t *testing.T) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write(explainJSON("hi", "doc-id", nil))
+	}))
+}
+
 // stressDims reads the stress-test dimensions from the environment so CI can run
 // a smaller variant and developers can crank it locally. Defaults are modest so
 // the test stays fast under `go test -race ./...`.

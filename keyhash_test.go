@@ -17,7 +17,7 @@ import (
 // --- parseStoredKey ---------------------------------------------------------
 
 func TestParseStoredKey_Plaintext(t *testing.T) {
-	sk, err := parseStoredKey("my-secret", "key-0", "hipaa", nil, "")
+	sk, err := parseStoredKey("my-secret", "key-0", "hipaa", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -38,7 +38,7 @@ func TestParseStoredKey_Plaintext(t *testing.T) {
 
 func TestParseStoredKey_PrefixedSHA256(t *testing.T) {
 	stored := hashPlaintextKeySHA256("my-secret")
-	sk, err := parseStoredKey(stored, "k", "", nil, "")
+	sk, err := parseStoredKey(stored, "k", "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -56,7 +56,7 @@ func TestParseStoredKey_PrefixedBcrypt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sk, err := parseStoredKey(stored, "k", "", nil, "")
+	sk, err := parseStoredKey(stored, "k", "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -70,26 +70,26 @@ func TestParseStoredKey_PrefixedBcrypt(t *testing.T) {
 }
 
 func TestParseStoredKey_InvalidSHA256Hex(t *testing.T) {
-	if _, err := parseStoredKey("sha256$not-hex", "k", "", nil, ""); err == nil {
+	if _, err := parseStoredKey("sha256$not-hex", "k", "", nil); err == nil {
 		t.Error("expected error for non-hex sha256 payload")
 	}
 }
 
 func TestParseStoredKey_InvalidSHA256Length(t *testing.T) {
 	// Hex-decodable but wrong length.
-	if _, err := parseStoredKey("sha256$"+hex.EncodeToString([]byte("short")), "k", "", nil, ""); err == nil {
+	if _, err := parseStoredKey("sha256$"+hex.EncodeToString([]byte("short")), "k", "", nil); err == nil {
 		t.Error("expected error for sha256 hash of wrong length")
 	}
 }
 
 func TestParseStoredKey_InvalidBcryptHash(t *testing.T) {
-	if _, err := parseStoredKey("bcrypt$not-a-bcrypt-hash", "k", "", nil, ""); err == nil {
+	if _, err := parseStoredKey("bcrypt$not-a-bcrypt-hash", "k", "", nil); err == nil {
 		t.Error("expected error for malformed bcrypt payload")
 	}
 }
 
 func TestParseStoredKey_EmptyRejected(t *testing.T) {
-	if _, err := parseStoredKey("", "k", "", nil, ""); err == nil {
+	if _, err := parseStoredKey("", "k", "", nil); err == nil {
 		t.Error("expected error for empty key")
 	}
 }

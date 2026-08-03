@@ -42,20 +42,18 @@ type storedKey struct {
 	// for per-key rate limits, per-key concurrency, and log lines. Derived
 	// from the entry's position at load time ("key-0", "key-1", ...) so it
 	// stays useful even when the raw key has been hashed away.
-	id        string
-	policy    string
-	scopes    *APIKeyScopes
-	adminRole string
+	id     string
+	policy string
+	scopes *APIKeyScopes
 }
 
 // resolvedKey is what keyStore.lookup returns on a successful match: the
 // stable opaque ID plus everything the request path needs to authorize the
 // call. The raw key value is never returned.
 type resolvedKey struct {
-	ID        string
-	Policy    string
-	Scopes    *APIKeyScopes
-	AdminRole string
+	ID     string
+	Policy string
+	Scopes *APIKeyScopes
 }
 
 // keyStore is the lookup structure assembled at startup from the auth config.
@@ -71,11 +69,11 @@ type keyStore struct {
 //
 // The plaintext form is convenient for quickstart configs; production users
 // should pre-hash to keep plaintext keys out of the YAML.
-func parseStoredKey(s, id, policy string, scopes *APIKeyScopes, adminRole string) (storedKey, error) {
+func parseStoredKey(s, id, policy string, scopes *APIKeyScopes) (storedKey, error) {
 	if s == "" {
 		return storedKey{}, fmt.Errorf("api key value must not be empty")
 	}
-	base := storedKey{id: id, policy: policy, scopes: scopes, adminRole: adminRole}
+	base := storedKey{id: id, policy: policy, scopes: scopes}
 	if algo, rest, ok := strings.Cut(s, "$"); ok {
 		switch algo {
 		case hashAlgoSHA256:
@@ -119,7 +117,7 @@ func keyIDForIndex(i int) string {
 
 // keyIDFor returns the stable identifier for an APIKeyEntry: its explicit
 // `id` when set, otherwise the legacy positional `key-N`. Use this from the
-// rate-limit, concurrency, and quota wiring so all per-key buckets agree on
+// rate-limit and concurrency wiring so all per-key buckets agree on
 // the same identifier the keyStore will later return from lookup().
 func keyIDFor(entry APIKeyEntry, i int) string {
 	if entry.ID != "" {
@@ -143,7 +141,7 @@ func newKeyStore(entries []APIKeyEntry) (*keyStore, error) {
 			// the documentation strongly recommends setting `id:` explicitly.
 			id = keyIDForIndex(i)
 		}
-		sk, err := parseStoredKey(e.Key, id, e.Policy, e.Scopes, e.AdminRole)
+		sk, err := parseStoredKey(e.Key, id, e.Policy, e.Scopes)
 		if err != nil {
 			return nil, fmt.Errorf("auth.apiKeys[%d]: %w", i, err)
 		}
@@ -192,7 +190,7 @@ func (ks *keyStore) lookup(clientKey string) (*resolvedKey, bool) {
 		return nil, false
 	}
 	e := &ks.entries[matchIdx]
-	return &resolvedKey{ID: e.id, Policy: e.policy, Scopes: e.scopes, AdminRole: e.adminRole}, true
+	return &resolvedKey{ID: e.id, Policy: e.policy, Scopes: e.scopes}, true
 }
 
 // hashPlaintextKeySHA256 returns the canonical `sha256$<hex>` string for a

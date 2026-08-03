@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"crypto/sha256"
 	"crypto/tls"
 	"errors"
 	"io"
@@ -112,78 +111,6 @@ func TestDisableRedirects_BehaviorEndToEnd(t *testing.T) {
 	}
 	if hitSecond {
 		t.Error("client followed the redirect; credentials could leak to redirect target")
-	}
-}
-
-// --- #3 Admin token hashed at rest ----------------------------------------
-
-func TestHashAdminToken_NonEmpty(t *testing.T) {
-	h := hashAdminToken("super-secret")
-	want := sha256.Sum256([]byte("super-secret"))
-	if h != want {
-		t.Error("hashAdminToken did not match a fresh SHA256 of the input")
-	}
-}
-
-func TestHashAdminToken_EmptyReturnsZero(t *testing.T) {
-	h := hashAdminToken("")
-	for _, b := range h {
-		if b != 0 {
-			t.Fatal("empty admin token must yield zero-valued hash")
-		}
-	}
-	if !isZeroHash(h) {
-		t.Error("isZeroHash should report true for the empty-token hash")
-	}
-}
-
-func TestAdmin_EmptyConfiguredTokenRejectsAll(t *testing.T) {
-	// Defense in depth: even if a request arrives with an empty token AND
-	// the proxy has no admin token configured, deny.
-	p := &Proxy{
-		config:         testConfig(""),
-		adminTokenHash: [32]byte{}, // not configured
-		usage:          newMemUsageStore(),
-	}
-	p.config.Admin.Enabled = true
-
-	req := httptest.NewRequest("GET", "/admin/usage", nil)
-	req.Header.Set(defaultAdminHeader, "")
-	w := httptest.NewRecorder()
-	p.handleAdminUsage(w, req)
-	if w.Code != http.StatusUnauthorized {
-		t.Errorf("empty configured token must reject; got %d", w.Code)
-	}
-
-	// Also reject a non-empty header attempting to brute-force.
-	req = httptest.NewRequest("GET", "/admin/usage", nil)
-	req.Header.Set(defaultAdminHeader, "guess")
-	w = httptest.NewRecorder()
-	p.handleAdminUsage(w, req)
-	if w.Code != http.StatusUnauthorized {
-		t.Errorf("guess against unconfigured token must reject; got %d", w.Code)
-	}
-}
-
-func TestAdmin_PlaintextTokenClearedFromConfigAfterStartup(t *testing.T) {
-	// Drive a minimal startup path by exercising the same construction
-	// pattern. Confirms that with the hash on the Proxy, the plaintext
-	// admin token is not retained on cfg.Admin.Token.
-	cfg := defaultConfig()
-	cfg.Admin.Enabled = true
-	cfg.Admin.Token = "should-be-cleared"
-
-	// Mirror the production code:
-	//   p := &Proxy{... adminTokenHash: hashAdminToken(cfg.Admin.Token)}
-	//   cfg.Admin.Token = ""
-	p := &Proxy{config: cfg, adminTokenHash: hashAdminToken(cfg.Admin.Token)}
-	cfg.Admin.Token = ""
-
-	if cfg.Admin.Token != "" {
-		t.Error("plaintext token must be cleared from config after hashing")
-	}
-	if isZeroHash(p.adminTokenHash) {
-		t.Error("hash must be populated")
 	}
 }
 
@@ -360,7 +287,7 @@ func TestSecurity_SanitizeQuery_AllowList(t *testing.T) {
 	}{
 		{"api-version=2024-06-01", "2024-06-01"},
 		{"alt=sse", "sse"},
-		{"format=csv", "csv"},
+		{"prettyPrint=true", "true"},
 	}
 	for _, c := range cases {
 		got := sanitizeQuery(c.query)
@@ -417,64 +344,6 @@ func TestSecurity_RequestID_ControlChars(t *testing.T) {
 	// Last case is the positive control: spaces are printable.
 	if got := sanitizeInboundRequestID(cases[len(cases)-1]); got != cases[len(cases)-1] {
 		t.Errorf("space-containing printable id rejected: got %q", got)
-	}
-}
-
-// --- #8 Admin per-IP rate limit -------------------------------------------
-
-func TestSecurity_AdminRateLimitTriggers(t *testing.T) {
-	// Use the same helper as the admin tests so the Proxy is wired the
-	// production way.
-	p := adminTestProxy(t, "right-token")
-	p.adminLimiter = newMemoryBackend()
-	defer p.adminLimiter.Close()
-
-	// Burst is 10. Send 12 fast requests; the last couple should be 429.
-	var got429 bool
-	for i := 0; i < 12; i++ {
-		req := httptest.NewRequest("GET", "/admin/usage", nil)
-		req.RemoteAddr = "1.2.3.4:1111"
-		req.Header.Set(defaultAdminHeader, "wrong") // bad token, so we exercise the limit even on a valid path
-		w := httptest.NewRecorder()
-		p.handleAdminUsage(w, req)
-		if w.Code == http.StatusTooManyRequests {
-			got429 = true
-			if w.Header().Get("Retry-After") == "" {
-				t.Error("429 must include Retry-After")
-			}
-			if !strings.Contains(w.Body.String(), "admin_rate_limited") {
-				t.Errorf("429 body should carry admin_rate_limited; got %s", w.Body.String())
-			}
-		}
-	}
-	if !got429 {
-		t.Error("admin endpoint did not 429 under burst load")
-	}
-}
-
-func TestSecurity_AdminRateLimitPerPeer(t *testing.T) {
-	// Two different peers must NOT share a bucket. After exhausting one
-	// IP's burst with bad tokens, a fresh IP should still authenticate.
-	p := adminTestProxy(t, "right-token")
-	p.adminLimiter = newMemoryBackend()
-	defer p.adminLimiter.Close()
-
-	// Spam IP A with bad tokens to consume its bucket.
-	for i := 0; i < 15; i++ {
-		req := httptest.NewRequest("GET", "/admin/usage", nil)
-		req.RemoteAddr = "1.1.1.1:1111"
-		req.Header.Set(defaultAdminHeader, "wrong")
-		p.handleAdminUsage(httptest.NewRecorder(), req)
-	}
-
-	// IP B with the right token should still get 200.
-	req := httptest.NewRequest("GET", "/admin/usage", nil)
-	req.RemoteAddr = "2.2.2.2:2222"
-	req.Header.Set(defaultAdminHeader, "right-token")
-	w := httptest.NewRecorder()
-	p.handleAdminUsage(w, req)
-	if w.Code != http.StatusOK {
-		t.Fatalf("clean IP must be unaffected by other IP's burst; got %d: %s", w.Code, w.Body.String())
 	}
 }
 
@@ -603,7 +472,7 @@ func TestSecurity_IsCanonicalPath(t *testing.T) {
 		"/v1/chat/completions":                  true,
 		"/v1/messages":                          true,
 		"/":                                     true,
-		"/admin/usage":                          true,
+		"/v1/embeddings":                        true,
 		"":                                      false, // empty rejected
 		"/v1/chat/../v1/embeddings":             false, // traversal
 		"//v1/chat/completions":                 false, // double slash

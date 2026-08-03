@@ -2,7 +2,6 @@ package main
 
 import (
 	"bytes"
-	"encoding/json"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -256,81 +255,6 @@ func TestScopes_MultiDimensionAllAllowed_200(t *testing.T) {
 		map[string]string{"x-philter-proxy-key": "alpha"})
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200 with all dimensions matching, got %d: %s", w.Code, w.Body.String())
-	}
-}
-
-// ---------- Read-only admin role ----------
-
-func adminRoleProxy(t *testing.T, entries []APIKeyEntry, adminTok string) *Proxy {
-	t.Helper()
-	cfg := defaultConfig()
-	cfg.Auth.APIKeys = entries
-	cfg.Admin.Enabled = true
-	// The production startup path hashes the admin token onto the Proxy
-	// struct and zeros the plaintext config field. Mirror that here so the
-	// test exercises the same comparison path.
-	hash := hashAdminToken(adminTok)
-	cfg.Admin.Token = ""
-	ks, err := newKeyStore(entries)
-	if err != nil {
-		t.Fatalf("newKeyStore: %v", err)
-	}
-	return &Proxy{
-		config:         cfg,
-		keyStore:       ks,
-		usage:          newMemUsageStore(),
-		adminTokenHash: hash,
-	}
-}
-
-func TestAdminRole_UsageReadKeyGrantsAccess(t *testing.T) {
-	p := adminRoleProxy(t,
-		[]APIKeyEntry{{Key: "reader-key", AdminRole: AdminRoleUsageRead}},
-		"secret-admin-token")
-
-	// Present the API key in the auth header (no admin token).
-	req := httptest.NewRequest("GET", "/admin/usage", nil)
-	req.Header.Set("x-philter-proxy-key", "reader-key")
-	w := httptest.NewRecorder()
-	p.handleAdminUsage(w, req)
-	if w.Code != http.StatusOK {
-		t.Fatalf("expected 200 for usage-read role, got %d: %s", w.Code, w.Body.String())
-	}
-	var out map[string]any
-	if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil {
-		t.Fatalf("response is not JSON: %v", err)
-	}
-}
-
-func TestAdminRole_KeyWithoutRoleDenied(t *testing.T) {
-	p := adminRoleProxy(t,
-		[]APIKeyEntry{{Key: "no-role-key"}}, // no AdminRole
-		"secret-admin-token")
-	req := httptest.NewRequest("GET", "/admin/usage", nil)
-	req.Header.Set("x-philter-proxy-key", "no-role-key")
-	w := httptest.NewRecorder()
-	p.handleAdminUsage(w, req)
-	if w.Code != http.StatusUnauthorized {
-		t.Fatalf("expected 401 for key without AdminRole, got %d", w.Code)
-	}
-}
-
-func TestAdminRole_FullAdminTokenStillWorks(t *testing.T) {
-	p := adminRoleProxy(t, nil, "secret-admin-token")
-	req := httptest.NewRequest("GET", "/admin/usage", nil)
-	req.Header.Set(defaultAdminHeader, "secret-admin-token")
-	w := httptest.NewRecorder()
-	p.handleAdminUsage(w, req)
-	if w.Code != http.StatusOK {
-		t.Fatalf("expected 200 for admin token, got %d: %s", w.Code, w.Body.String())
-	}
-}
-
-func TestAdminRole_InvalidAdminRoleRejectedAtValidation(t *testing.T) {
-	cfg := defaultConfig()
-	cfg.Auth.APIKeys = []APIKeyEntry{{Key: "alpha", AdminRole: "not-a-role"}}
-	if err := validateConfig(cfg); err == nil {
-		t.Error("expected validation error for unknown adminRole")
 	}
 }
 

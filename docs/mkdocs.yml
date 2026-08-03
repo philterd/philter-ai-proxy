@@ -17,6 +17,7 @@ nav:
   - Usage: usage.md
   - API Reference: api.md
   - Configuration: configuration.md
+  - Using with an AI Gateway: ai-gateway.md
   - Monitoring: monitoring.md
   - Load tests: load-tests.md
   - FAQ: faq.md

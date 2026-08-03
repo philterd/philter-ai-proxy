@@ -18,6 +18,7 @@ First public release. Philter AI Proxy is a redacting reverse proxy that strips 
 - OpenAI, Azure OpenAI, Anthropic, Google Gemini, Google Vertex AI, Amazon Bedrock, and Ollama, plus any OpenAI-compatible backend — all with streaming (SSE) support.
 - Inbound redaction across chat, embeddings, Responses, moderations, image, audio, and completions endpoints (including tool calls); optional outbound response scanning; per-route policies.
 - API-key auth (hashed at rest) and mTLS, per-key scopes, secret references for credentials, and inbound request hardening (size caps, slowloris/handshake timeouts, TLS 1.2 floor).
-- Per-client rate limiting, per-key token quotas, usage export, and a response cache — each backed by memory or shared Redis.
+- Per-client rate limiting and a response cache, each backed by memory or shared Redis.
 - Philter retry/circuit breaker and per-provider transport timeouts.
+- Cost control (token quotas, spend tracking, per-tenant billing) is deliberately out of scope; the proxy is designed to run alongside an AI gateway. See [Using with an AI Gateway](docs/docs/ai-gateway.md).
 - Structured JSON audit log and errors, Prometheus metrics, OpenTelemetry tracing, `/livez` and `/readyz` probes, `--validate-config`, a Helm chart and Kubernetes manifests, and a k6 load-test harness.

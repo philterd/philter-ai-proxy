@@ -168,26 +168,12 @@ type Proxy struct {
 	keyStore                *keyStore // hashed API keys; nil when auth is disabled
 	rateLimiter             *ProxyRateLimiter
 	concurrency             *ConcurrencyLimiter
-	usage                   UsageStore     // per-key token accounting; nil when quota & admin both off
-	quota                   *QuotaEnforcer // per-key token quotas; nil when disabled
-	cache                   ResponseCache  // response cache; nil when disabled
+	cache                   ResponseCache // response cache; nil when disabled
 	// trustedProxies are pre-parsed CIDRs corresponding to
 	// cfg.Listen.TrustedProxies. Used by clientIP() to decide whether to
 	// honor the X-Forwarded-For header from a given peer. Empty = never
 	// trust XFF.
 	trustedProxies []*net.IPNet
-	// adminTokenHash is the SHA256 of the configured admin token, populated
-	// at startup. The plaintext is held in memory only briefly during
-	// hashing; comparison uses constant-time fixed-length hash compare so
-	// neither the value nor its length leaks. Zero-valued [32]byte means no
-	// admin token is configured.
-	adminTokenHash [32]byte
-	// adminLimiter is a small per-IP token bucket gating /admin/usage. The
-	// regular request-path rate limiter does not cover admin routes (those
-	// return early before request-path logic), so a dedicated limiter
-	// provides defense-in-depth against brute-force attempts on the admin
-	// token. Configured at construction time.
-	adminLimiter *memoryBackend
 }
 
 type AuditEntry struct {
@@ -430,7 +416,6 @@ func sanitizeInboundRequestID(id string) string {
 var safeQueryParams = map[string]bool{
 	"api-version": true, // Azure OpenAI routing
 	"alt":         true, // Vertex AI: alt=sse for streaming
-	"format":      true, // /admin/usage CSV vs JSON
 	"prettyPrint": true, // Google APIs convention
 	"prettyprint": true,
 }
@@ -930,28 +915,6 @@ func (a *AuditEntry) recordFilterResult(fr FilterResponse) {
 			a.EntityTypeCounts[t] += count
 		}
 	}
-}
-
-// hashAdminToken returns the SHA256 of the configured admin token, or the
-// zero array when no token is configured. The hash is kept on the Proxy
-// struct so the comparison path in handleAdminUsage never touches the
-// plaintext token after startup.
-func hashAdminToken(token string) [32]byte {
-	if token == "" {
-		return [32]byte{}
-	}
-	return sha256.Sum256([]byte(token))
-}
-
-// isZeroHash reports whether the SHA256 hash is all zeros, i.e. no admin
-// token was configured.
-func isZeroHash(h [32]byte) bool {
-	for _, b := range h {
-		if b != 0 {
-			return false
-		}
-	}
-	return true
 }
 
 // noFollowRedirects is the CheckRedirect policy applied to every outbound
@@ -1723,13 +1686,6 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case "/health":
 		p.handleHealth(w, r)
 		return
-	case "/admin/usage":
-		if !p.config.Admin.Enabled {
-			writeError(w, nil, http.StatusNotFound, "not_found", "admin_disabled", "admin endpoint not enabled")
-			return
-		}
-		p.handleAdminUsage(w, r)
-		return
 	}
 
 	// Establish the request_id up front so every downstream error path can
@@ -1849,28 +1805,6 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 			rc.Header().Set("Retry-After", strconv.Itoa(retrySecs))
 			writeError(rc, audit, http.StatusTooManyRequests, "rate_limit_error", "rate_limited", "rate limit exceeded")
-			return
-		}
-	}
-
-	// Token quota. Pre-flight check against accumulated usage; on breach return
-	// 429 + Retry-After pointing at the window reset. Per-key only (quotas are
-	// meaningless without an authenticated key). Fails open on a store error.
-	if p.quota != nil && clientKeyID != "" {
-		allowed, retryAfter, window, qerr := p.quota.Check(r.Context(), clientKeyID, time.Now())
-		if qerr != nil {
-			slog.Warn("Quota check failed; allowing (fail-open)", "error", qerr, "client", clientKeyID, "request_id", requestID)
-		} else if !allowed {
-			retrySecs := int(retryAfter.Seconds())
-			if retrySecs < 1 {
-				retrySecs = 1
-			}
-			slog.Warn("Quota exceeded", "client", clientKeyID, "window", window, "request_id", requestID)
-			if p.metrics != nil {
-				p.metrics.quotaRejections.WithLabelValues(window).Inc()
-			}
-			rc.Header().Set("Retry-After", strconv.Itoa(retrySecs))
-			writeError(rc, audit, http.StatusTooManyRequests, "quota_exceeded", window+"_quota_exceeded", "token quota exceeded")
 			return
 		}
 	}
@@ -2037,14 +1971,8 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		p.handleOpenAI(rc, r, bodyBytes, philter_context, philter_document_id, philter_policy_name, audit, route.Outbound)
 	}
 
-	// Post-response bookkeeping. Token counts are known now (handlers set them
-	// on the audit entry). Accumulate per-key usage for quotas/export, and
-	// populate the cache on a successful, non-streaming miss.
-	if p.usage != nil && clientKeyID != "" && (audit.PromptTokens > 0 || audit.CompletionTokens > 0) {
-		if err := p.usage.Add(r.Context(), clientKeyID, int64(audit.PromptTokens), int64(audit.CompletionTokens), time.Now()); err != nil {
-			slog.Warn("Usage record failed", "error", err, "client", clientKeyID, "request_id", requestID)
-		}
-	}
+	// Post-response bookkeeping: populate the cache on a successful,
+	// non-streaming miss.
 	if cacheable && rc.statusCode >= 200 && rc.statusCode < 300 {
 		if body := rc.cachedBody(); len(body) > 0 {
 			p.cache.Set(r.Context(), cacheKey, &CachedResponse{
@@ -3097,28 +3025,6 @@ func main() {
 		proxyMetrics.concurrencyLimit.WithLabelValues("global").Set(float64(cfg.Listen.MaxConcurrentRequests))
 	}
 
-	// Usage store backs both quotas and the /admin/usage export, so build it
-	// when either is enabled. Quota enforcement layers on top of it.
-	var usageStore UsageStore
-	var quotaEnforcer *QuotaEnforcer
-	if cfg.Quota.Enabled || cfg.Admin.Enabled {
-		usageStore, err = newUsageStore(cfg.Quota.Backend)
-		if err != nil {
-			slog.Error("Failed to initialize usage store", "error", err)
-			os.Exit(1)
-		}
-	}
-	if cfg.Quota.Enabled {
-		quotaEnforcer = newQuotaEnforcer(cfg.Quota, cfg.Auth.APIKeys, usageStore)
-		slog.Info("Token quotas enabled",
-			"defaultDailyTokens", cfg.Quota.Default.DailyTokens,
-			"defaultMonthlyTokens", cfg.Quota.Default.MonthlyTokens,
-			"backend", backendTypeName(cfg.Quota.Backend.Type))
-	}
-	if cfg.Admin.Enabled {
-		slog.Info("Admin usage endpoint enabled at /admin/usage")
-	}
-
 	var responseCache ResponseCache
 	if cfg.Cache.Enabled {
 		responseCache, err = newResponseCache(cfg.Cache)
@@ -3158,19 +3064,9 @@ func main() {
 		keyStore:                keyStoreInstance,
 		rateLimiter:             proxyRateLimiter,
 		concurrency:             proxyConcurrency,
-		usage:                   usageStore,
-		quota:                   quotaEnforcer,
 		cache:                   responseCache,
 		trustedProxies:          parseTrustedProxies(cfg.Listen.TrustedProxies),
-		adminTokenHash:          hashAdminToken(cfg.Admin.Token),
-		adminLimiter:            newMemoryBackend(),
 	}
-	// Clear the plaintext admin token from the config now that we have its
-	// hash on the Proxy. Subsequent code paths read the hash, not the
-	// plaintext; keeping the cleartext field zeroed minimizes its lifetime
-	// in process memory.
-	cfg.Admin.Token = ""
-
 	port := fmt.Sprintf("%d", cfg.Listen.Port)
 	cert_file := cfg.Listen.Cert
 	key_file := cfg.Listen.Key
@@ -3264,10 +3160,6 @@ func main() {
 
 	if responseCache != nil {
 		responseCache.Close()
-	}
-
-	if usageStore != nil {
-		usageStore.Close()
 	}
 
 	if err := srv.Shutdown(ctx); err != nil {

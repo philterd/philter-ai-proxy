@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -58,86 +57,6 @@ func TestWriteBodyReadError(t *testing.T) {
 	}
 	if strings.Contains(body, "connection reset internals") {
 		t.Errorf("response leaked the internal error detail: %s", body)
-	}
-}
-
-// --- #188: quota window rollover -----------------------------------------
-
-func TestUsageStore_WindowRollover(t *testing.T) {
-	ctx := context.Background()
-	store := newMemUsageStore()
-
-	day1 := time.Date(2026, 1, 15, 12, 0, 0, 0, time.UTC)
-	day2 := time.Date(2026, 1, 16, 12, 0, 0, 0, time.UTC) // next day, same month
-	nextMonth := time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC)
-
-	if err := store.Add(ctx, "k", 10, 5, day1); err != nil { // 15 tokens
-		t.Fatalf("add: %v", err)
-	}
-
-	rec, _ := store.Get(ctx, "k", day1)
-	if rec.DayTokens != 15 || rec.MonthTokens != 15 {
-		t.Fatalf("day1: got day=%d month=%d, want 15/15", rec.DayTokens, rec.MonthTokens)
-	}
-
-	// Next day, same month: the daily counter resets, the monthly persists.
-	rec, _ = store.Get(ctx, "k", day2)
-	if rec.DayTokens != 0 {
-		t.Errorf("day2: daily window should reset to 0, got %d", rec.DayTokens)
-	}
-	if rec.MonthTokens != 15 {
-		t.Errorf("day2: monthly window should persist at 15, got %d", rec.MonthTokens)
-	}
-
-	// Next month: both windows reset.
-	rec, _ = store.Get(ctx, "k", nextMonth)
-	if rec.DayTokens != 0 || rec.MonthTokens != 0 {
-		t.Errorf("nextMonth: both windows should reset, got day=%d month=%d", rec.DayTokens, rec.MonthTokens)
-	}
-	// Lifetime totals are never reset.
-	if rec.TotalPrompt != 10 || rec.TotalCompletion != 5 {
-		t.Errorf("lifetime totals must persist, got prompt=%d completion=%d", rec.TotalPrompt, rec.TotalCompletion)
-	}
-}
-
-func TestQuota_EnforcerRollover(t *testing.T) {
-	ctx := context.Background()
-	store := newMemUsageStore()
-	q := newQuotaEnforcer(QuotaConfig{Default: QuotaLimits{DailyTokens: 100, MonthlyTokens: 1000}}, nil, store)
-
-	day1 := time.Date(2026, 3, 10, 12, 0, 0, 0, time.UTC)
-	day2 := time.Date(2026, 3, 11, 12, 0, 0, 0, time.UTC)
-	nextMonth := time.Date(2026, 4, 1, 0, 0, 0, 0, time.UTC)
-
-	// Exhaust the daily quota on day1.
-	if err := store.Add(ctx, "k", 60, 60, day1); err != nil { // 120 > 100/day
-		t.Fatalf("add: %v", err)
-	}
-	allowed, _, window, _ := q.Check(ctx, "k", day1)
-	if allowed || window != "daily" {
-		t.Fatalf("day1: want denied/daily, got allowed=%v window=%q", allowed, window)
-	}
-
-	// day2: the daily window has rolled over, so the key is allowed again
-	// (monthly is 120, still under 1000).
-	allowed, _, _, _ = q.Check(ctx, "k", day2)
-	if !allowed {
-		t.Errorf("day2: daily window should have reset, but request was denied")
-	}
-
-	// Now exhaust the monthly quota.
-	if err := store.Add(ctx, "k", 500, 500, day2); err != nil { // month: 120 + 1000 = 1120
-		t.Fatalf("add: %v", err)
-	}
-	allowed, _, window, _ = q.Check(ctx, "k", day2)
-	if allowed || window != "monthly" {
-		t.Fatalf("day2 after overspend: want denied/monthly, got allowed=%v window=%q", allowed, window)
-	}
-
-	// nextMonth: the monthly window rolls over, so the key is allowed again.
-	allowed, _, _, _ = q.Check(ctx, "k", nextMonth)
-	if !allowed {
-		t.Errorf("nextMonth: monthly window should have reset, but request was denied")
 	}
 }
 

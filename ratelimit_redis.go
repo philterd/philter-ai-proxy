@@ -76,7 +76,7 @@ type redisBackend struct {
 
 // newRedisClient builds a go-redis client from a RedisBackendConfig, applying
 // TLS when enabled. Shared by every Redis-backed subsystem (rate limiting,
-// quotas, response cache).
+// response cache).
 func newRedisClient(cfg RedisBackendConfig) (*redis.Client, error) {
 	opts := &redis.Options{
 		Addr:     cfg.Address,

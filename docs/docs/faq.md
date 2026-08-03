@@ -87,13 +87,11 @@ Yes. Keys are hashed when the config is loaded and never held in memory as plain
 
 To keep the secret out of the config file entirely, the `key:` field also accepts `${ENV_VAR}` (read from an environment variable) and `file:/path/to/secret` (read from a mounted file) references, resolved at load and then hashed like any other value. This is the recommended way to integrate with environment-injected secrets, Kubernetes/Docker secrets, Vault, or AWS Secrets Manager. See [Loading secrets from environment variables and files](configuration.md#loading-secrets-from-environment-variables-and-files) and the [key-rotation procedure](configuration.md#rotating-api-keys).
 
-### Can I cap how many tokens a customer uses (billing quotas)?
+### Can I cap token spend or get per-customer usage for billing?
 
-Yes. Enable `quota` to set per-key **daily** and **monthly** token caps (prompt+completion), distinct from rate limits — rate limits bound request frequency, quotas bound cumulative token spend. Set a `quota.default` for all keys and/or per-key overrides on `auth.apiKeys[].quota`. When a key reaches a window's cap, requests return `429` with a `Retry-After` pointing at the window reset (UTC midnight for daily, first of next UTC month for monthly). Counters can live in memory (per-replica) or Redis (shared across replicas). See [Token Quotas](configuration.md#token-quotas).
+Not in the proxy. Token quotas, usage export, and per-tenant billing are the job of an AI gateway, and the proxy is designed to run alongside one rather than duplicate it. See [Using with an AI Gateway](ai-gateway.md).
 
-### How do I get per-customer usage for billing?
-
-Enable the `admin` endpoint and query `GET /admin/usage` with the configured admin token. It returns per-key current day/month token usage plus lifetime prompt/completion totals as JSON, or CSV with `?format=csv`. Keys are identified by their stable opaque ID (`key-0`, …), never the raw key. Usage is tracked whenever the admin endpoint or quotas are enabled. See [Usage Export](configuration.md#usage-export-admin-api).
+The proxy does emit `philter_proxy_prompt_tokens_total` and `philter_proxy_completion_tokens_total` (labeled by provider and model), and records per-request token counts in the audit log, so token volume is observable for capacity planning even though it is not enforced. See [Monitoring](monitoring.md).
 
 ### Can I cache responses to repeated prompts?
 
@@ -121,7 +119,7 @@ By default, the proxy retries failed Philter calls up to 3 times with exponentia
 
 For sustained Philter unavailability, enable the circuit breaker (`philter.circuitBreaker.enabled: true`). Once the configured failure threshold is reached, the circuit opens and subsequent requests either receive HTTP 503 immediately (`fallback: block`, the default) or are forwarded unredacted with a warning log (`fallback: passthrough`). After the configured timeout, the circuit allows a probe request through; if it succeeds, the circuit closes.
 
-See [Configuration](configuration.md#philterretrynew) for retry and circuit breaker settings.
+See [Configuration](configuration.md#philterretry) for retry and circuit breaker settings.
 
 ### Can I bound how many concurrent requests the proxy will handle?
 

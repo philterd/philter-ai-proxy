@@ -193,9 +193,3 @@ func TestResponseCache_Close(t *testing.T) {
 		t.Errorf("memory cache Close() = %v, want nil", err)
 	}
 }
-
-func TestUsageStore_Close(t *testing.T) {
-	if err := newMemUsageStore().Close(); err != nil {
-		t.Errorf("memory usage store Close() = %v, want nil", err)
-	}
-}

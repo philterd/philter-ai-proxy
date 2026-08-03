@@ -28,3 +28,7 @@ The proxy ships as a single Go binary. From there:
 - **Local / VM** - run the binary directly with `--config config.yaml`. See [Installation](installation.md).
 - **Docker** - a multi-arch image at `philterd/philter-ai-proxy`. See [Installation → Docker](installation.md#docker).
 - **Kubernetes** - first-party Helm chart and plain manifests under `deploy/`, plus a starter Grafana dashboard. See [Kubernetes Quickstart](kubernetes.md).
+
+## Scope
+
+The proxy does redaction and the audit trail that goes with it. It deliberately does not do routing, failover, token quotas, or per-tenant billing; those belong to an AI gateway, and the proxy is designed to run alongside one. See [Using with an AI Gateway](ai-gateway.md).

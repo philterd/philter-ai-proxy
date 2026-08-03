@@ -123,8 +123,8 @@ type RedisTLSConfig struct {
 type APIKeyEntry struct {
 	Key string `yaml:"key"`
 	// ID is the stable opaque identifier used in audit logs, the per-key
-	// rate-limit bucket, the per-key concurrency bucket, the response-cache
-	// tenant prefix, and the usage store. **Setting this explicitly is
+	// rate-limit bucket, the per-key concurrency bucket, and the response-cache
+	// tenant prefix. **Setting this explicitly is
 	// strongly recommended.** When unset, the proxy falls back to the
 	// positional `key-N` identifier; reordering or inserting entries in
 	// `auth.apiKeys` will then re-shuffle which key owns which historical
@@ -134,9 +134,7 @@ type APIKeyEntry struct {
 	Policy        string           `yaml:"policy"`
 	RateLimit     *RateLimitBucket `yaml:"rateLimit"`
 	MaxConcurrent int              `yaml:"maxConcurrent"` // 0 = unlimited (default)
-	Quota         *QuotaLimits     `yaml:"quota"`         // per-key token quota override
 	Scopes        *APIKeyScopes    `yaml:"scopes"`        // per-key allow-lists (providers/models/paths); nil/empty = full access
-	AdminRole     string           `yaml:"adminRole"`     // "" (none) or "usage-read" (may call GET /admin/usage)
 }
 
 // APIKeyScopes restricts which providers, models, and request paths an API key
@@ -159,35 +157,12 @@ type APIKeyScopes struct {
 	Paths     []string `yaml:"paths"`
 }
 
-// Recognized values for APIKeyEntry.AdminRole. Kept as constants so callers
-// stay consistent and typo-safe.
-const (
-	AdminRoleNone      = ""
-	AdminRoleUsageRead = "usage-read"
-)
-
-// QuotaLimits caps token consumption per rolling calendar window. 0 means
-// unlimited for that window. Quotas are distinct from rate limits: rate limits
-// bound request frequency, quotas bound cumulative token usage (for billing /
-// cost control).
-type QuotaLimits struct {
-	DailyTokens   int64 `yaml:"dailyTokens"`   // prompt+completion tokens per UTC calendar day
-	MonthlyTokens int64 `yaml:"monthlyTokens"` // prompt+completion tokens per UTC calendar month
-}
-
-// StateBackendConfig selects where per-key usage counters or cached responses
-// live. The default (empty / "memory") keeps state in process memory; "redis"
-// shares it across replicas.
+// StateBackendConfig selects where per-key rate-limit state or cached
+// responses live. The default (empty / "memory") keeps state in process
+// memory; "redis" shares it across replicas.
 type StateBackendConfig struct {
 	Type  string             `yaml:"type"`  // "memory" (default) or "redis"
 	Redis RedisBackendConfig `yaml:"redis"` // used when Type is "redis"
-}
-
-// QuotaConfig enables per-key daily/monthly token quotas. Off by default.
-type QuotaConfig struct {
-	Enabled bool               `yaml:"enabled"`
-	Default QuotaLimits        `yaml:"default"` // applied to keys without their own quota
-	Backend StateBackendConfig `yaml:"backend"`
 }
 
 // CacheConfig enables an optional response cache keyed on
@@ -198,13 +173,6 @@ type CacheConfig struct {
 	MaxEntries   int                `yaml:"maxEntries"`   // in-memory cap; default 1024
 	MaxBodyBytes int                `yaml:"maxBodyBytes"` // skip caching larger responses; default 1048576
 	Backend      StateBackendConfig `yaml:"backend"`
-}
-
-// AdminConfig enables the GET /admin/usage export endpoint. Off by default.
-type AdminConfig struct {
-	Enabled bool   `yaml:"enabled"`
-	Token   string `yaml:"token"`  // required when enabled; accepts ${ENV_VAR} / file: references
-	Header  string `yaml:"header"` // header carrying the admin token; default x-philter-admin-token
 }
 
 type AuthConfig struct {
@@ -438,9 +406,7 @@ type Config struct {
 	Defaults  DefaultsConfig  `yaml:"defaults"`
 	Auth      AuthConfig      `yaml:"auth"`
 	RateLimit RateLimitConfig `yaml:"rateLimit"`
-	Quota     QuotaConfig     `yaml:"quota"`
 	Cache     CacheConfig     `yaml:"cache"`
-	Admin     AdminConfig     `yaml:"admin"`
 }
 
 func defaultConfig() *Config {
@@ -738,19 +704,6 @@ func validateConfig(cfg *Config) error {
 		if entry.MaxConcurrent < 0 {
 			return fmt.Errorf("config: auth.apiKeys[%d].maxConcurrent must be >= 0", i)
 		}
-		if entry.Quota != nil {
-			if entry.Quota.DailyTokens < 0 {
-				return fmt.Errorf("config: auth.apiKeys[%d].quota.dailyTokens must be >= 0", i)
-			}
-			if entry.Quota.MonthlyTokens < 0 {
-				return fmt.Errorf("config: auth.apiKeys[%d].quota.monthlyTokens must be >= 0", i)
-			}
-		}
-		switch entry.AdminRole {
-		case AdminRoleNone, AdminRoleUsageRead:
-		default:
-			return fmt.Errorf("config: auth.apiKeys[%d].adminRole %q is invalid (must be empty or %q)", i, entry.AdminRole, AdminRoleUsageRead)
-		}
 		if entry.Scopes != nil {
 			for j, p := range entry.Scopes.Paths {
 				if p == "" {
@@ -771,7 +724,7 @@ func validateConfig(cfg *Config) error {
 	}
 
 	// validateStateBackend checks a memory/redis backend selector shared by the
-	// quota and cache subsystems.
+	// rate-limit and cache subsystems.
 	validateStateBackend := func(name string, b StateBackendConfig) error {
 		validTypes := map[string]bool{"": true, "memory": true, "redis": true}
 		if !validTypes[b.Type] {
@@ -791,22 +744,6 @@ func validateConfig(cfg *Config) error {
 		return nil
 	}
 
-	if cfg.Quota.Enabled {
-		if cfg.Quota.Default.DailyTokens < 0 {
-			return fmt.Errorf("config: quota.default.dailyTokens must be >= 0")
-		}
-		if cfg.Quota.Default.MonthlyTokens < 0 {
-			return fmt.Errorf("config: quota.default.monthlyTokens must be >= 0")
-		}
-	}
-	// quota.backend also stores usage for the /admin/usage export, so validate
-	// it whenever either subsystem is enabled.
-	if cfg.Quota.Enabled || cfg.Admin.Enabled {
-		if err := validateStateBackend("quota.backend", cfg.Quota.Backend); err != nil {
-			return err
-		}
-	}
-
 	if cfg.Cache.Enabled {
 		if cfg.Cache.TTLSeconds < 0 {
 			return fmt.Errorf("config: cache.ttlSeconds must be >= 0")
@@ -820,10 +757,6 @@ func validateConfig(cfg *Config) error {
 		if err := validateStateBackend("cache.backend", cfg.Cache.Backend); err != nil {
 			return err
 		}
-	}
-
-	if cfg.Admin.Enabled && cfg.Admin.Token == "" {
-		return fmt.Errorf("config: admin.token is required when admin endpoint is enabled")
 	}
 
 	// A compat name becomes a URL path prefix (/{name}/...) and the provider
