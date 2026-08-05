@@ -22,8 +22,9 @@ We prefer to take contributions as GitHub pull requests. This workflow allows yo
 
 ### Required Tools
 
-* Java 25+
-* maven
+* Go 1.25+
+* make
+* Docker (only for `make test-integration`)
 
 ### Building on Linux
 
@@ -32,3 +33,16 @@ Ubuntu is our daily driver, but any Linux distribution should work.
 ### Building on MacOS
 
 No additional setup is required.
+
+### Testing
+
+```
+make test          # run the unit tests
+make cover         # run them with coverage and print the total
+make cover-html    # open the per-line coverage report
+make cover-check   # fail if coverage is below the threshold
+```
+
+CI runs `make cover-check`, which fails the build when total statement coverage
+drops below `COVERAGE_THRESHOLD` in the Makefile. Raise that value as coverage
+improves; do not lower it to make a build pass.

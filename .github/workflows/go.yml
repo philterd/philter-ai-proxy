@@ -21,8 +21,16 @@ jobs:
     - name: Install dependencies
       run: go mod download
 
-    - name: Test
-      run: go test -v ./...
+    - name: Test and coverage gate
+      run: make cover-check TESTFLAGS=-v
+
+    - name: Upload coverage profile
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: coverage-profile
+        path: coverage.out
+        if-no-files-found: warn
 
     - name: Build
       run: make build
