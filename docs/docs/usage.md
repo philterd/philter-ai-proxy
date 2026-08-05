@@ -222,7 +222,7 @@ If the model responds with `A common SSN looks like 123-45-6789`, the proxy scan
 
 **`flag`** - The original response is returned unchanged; a warning entry is written to the audit log if PII is found. Useful for monitoring without modifying responses.
 
-**Streaming note:** Outbound scanning only applies to non-streaming responses. Streaming responses (`"stream": true`) are forwarded to the client unchanged. Inbound prompt redaction is unaffected in either case.
+**Streaming note:** Outbound scanning can only inspect non-streaming responses. Under `action: redact` or `flag`, streaming responses (`"stream": true`) are forwarded to the client unchanged. Under `action: block` the proxy rejects them with `403` rather than delivering an unscanned body, since otherwise any client could bypass the block by requesting a stream. Inbound prompt redaction is unaffected in every case.
 
 ## Health Check
 

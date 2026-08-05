@@ -98,6 +98,10 @@ routes:
     outbound:
       enabled: true
       action: block
+      # A streaming response cannot be scanned, so under `block` the proxy
+      # rejects it with 403 rather than forwarding it unscanned. Set
+      # allowUnscannedStreams: true to forward it instead.
+      # allowUnscannedStreams: false
 
   # Use a specific policy for GPT-4 chat completions
   - match:
@@ -112,6 +116,7 @@ defaults:
   # outbound:
   #   enabled: false
   #   action: redact  # redact (default), block, or flag
+  #   # allowUnscannedStreams: false   # under `block`, forward unscannable streams instead of rejecting
 
 # Authentication is disabled by default. Uncomment to enable API key auth.
 # Each `key:` accepts:

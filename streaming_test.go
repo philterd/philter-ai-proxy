@@ -2,7 +2,9 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
+	"encoding/json"
 	"io"
 	"log/slog"
 	"net/http"
@@ -540,5 +542,208 @@ func TestStreaming_Bedrock_ConverseStream_NoBuffering(t *testing.T) {
 	}
 	if !strings.Contains(gotBody, "REDACTED") {
 		t.Errorf("expected redacted text forwarded upstream, got: %s", gotBody)
+	}
+}
+
+// --- #29: fail closed on unscannable streams -------------------------------
+
+// streamingContentTypes are the content types isStreamingResponse recognizes.
+var streamingContentTypes = []struct {
+	name string
+	ct   string
+}{
+	{"sse", "text/event-stream"},
+	{"ndjson", "application/x-ndjson"},
+	{"aws_eventstream", "application/vnd.amazon.eventstream"},
+}
+
+// streamingProviderFor stubs a provider streaming a body containing PII.
+func streamingProviderFor(ct string) *httptest.Server {
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", ct)
+		w.WriteHeader(http.StatusOK)
+		io.WriteString(w, "data: {\"choices\":[{\"delta\":{\"content\":\"SSN 123-45-6789\"}}]}\n\n")
+	}))
+}
+
+// TestStreaming_BlockRejectsUnscannableStream is the core of #29: under
+// `action: block` an unscanned stream must not reach the client.
+func TestStreaming_BlockRejectsUnscannableStream(t *testing.T) {
+	for _, tc := range streamingContentTypes {
+		t.Run(tc.name, func(t *testing.T) {
+			philter := philterRedact("[REDACTED]")
+			defer philter.Close()
+			provider := streamingProviderFor(tc.ct)
+			defer provider.Close()
+
+			proxy := newOutboundProxy(philter.URL, provider.URL, "openai", "block")
+			req := httptest.NewRequest("POST", "/v1/chat/completions",
+				strings.NewReader(`{"model":"gpt-4","messages":[{"role":"user","content":"hi"}],"stream":true}`))
+			w := httptest.NewRecorder()
+			proxy.ServeHTTP(w, req)
+
+			if w.Code != http.StatusForbidden {
+				t.Fatalf("want 403, got %d (body: %s)", w.Code, w.Body.String())
+			}
+			if strings.Contains(w.Body.String(), "123-45-6789") {
+				t.Errorf("unscanned provider body reached the client: %s", w.Body.String())
+			}
+			var body errorBody
+			if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+				t.Fatalf("error body is not JSON: %v (%s)", err, w.Body.String())
+			}
+			if body.Error.Type != "pii_blocked" || body.Error.Code != "outbound_stream_unscannable" {
+				t.Errorf("want pii_blocked/outbound_stream_unscannable, got %s/%s",
+					body.Error.Type, body.Error.Code)
+			}
+		})
+	}
+}
+
+// TestStreaming_RedactAndFlagStillPassThrough pins the other half: neither
+// action promises a clean response, so both keep passing streams through.
+func TestStreaming_RedactAndFlagStillPassThrough(t *testing.T) {
+	for _, action := range []string{"redact", "flag"} {
+		for _, tc := range streamingContentTypes {
+			t.Run(action+"_"+tc.name, func(t *testing.T) {
+				prev := slog.Default()
+				var logBuf strings.Builder
+				slog.SetDefault(slog.New(slog.NewJSONHandler(&logBuf, nil)))
+				defer slog.SetDefault(prev)
+
+				philter := philterRedact("[REDACTED]")
+				defer philter.Close()
+				provider := streamingProviderFor(tc.ct)
+				defer provider.Close()
+
+				proxy := newOutboundProxy(philter.URL, provider.URL, "openai", action)
+				req := httptest.NewRequest("POST", "/v1/chat/completions",
+					strings.NewReader(`{"model":"gpt-4","messages":[{"role":"user","content":"hi"}],"stream":true}`))
+				w := httptest.NewRecorder()
+				proxy.ServeHTTP(w, req)
+
+				if w.Code != http.StatusOK {
+					t.Fatalf("want 200, got %d", w.Code)
+				}
+				if !strings.Contains(w.Body.String(), "123-45-6789") {
+					t.Errorf("body should pass through unscanned, got: %s", w.Body.String())
+				}
+				if !strings.Contains(logBuf.String(), "Outbound scanning skipped for streaming response") {
+					t.Errorf("expected skipped-scan warning, got: %s", logBuf.String())
+				}
+			})
+		}
+	}
+}
+
+// TestStreaming_AllowUnscannedStreamsOptOut covers the escape hatch.
+func TestStreaming_AllowUnscannedStreamsOptOut(t *testing.T) {
+	philter := philterRedact("[REDACTED]")
+	defer philter.Close()
+	provider := streamingProviderFor("text/event-stream")
+	defer provider.Close()
+
+	proxy := newOutboundProxyCfg(philter.URL, provider.URL, "openai",
+		OutboundConfig{Enabled: true, Action: "block", AllowUnscannedStreams: true})
+	req := httptest.NewRequest("POST", "/v1/chat/completions",
+		strings.NewReader(`{"model":"gpt-4","messages":[{"role":"user","content":"hi"}],"stream":true}`))
+	w := httptest.NewRecorder()
+	proxy.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("opt-out should restore pass-through; want 200, got %d", w.Code)
+	}
+	if !strings.Contains(w.Body.String(), "123-45-6789") {
+		t.Errorf("opt-out should pass the stream through, got: %s", w.Body.String())
+	}
+}
+
+// TestStreaming_BlockRejectionIsAudited asserts the rejection is auditable.
+func TestStreaming_BlockRejectionIsAudited(t *testing.T) {
+	philter := philterRedact("[REDACTED]")
+	defer philter.Close()
+	provider := streamingProviderFor("text/event-stream")
+	defer provider.Close()
+
+	proxy := newOutboundProxy(philter.URL, provider.URL, "openai", "block")
+	var buf bytes.Buffer
+	withAuditLogger(proxy, &buf)
+
+	req := httptest.NewRequest("POST", "/v1/chat/completions",
+		strings.NewReader(`{"model":"gpt-4","messages":[{"role":"user","content":"hi"}],"stream":true}`))
+	w := httptest.NewRecorder()
+	proxy.ServeHTTP(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("want 403, got %d", w.Code)
+	}
+
+	var found bool
+	for _, line := range strings.Split(strings.TrimSpace(buf.String()), "\n") {
+		var entry map[string]any
+		if json.Unmarshal([]byte(line), &entry) != nil {
+			continue
+		}
+		if entry["direction"] == "outbound" && entry["error_code"] == "outbound_stream_unscannable" {
+			found = true
+			if entry["http_status"] != float64(http.StatusForbidden) {
+				t.Errorf("audit http_status = %v, want 403", entry["http_status"])
+			}
+		}
+	}
+	if !found {
+		t.Errorf("no outbound audit entry recording the rejection:\n%s", buf.String())
+	}
+}
+
+// TestStreaming_BlockAllowsCleanNonStreamingResponse guards the normal case
+// against the fail-closed path.
+func TestStreaming_BlockAllowsCleanNonStreamingResponse(t *testing.T) {
+	philter := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write(explainJSON("all clear", "doc-out", nil)) // no spans -> no PII
+	}))
+	defer philter.Close()
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		io.WriteString(w, `{"choices":[{"message":{"role":"assistant","content":"all clear"}}]}`)
+	}))
+	defer provider.Close()
+
+	proxy := newOutboundProxy(philter.URL, provider.URL, "openai", "block")
+	req := httptest.NewRequest("POST", "/v1/chat/completions",
+		strings.NewReader(`{"model":"gpt-4","messages":[{"role":"user","content":"hi"}]}`))
+	w := httptest.NewRecorder()
+	proxy.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("clean non-streaming response must pass; got %d (%s)", w.Code, w.Body.String())
+	}
+}
+
+// TestStreaming_BedrockBlockRejectsConverseStream covers the Bedrock path,
+// which has its own copy of the outbound-scan dispatch.
+func TestStreaming_BedrockBlockRejectsConverseStream(t *testing.T) {
+	philter := philterRedact("[REDACTED]")
+	defer philter.Close()
+	bedrock := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/vnd.amazon.eventstream")
+		w.WriteHeader(http.StatusOK)
+		io.WriteString(w, "frame-with-SSN-123-45-6789\n")
+	}))
+	defer bedrock.Close()
+
+	proxy := newBedrockProxy(philter.URL, bedrock.URL)
+	proxy.config.Defaults.Outbound = OutboundConfig{Enabled: true, Action: "block"}
+
+	req := httptest.NewRequest("POST", "/model/amazon.titan-text-v1/converse-stream",
+		strings.NewReader(`{"messages":[{"role":"user","content":[{"text":"hi"}]}]}`))
+	w := httptest.NewRecorder()
+	proxy.ServeHTTP(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("want 403, got %d (body: %s)", w.Code, w.Body.String())
+	}
+	if strings.Contains(w.Body.String(), "123-45-6789") {
+		t.Errorf("unscanned Bedrock stream reached the client: %s", w.Body.String())
 	}
 }

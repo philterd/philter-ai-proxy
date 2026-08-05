@@ -369,12 +369,16 @@ Outbound response scanning runs the LLM's response through Philter before it is 
 
 **Latency note:** outbound scanning buffers the full provider response before returning it, adding the round-trip latency of the Philter call. For latency-sensitive workloads, consider enabling outbound scanning only on routes where compliance requires it.
 
-**Streaming note:** outbound scanning is skipped automatically when the provider returns a streaming response (`text/event-stream` or `application/x-ndjson`). The response is passed through to the client unchanged, and a warning is logged.
+**Streaming note:** outbound scanning cannot inspect a streaming response (`text/event-stream`, `application/x-ndjson`, or Bedrock's `application/vnd.amazon.eventstream`), because the body is delivered incrementally and a detected span can straddle chunk boundaries. What happens next depends on the action:
+
+- `action: block` **fails closed**: the response is rejected with `403` (`pii_blocked` / `outbound_stream_unscannable`) rather than forwarded unscanned. A client can select the streaming path itself by sending `"stream": true`, so passing it through would let any caller bypass a configured block. Set `allowUnscannedStreams: true` to restore pass-through.
+- `action: redact` and `action: flag` pass the stream through unchanged with a warning logged, since neither promises the client never sees undetected PII.
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `enabled` | bool | `false` | Enable outbound response scanning |
 | `action` | string | `redact` | Action when PII is detected: `redact`, `block`, or `flag` |
+| `allowUnscannedStreams` | bool | `false` | When `action` is `block`, forward streaming responses unscanned instead of rejecting them. Restores the pre-fail-closed behavior; has no effect under `redact` or `flag`. |
 
 **Actions:**
 
@@ -912,6 +916,7 @@ The `(type, code)` set below is part of the proxy's public API. New codes may be
 | 401 | `unauthorized` | `missing_api_key` | Auth enabled and no key in the configured header | - |
 | 401 | `unauthorized` | `invalid_api_key` | Auth enabled and the supplied key was not recognised | - |
 | 403 | `pii_blocked` | `outbound_blocked` | Outbound scanning is on with `action: block` and PII was found in the provider response | - |
+| 403 | `pii_blocked` | `outbound_stream_unscannable` | Outbound scanning is on with `action: block` and the provider returned a streaming response, which cannot be scanned. Set `outbound.allowUnscannedStreams: true` to forward these unscanned instead | - |
 | 403 | `forbidden` | `scope_denied_provider` | Resolved provider is not in the authenticated key's `auth.apiKeys[].scopes.providers` allow-list | - |
 | 403 | `forbidden` | `scope_denied_model` | Request `model` is not in the key's `scopes.models` allow-list (or no `model` set when the allow-list is configured) | - |
 | 403 | `forbidden` | `scope_denied_path` | Request path is not in any of the key's `scopes.paths` prefix entries | - |

@@ -25,7 +25,7 @@ Both streaming and non-streaming requests are supported for all providers.
 
 Yes. Streaming responses (SSE for OpenAI/Anthropic, chunked JSON for Gemini, NDJSON for Ollama) are forwarded to the client in real time without buffering. Inbound prompt redaction works identically for streaming and non-streaming requests.
 
-Outbound response scanning is not applied to streaming responses - the stream is forwarded to the client unchanged and a warning is logged. Outbound scanning applies only to non-streaming responses.
+Outbound response scanning can only inspect non-streaming responses. Under `action: redact` or `flag` the stream is forwarded unchanged and a warning is logged. Under `action: block` the proxy rejects the response with `403` instead of forwarding an unscanned body, so a client cannot bypass a configured block by requesting a stream.
 
 ### Can it redact file uploads, audio, or images?
 
@@ -51,7 +51,7 @@ Outbound scanning is disabled by default because it adds a Philter round-trip af
 
 Yes. When outbound scanning is enabled, the proxy must buffer the full provider response and make an additional request to Philter before returning the response to the client. The added latency equals roughly one Philter round-trip (typically low-double-digit milliseconds on local deployments).
 
-Streaming responses are not scanned - they are forwarded immediately - so streaming requests have no outbound latency overhead.
+Streaming responses cannot be scanned. Under `redact` and `flag` they are forwarded immediately, so those requests carry no outbound latency overhead; under `block` they are rejected rather than forwarded.
 
 ### How do I configure the proxy?
 

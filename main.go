@@ -175,23 +175,23 @@ type Proxy struct {
 }
 
 type AuditEntry struct {
-	RequestID        string        `json:"request_id"`
-	Direction        string        `json:"direction"`
-	Provider         string        `json:"provider"`
-	Model            string        `json:"model"`
-	PolicyName       string        `json:"policy_name"`
-	DocumentID       string        `json:"document_id"`
-	FieldsRedacted   int           `json:"fields_redacted"`
-	EntityCount      int           `json:"entity_count"`
-	EntityTypes      []string      `json:"entity_types"`
-	RedactLatency    time.Duration `json:"redact_latency_ms"`
-	ClientIP         string        `json:"client_ip"`
+	RequestID      string        `json:"request_id"`
+	Direction      string        `json:"direction"`
+	Provider       string        `json:"provider"`
+	Model          string        `json:"model"`
+	PolicyName     string        `json:"policy_name"`
+	DocumentID     string        `json:"document_id"`
+	FieldsRedacted int           `json:"fields_redacted"`
+	EntityCount    int           `json:"entity_count"`
+	EntityTypes    []string      `json:"entity_types"`
+	RedactLatency  time.Duration `json:"redact_latency_ms"`
+	ClientIP       string        `json:"client_ip"`
 	// KeyID is the opaque stable identifier (`key-N`) of the authenticated
 	// API key, or empty when no key was authenticated. Never the raw key.
-	KeyID            string        `json:"key_id,omitempty"`
-	HTTPStatus       int           `json:"http_status"`
-	PromptTokens     int           `json:"prompt_tokens,omitempty"`
-	CompletionTokens int           `json:"completion_tokens,omitempty"`
+	KeyID            string `json:"key_id,omitempty"`
+	HTTPStatus       int    `json:"http_status"`
+	PromptTokens     int    `json:"prompt_tokens,omitempty"`
+	CompletionTokens int    `json:"completion_tokens,omitempty"`
 	// ErrorType / ErrorCode mirror the values the client received in the
 	// JSON error body. Empty on 2xx responses.
 	ErrorType string `json:"error_type,omitempty"`
@@ -1034,6 +1034,27 @@ func extractModel(body []byte) string {
 	return m.Model
 }
 
+// blocksUnscannableStreams reports whether a streaming response must be
+// rejected rather than forwarded unscanned. Only `block` promises the client
+// sees no undetected PII, so only `block` fails closed.
+func blocksUnscannableStreams(outbound OutboundConfig) bool {
+	return outbound.Action == "block" && !outbound.AllowUnscannedStreams
+}
+
+// rejectUnscannableStream refuses a streaming response on a route configured to
+// block. A client can select streaming itself with `"stream": true`, so passing
+// it through would be a client-triggerable bypass. Both callers buffer the
+// response first, so nothing has reached the client yet.
+func (p *Proxy) rejectUnscannableStream(w http.ResponseWriter, audit, outboundAudit *AuditEntry, provider, docID string) {
+	slog.Warn("Blocked unscannable streaming response",
+		"provider", provider, "document_id", docID, "outbound_action", "block")
+	outboundAudit.HTTPStatus = http.StatusForbidden
+	outboundAudit.ErrorType, outboundAudit.ErrorCode = "pii_blocked", "outbound_stream_unscannable"
+	emitAuditLog(p.auditLogger, *outboundAudit)
+	writeError(w, audit, http.StatusForbidden, "pii_blocked", "outbound_stream_unscannable",
+		"response blocked: streaming responses cannot be scanned for PII")
+}
+
 func isStreamingResponse(headers http.Header) bool {
 	ct := headers.Get("Content-Type")
 	return strings.Contains(ct, "text/event-stream") ||
@@ -1139,7 +1160,7 @@ type responseScanner func(context.Context, []byte, string, string, string, strin
 func (p *Proxy) forwardWithOutboundScan(
 	w http.ResponseWriter, r *http.Request,
 	target *url.URL, client *http.Client, body []byte, provider string,
-	philterCtx, docID, policy, action string,
+	philterCtx, docID, policy string, outbound OutboundConfig,
 	audit *AuditEntry,
 	scanner responseScanner,
 ) {
@@ -1164,8 +1185,11 @@ func (p *Proxy) forwardWithOutboundScan(
 		HTTPStatus: statusCode,
 	}
 
-	if statusCode >= 200 && statusCode < 300 && !isStreamingResponse(respHeaders) {
-		modified, blocked, scanErr := scanner(r.Context(), respBody, philterCtx, docID, policy, action, outboundAudit)
+	streaming := isStreamingResponse(respHeaders)
+	success := statusCode >= 200 && statusCode < 300
+
+	if success && !streaming {
+		modified, blocked, scanErr := scanner(r.Context(), respBody, philterCtx, docID, policy, outbound.Action, outboundAudit)
 		if scanErr != nil {
 			outboundAudit.HTTPStatus = http.StatusBadGateway
 			outboundAudit.ErrorType, outboundAudit.ErrorCode = "philter_error", "request_failed"
@@ -1181,7 +1205,11 @@ func (p *Proxy) forwardWithOutboundScan(
 			return
 		}
 		respBody = modified
-	} else if isStreamingResponse(respHeaders) {
+	} else if streaming {
+		if success && blocksUnscannableStreams(outbound) {
+			p.rejectUnscannableStream(w, audit, outboundAudit, provider, docID)
+			return
+		}
 		slog.Warn("Outbound scanning skipped for streaming response", "provider", provider, "document_id", docID)
 	}
 
@@ -1437,7 +1465,7 @@ func (p *Proxy) handleBedrock(w http.ResponseWriter, r *http.Request, bodyBytes 
 	}
 
 	if outbound.Enabled {
-		p.forwardBedrockWithOutboundScan(w, r, body, philterCtx, docID, policyName, outbound.Action, audit)
+		p.forwardBedrockWithOutboundScan(w, r, body, philterCtx, docID, policyName, outbound, audit)
 		return
 	}
 	p.forwardToBedrockProvider(w, r, body, audit)
@@ -1545,7 +1573,7 @@ func (p *Proxy) captureFromBedrockProvider(origReq *http.Request, body []byte) (
 
 func (p *Proxy) forwardBedrockWithOutboundScan(
 	w http.ResponseWriter, r *http.Request, body []byte,
-	philterCtx, docID, policy, action string,
+	philterCtx, docID, policy string, outbound OutboundConfig,
 	audit *AuditEntry,
 ) {
 	statusCode, respHeaders, respBody, err := p.captureFromBedrockProvider(r, body)
@@ -1569,8 +1597,11 @@ func (p *Proxy) forwardBedrockWithOutboundScan(
 		HTTPStatus: statusCode,
 	}
 
-	if statusCode >= 200 && statusCode < 300 && !isStreamingResponse(respHeaders) {
-		modified, blocked, scanErr := p.scanBedrockResponse(r.Context(), respBody, philterCtx, docID, policy, action, outboundAudit)
+	streaming := isStreamingResponse(respHeaders)
+	success := statusCode >= 200 && statusCode < 300
+
+	if success && !streaming {
+		modified, blocked, scanErr := p.scanBedrockResponse(r.Context(), respBody, philterCtx, docID, policy, outbound.Action, outboundAudit)
 		if scanErr != nil {
 			outboundAudit.HTTPStatus = http.StatusBadGateway
 			outboundAudit.ErrorType, outboundAudit.ErrorCode = "philter_error", "request_failed"
@@ -1586,7 +1617,11 @@ func (p *Proxy) forwardBedrockWithOutboundScan(
 			return
 		}
 		respBody = modified
-	} else if isStreamingResponse(respHeaders) {
+	} else if streaming {
+		if success && blocksUnscannableStreams(outbound) {
+			p.rejectUnscannableStream(w, audit, outboundAudit, "bedrock", docID)
+			return
+		}
 		slog.Warn("Outbound scanning skipped for streaming response", "provider", "bedrock", "document_id", docID)
 	}
 
@@ -2269,7 +2304,7 @@ func (p *Proxy) handleOllamaGenerate(w http.ResponseWriter, r *http.Request, bod
 
 	if outbound.Enabled {
 		p.forwardWithOutboundScan(w, r, p.ollamaTarget, p.ollamaClient, j, "ollama",
-			context, documentId, policyName, outbound.Action, audit, p.scanOllamaGenerateResponse)
+			context, documentId, policyName, outbound, audit, p.scanOllamaGenerateResponse)
 		return
 	}
 	p.forwardToProvider(w, r, p.ollamaTarget, p.ollamaClient, j, "ollama", audit)
@@ -2302,7 +2337,7 @@ func (p *Proxy) handleOllamaChat(w http.ResponseWriter, r *http.Request, bodyByt
 
 	if outbound.Enabled {
 		p.forwardWithOutboundScan(w, r, p.ollamaTarget, p.ollamaClient, j, "ollama",
-			context, documentId, policyName, outbound.Action, audit, p.scanOllamaChatResponse)
+			context, documentId, policyName, outbound, audit, p.scanOllamaChatResponse)
 		return
 	}
 	p.forwardToProvider(w, r, p.ollamaTarget, p.ollamaClient, j, "ollama", audit)
@@ -2357,7 +2392,7 @@ loop:
 
 	if outbound.Enabled {
 		p.forwardWithOutboundScan(w, r, target, client, j, providerName,
-			context, documentId, policyName, outbound.Action, audit, p.scanGeminiResponse)
+			context, documentId, policyName, outbound, audit, p.scanGeminiResponse)
 		return
 	}
 	p.forwardToProvider(w, r, target, client, j, providerName, audit)
@@ -2405,7 +2440,7 @@ func (p *Proxy) handleOpenAICompatible(w http.ResponseWriter, r *http.Request, b
 
 	if outbound.Enabled {
 		p.forwardWithOutboundScan(w, r, target, client, j, provider,
-			context, documentId, policyName, outbound.Action, audit, p.scanOpenAIResponse)
+			context, documentId, policyName, outbound, audit, p.scanOpenAIResponse)
 		return
 	}
 	p.forwardToProvider(w, r, target, client, j, provider, audit)
@@ -2505,7 +2540,7 @@ msgloop:
 
 	if outbound.Enabled {
 		p.forwardWithOutboundScan(w, r, p.anthropicTarget, p.anthropicClient, j, "anthropic",
-			context, documentId, policyName, outbound.Action, audit, p.scanAnthropicResponse)
+			context, documentId, policyName, outbound, audit, p.scanAnthropicResponse)
 		return
 	}
 	p.forwardToProvider(w, r, p.anthropicTarget, p.anthropicClient, j, "anthropic", audit)

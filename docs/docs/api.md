@@ -66,7 +66,7 @@ The `outbound.action` setting controls what happens when PII is detected in a re
 
 ### Streaming responses
 
-Outbound scanning applies only to non-streaming responses. When the provider returns a streaming response (`Content-Type: text/event-stream` or `application/x-ndjson`), the proxy skips scanning, logs a warning, and forwards the stream to the client unchanged. Inbound prompt redaction is unaffected.
+Outbound scanning can only inspect non-streaming responses. When the provider returns a streaming response (`Content-Type: text/event-stream`, `application/x-ndjson`, or `application/vnd.amazon.eventstream`), the behavior depends on the configured action: `block` rejects the response with `403` (`pii_blocked` / `outbound_stream_unscannable`) rather than forwarding it unscanned, while `redact` and `flag` log a warning and forward the stream unchanged. Inbound prompt redaction is unaffected in every case.
 
 ### Latency
 

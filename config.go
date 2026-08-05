@@ -69,12 +69,9 @@ type ListenConfig struct {
 
 type APIKeyEntry struct {
 	Key string `yaml:"key"`
-	// ID is the stable opaque identifier used in audit logs and the per-key
-	// concurrency bucket. **Setting this explicitly is strongly
-	// recommended.** When unset, the proxy falls back to the
-	// positional `key-N` identifier; reordering or inserting entries in
-	// `auth.apiKeys` will then re-shuffle which key owns which identifier,
-	// silently misattributing audit history and concurrency budgets.
+	// ID is the stable opaque identifier recorded in audit logs. Set it
+	// explicitly: the positional `key-N` fallback re-shuffles when entries are
+	// reordered, misattributing audit history.
 	// See [Per-key Stable Identifiers](docs/docs/configuration.md#per-key-stable-identifiers).
 	ID     string        `yaml:"id"`
 	Policy string        `yaml:"policy"`
@@ -301,6 +298,9 @@ type RouteMatch struct {
 type OutboundConfig struct {
 	Enabled bool   `yaml:"enabled"`
 	Action  string `yaml:"action"` // "redact" (default), "block", or "flag"
+	// AllowUnscannedStreams forwards unscannable streaming responses under
+	// `action: block` instead of rejecting them. Default false (fail closed).
+	AllowUnscannedStreams bool `yaml:"allowUnscannedStreams"`
 }
 
 type RouteConfig struct {
@@ -401,10 +401,9 @@ func loadConfig(path string) (*Config, error) {
 	return cfg, nil
 }
 
-// warnRemovedKeys logs a warning for config keys that used to do something and
-// no longer do. Parsing is deliberately non-strict, so a stale key is ignored
-// rather than rejected; without this an operator upgrading from a build that
-// enforced rate limits would silently lose the limit they configured.
+// warnRemovedKeys warns about config keys that no longer do anything. Parsing
+// is non-strict, so a stale key is ignored rather than rejected; without this
+// an operator would silently lose a control they configured.
 func warnRemovedKeys(data []byte) {
 	var raw struct {
 		RateLimit map[string]any `yaml:"rateLimit"`

@@ -1,10 +1,7 @@
 package main
 
-// ConcurrencyLimiter bounds the number of requests being processed at the same
-// time, protecting both the proxy and the Philter instance behind it from
-// unbounded in-flight work. Per-client concurrency policy is deliberately not
-// handled here: that belongs to the AI gateway the proxy runs alongside.
-//
+// ConcurrencyLimiter bounds in-flight requests, protecting the proxy and the
+// Philter instance behind it. Per-client policy belongs to the AI gateway.
 // A nil receiver is a valid no-op limiter (always allows).
 type ConcurrencyLimiter struct {
 	global chan struct{} // nil when no global limit

@@ -2330,7 +2330,13 @@ func mustParseURL(s string) *url.URL {
 
 // newOutboundProxy creates a proxy with a specific provider configured for outbound scanning.
 func newOutboundProxy(philterURL, providerURL, provider string, action string) *Proxy {
-	outbound := OutboundConfig{Enabled: true, Action: action}
+	return newOutboundProxyCfg(philterURL, providerURL, provider,
+		OutboundConfig{Enabled: true, Action: action})
+}
+
+// newOutboundProxyCfg exposes the full OutboundConfig for tests needing more
+// than `action`.
+func newOutboundProxyCfg(philterURL, providerURL, provider string, outbound OutboundConfig) *Proxy {
 	cfg := testConfig(philterURL)
 	cfg.Defaults.Outbound = outbound
 	u, _ := url.Parse(providerURL)
@@ -2759,12 +2765,11 @@ func TestOutbound_Streaming_NotScanned(t *testing.T) {
 	}
 }
 
-// TestOutbound_Streaming_BlockAction_DoesNotBlock documents the consequence of
-// the streaming-skip: because a streamed response is never scanned, even the
-// "block" action cannot stop PII in a streamed response -- it passes through
-// with HTTP 200. Asserted so the limitation is explicit and intentional.
-func TestOutbound_Streaming_BlockAction_DoesNotBlock(t *testing.T) {
-	philter := philterRedact("[REDACTED]") // would trigger block if the body were scanned
+// TestOutbound_Streaming_BlockAction_FailsClosed pins the #29 behavior change.
+// This previously asserted the opposite: a streamed 200 under `action: block`,
+// which any client could trigger with `"stream": true`.
+func TestOutbound_Streaming_BlockAction_FailsClosed(t *testing.T) {
+	philter := philterRedact("[REDACTED]")
 	defer philter.Close()
 
 	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -2780,11 +2785,11 @@ func TestOutbound_Streaming_BlockAction_DoesNotBlock(t *testing.T) {
 	w := httptest.NewRecorder()
 	proxy.ServeHTTP(w, req)
 
-	if w.Code != http.StatusOK {
-		t.Fatalf("streamed response is not scanned, so block must not trigger; want 200, got %d", w.Code)
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("unscannable stream under block must be rejected; want 403, got %d", w.Code)
 	}
-	if !strings.Contains(w.Body.String(), "123-45-6789") {
-		t.Errorf("streamed PII should pass through unblocked, got: %s", w.Body.String())
+	if strings.Contains(w.Body.String(), "123-45-6789") {
+		t.Errorf("unscanned PII must not reach the client, got: %s", w.Body.String())
 	}
 }
 
