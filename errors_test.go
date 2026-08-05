@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -173,6 +174,28 @@ func TestErrorContract(t *testing.T) {
 				w := httptest.NewRecorder()
 				p.ServeHTTP(w, req)
 				<-p.concurrency.global // release
+				return w
+			},
+		},
+		{
+			name:       "pii_blocked/outbound_stream_unscannable",
+			wantStatus: http.StatusForbidden,
+			wantType:   "pii_blocked",
+			wantCode:   "outbound_stream_unscannable",
+			drive: func(t *testing.T) *httptest.ResponseRecorder {
+				philter := philterRedact("[REDACTED]")
+				defer philter.Close()
+				provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					w.Header().Set("Content-Type", "text/event-stream")
+					w.WriteHeader(http.StatusOK)
+					io.WriteString(w, "data: {\"choices\":[{\"delta\":{\"content\":\"SSN 123-45-6789\"}}]}\n\n")
+				}))
+				defer provider.Close()
+				p := newOutboundProxy(philter.URL, provider.URL, "openai", "block")
+				req := httptest.NewRequest("POST", "/v1/chat/completions",
+					strings.NewReader(`{"model":"gpt-4","messages":[{"role":"user","content":"hi"}],"stream":true}`))
+				w := httptest.NewRecorder()
+				p.ServeHTTP(w, req)
 				return w
 			},
 		},
@@ -348,7 +371,7 @@ func TestXRequestIdOnSuccess(t *testing.T) {
 // caught, not just the one we happened to pick.
 func TestAuditCarriesErrorCode(t *testing.T) {
 	type setup struct {
-		name string
+		name  string
 		drive func(t *testing.T, auditBuf *bytes.Buffer) *httptest.ResponseRecorder
 	}
 	setups := []setup{

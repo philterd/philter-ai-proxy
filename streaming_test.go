@@ -747,3 +747,43 @@ func TestStreaming_BedrockBlockRejectsConverseStream(t *testing.T) {
 		t.Errorf("unscanned Bedrock stream reached the client: %s", w.Body.String())
 	}
 }
+
+// TestStreaming_BlockOnMatchedRouteFailsClosed covers the route-level config
+// surface: `outbound` set on a matched route, not just in `defaults`.
+func TestStreaming_BlockOnMatchedRouteFailsClosed(t *testing.T) {
+	philter := philterRedact("[REDACTED]")
+	defer philter.Close()
+	provider := streamingProviderFor("text/event-stream")
+	defer provider.Close()
+
+	// Defaults deliberately leave outbound off; only the matched route blocks.
+	proxy := newOutboundProxyCfg(philter.URL, provider.URL, "openai", OutboundConfig{})
+	proxy.config.Routes = []RouteConfig{{
+		Match:    RouteMatch{Header: "x-philter-policy", Value: "hipaa"},
+		Policy:   "hipaa-safe-harbor",
+		Outbound: OutboundConfig{Enabled: true, Action: "block"},
+	}}
+
+	req := httptest.NewRequest("POST", "/v1/chat/completions",
+		strings.NewReader(`{"model":"gpt-4","messages":[{"role":"user","content":"hi"}],"stream":true}`))
+	req.Header.Set("x-philter-policy", "hipaa")
+	w := httptest.NewRecorder()
+	proxy.ServeHTTP(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("route-level block must fail closed; want 403, got %d (%s)", w.Code, w.Body.String())
+	}
+	if strings.Contains(w.Body.String(), "123-45-6789") {
+		t.Errorf("unscanned body reached the client: %s", w.Body.String())
+	}
+
+	// A request that does NOT match the route falls through to defaults, where
+	// outbound is off, so the stream passes through as before.
+	req2 := httptest.NewRequest("POST", "/v1/chat/completions",
+		strings.NewReader(`{"model":"gpt-4","messages":[{"role":"user","content":"hi"}],"stream":true}`))
+	w2 := httptest.NewRecorder()
+	proxy.ServeHTTP(w2, req2)
+	if w2.Code != http.StatusOK {
+		t.Errorf("unmatched route should not block; want 200, got %d", w2.Code)
+	}
+}
