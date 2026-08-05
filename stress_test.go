@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -135,100 +134,5 @@ func TestStress_HighConcurrency(t *testing.T) {
 	}
 	if got := gatherCounterSum(t, reg, "philter_proxy_requests_total"); got != float64(total) {
 		t.Errorf("philter_proxy_requests_total: got %v, want %d", got, total)
-	}
-}
-
-// TestStress_HighConcurrency_WithCache runs the same shape with the response
-// cache and per-key auth enabled. Each goroutine is a distinct tenant (its own
-// API key id) issuing M sequential cacheable requests, and asserts: no
-// cross-tenant cache poisoning (each tenant only ever sees its own response),
-// and that cache hits/misses sum correctly (one miss per tenant, the rest hits).
-func TestStress_HighConcurrency_WithCache(t *testing.T) {
-	n, m := stressDims()
-
-	philterSrv := philterPassThrough(t)
-	defer philterSrv.Close()
-	// The provider echoes the (forwarded) X-Tenant header into the response so a
-	// poisoned cache entry would be detectable as another tenant's marker.
-	providerSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		tenant := r.Header.Get("X-Tenant")
-		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprintf(w, `{"choices":[{"message":{"role":"assistant","content":%q}}]}`, tenant)
-	}))
-	defer providerSrv.Close()
-
-	cfg := testConfig(philterSrv.URL)
-	cfg.Cache = CacheConfig{Enabled: true, TTLSeconds: 300}
-	keys := make([]APIKeyEntry, n)
-	for i := range keys {
-		keys[i] = APIKeyEntry{Key: fmt.Sprintf("key-%d", i), ID: fmt.Sprintf("tenant-%d", i)}
-	}
-	cfg.Auth.APIKeys = keys
-
-	cache, err := newResponseCache(cfg.Cache)
-	if err != nil {
-		t.Fatal(err)
-	}
-	reg := prometheus.NewRegistry()
-	u, _ := url.Parse(providerSrv.URL)
-	p := &Proxy{
-		config:       cfg,
-		philter:      testPhilterClient(philterSrv.URL),
-		openaiTarget: u,
-		openaiClient: http.DefaultClient,
-		keyStore:     mustKeyStore(keys),
-		cache:        cache,
-		metrics:      newMetrics(reg),
-	}
-	srv := httptest.NewServer(p)
-
-	var poisoned int64
-	var wg sync.WaitGroup
-	for i := 0; i < n; i++ {
-		wg.Add(1)
-		go func(tenant int) {
-			defer wg.Done()
-			marker := fmt.Sprintf("tenant-%d", tenant)
-			client := &http.Client{}
-			for j := 0; j < m; j++ {
-				req, _ := http.NewRequest("POST", srv.URL+"/v1/chat/completions", strings.NewReader(openAIBody()))
-				req.Header.Set("Content-Type", "application/json")
-				req.Header.Set("x-philter-proxy-key", fmt.Sprintf("key-%d", tenant))
-				req.Header.Set("X-Tenant", marker)
-				resp, err := client.Do(req)
-				if err != nil {
-					t.Errorf("tenant %d request failed: %v", tenant, err)
-					continue
-				}
-				body, _ := io.ReadAll(resp.Body)
-				resp.Body.Close()
-				if resp.StatusCode != http.StatusOK {
-					t.Errorf("tenant %d: status %d: %s", tenant, resp.StatusCode, string(body))
-					continue
-				}
-				// The response must carry THIS tenant's marker and no other's.
-				if !strings.Contains(string(body), marker) {
-					atomic.AddInt64(&poisoned, 1)
-				}
-			}
-		}(i)
-	}
-	wg.Wait()
-	srv.Close()
-
-	if poisoned != 0 {
-		t.Errorf("cache poisoning detected: %d responses carried the wrong tenant marker", poisoned)
-	}
-	hits := gatherCounterSum(t, reg, "philter_proxy_cache_hits_total")
-	misses := gatherCounterSum(t, reg, "philter_proxy_cache_misses_total")
-	if hits+misses != float64(n*m) {
-		t.Errorf("cache hits+misses = %v, want %d (every request is cacheable)", hits+misses, n*m)
-	}
-	// Each tenant's first request is a miss; the remaining M-1 are hits.
-	if misses != float64(n) {
-		t.Errorf("cache misses = %v, want %d (one per tenant)", misses, n)
-	}
-	if hits != float64(n*(m-1)) {
-		t.Errorf("cache hits = %v, want %d", hits, n*(m-1))
 	}
 }

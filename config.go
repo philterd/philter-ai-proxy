@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"log/slog"
 	"net"
 	"net/url"
 	"os"
@@ -62,79 +63,22 @@ type ListenConfig struct {
 	// X-Forwarded-For is NEVER trusted -- the safe behavior when the proxy
 	// is exposed directly to the internet. Operators running behind a
 	// trusted load balancer (ALB, Nginx, Cloudflare, etc.) must add the
-	// load balancer's source CIDR here to keep their per-IP rate limits and
-	// audit-log IPs accurate.
+	// load balancer's source CIDR here to keep their audit-log IPs accurate.
 	TrustedProxies []string `yaml:"trustedProxies"`
-}
-
-type RateLimitBucket struct {
-	RequestsPerSecond float64 `yaml:"requestsPerSecond"`
-	Burst             int     `yaml:"burst"`
-}
-
-type RateLimitConfig struct {
-	Enabled           bool                   `yaml:"enabled"`
-	RequestsPerSecond float64                `yaml:"requestsPerSecond"`
-	Burst             int                    `yaml:"burst"`
-	Global            RateLimitBucket        `yaml:"global"`
-	Backend           RateLimitBackendConfig `yaml:"backend"`
-}
-
-// RateLimitBackendConfig selects where token-bucket state lives. The default
-// (empty / "memory") keeps per-replica state in process memory. Selecting
-// "redis" shares state across replicas so N replicas behind a load balancer
-// enforce one consistent global limit instead of N times the configured limit.
-type RateLimitBackendConfig struct {
-	// Type is "memory" (default) or "redis".
-	Type string `yaml:"type"`
-	// FailureMode governs behavior when the configured backend is unreachable:
-	// "open" (default) degrades to the local in-memory limiter so traffic keeps
-	// flowing (bounded per-replica); "closed" rejects requests while the backend
-	// is down. Only meaningful for the redis backend.
-	FailureMode string             `yaml:"failureMode"`
-	Redis       RedisBackendConfig `yaml:"redis"`
-}
-
-type RedisBackendConfig struct {
-	// Address is the Redis endpoint, host:port. Required when type is "redis".
-	Address string `yaml:"address"`
-	// Username/Password authenticate to Redis (Redis 6+ ACL or legacy
-	// requirepass). Password accepts ${ENV_VAR} / file: secret references.
-	Username string `yaml:"username"`
-	Password string `yaml:"password"`
-	// DB is the Redis logical database number (default 0).
-	DB int `yaml:"db"`
-	// KeyPrefix namespaces the proxy's keys (default "philter:rl:").
-	KeyPrefix string `yaml:"keyPrefix"`
-	// TimeoutMs bounds each Redis round-trip. On timeout the FailureMode
-	// applies. Default 100.
-	TimeoutMs int            `yaml:"timeoutMs"`
-	TLS       RedisTLSConfig `yaml:"tls"`
-}
-
-type RedisTLSConfig struct {
-	Enabled            bool   `yaml:"enabled"`
-	CACert             string `yaml:"caCert"`
-	Cert               string `yaml:"cert"`
-	Key                string `yaml:"key"`
-	InsecureSkipVerify bool   `yaml:"insecureSkipVerify"`
 }
 
 type APIKeyEntry struct {
 	Key string `yaml:"key"`
-	// ID is the stable opaque identifier used in audit logs, the per-key
-	// rate-limit bucket, the per-key concurrency bucket, and the response-cache
-	// tenant prefix. **Setting this explicitly is
-	// strongly recommended.** When unset, the proxy falls back to the
+	// ID is the stable opaque identifier used in audit logs and the per-key
+	// concurrency bucket. **Setting this explicitly is strongly
+	// recommended.** When unset, the proxy falls back to the
 	// positional `key-N` identifier; reordering or inserting entries in
-	// `auth.apiKeys` will then re-shuffle which key owns which historical
-	// state -- a real cross-tenant leak when a response cache is enabled.
+	// `auth.apiKeys` will then re-shuffle which key owns which identifier,
+	// silently misattributing audit history and concurrency budgets.
 	// See [Per-key Stable Identifiers](docs/docs/configuration.md#per-key-stable-identifiers).
-	ID            string           `yaml:"id"`
-	Policy        string           `yaml:"policy"`
-	RateLimit     *RateLimitBucket `yaml:"rateLimit"`
-	MaxConcurrent int              `yaml:"maxConcurrent"` // 0 = unlimited (default)
-	Scopes        *APIKeyScopes    `yaml:"scopes"`        // per-key allow-lists (providers/models/paths); nil/empty = full access
+	ID     string        `yaml:"id"`
+	Policy string        `yaml:"policy"`
+	Scopes *APIKeyScopes `yaml:"scopes"` // per-key allow-lists (providers/models/paths); nil/empty = full access
 }
 
 // APIKeyScopes restricts which providers, models, and request paths an API key
@@ -155,24 +99,6 @@ type APIKeyScopes struct {
 	Providers []string `yaml:"providers"`
 	Models    []string `yaml:"models"`
 	Paths     []string `yaml:"paths"`
-}
-
-// StateBackendConfig selects where per-key rate-limit state or cached
-// responses live. The default (empty / "memory") keeps state in process
-// memory; "redis" shares it across replicas.
-type StateBackendConfig struct {
-	Type  string             `yaml:"type"`  // "memory" (default) or "redis"
-	Redis RedisBackendConfig `yaml:"redis"` // used when Type is "redis"
-}
-
-// CacheConfig enables an optional response cache keyed on
-// (key, model, sha256(request body)). Off by default.
-type CacheConfig struct {
-	Enabled      bool               `yaml:"enabled"`
-	TTLSeconds   int                `yaml:"ttlSeconds"`   // entry lifetime; default 300
-	MaxEntries   int                `yaml:"maxEntries"`   // in-memory cap; default 1024
-	MaxBodyBytes int                `yaml:"maxBodyBytes"` // skip caching larger responses; default 1048576
-	Backend      StateBackendConfig `yaml:"backend"`
 }
 
 type AuthConfig struct {
@@ -405,8 +331,6 @@ type Config struct {
 	Routes    []RouteConfig   `yaml:"routes"`
 	Defaults  DefaultsConfig  `yaml:"defaults"`
 	Auth      AuthConfig      `yaml:"auth"`
-	RateLimit RateLimitConfig `yaml:"rateLimit"`
-	Cache     CacheConfig     `yaml:"cache"`
 }
 
 func defaultConfig() *Config {
@@ -462,6 +386,8 @@ func loadConfig(path string) (*Config, error) {
 		return nil, fmt.Errorf("failed to parse config file %s: %w", path, err)
 	}
 
+	warnRemovedKeys(data)
+
 	// Expand ${ENV_VAR} / file: secret references before validation so the
 	// rest of the pipeline (validation, key hashing) sees the actual values.
 	if err := resolveSecrets(cfg); err != nil {
@@ -473,6 +399,49 @@ func loadConfig(path string) (*Config, error) {
 	}
 
 	return cfg, nil
+}
+
+// warnRemovedKeys logs a warning for config keys that used to do something and
+// no longer do. Parsing is deliberately non-strict, so a stale key is ignored
+// rather than rejected; without this an operator upgrading from a build that
+// enforced rate limits would silently lose the limit they configured.
+func warnRemovedKeys(data []byte) {
+	var raw struct {
+		RateLimit map[string]any `yaml:"rateLimit"`
+		Cache     map[string]any `yaml:"cache"`
+		Auth      struct {
+			APIKeys []struct {
+				ID            string         `yaml:"id"`
+				RateLimit     map[string]any `yaml:"rateLimit"`
+				MaxConcurrent *int           `yaml:"maxConcurrent"`
+			} `yaml:"apiKeys"`
+		} `yaml:"auth"`
+	}
+	if err := yaml.Unmarshal(data, &raw); err != nil {
+		return // the strict decode above already succeeded; nothing to report
+	}
+
+	const rateLimitAdvice = "rate limiting was removed from the proxy; enforce it in your AI gateway or ingress instead"
+	const cacheAdvice = "the response cache was removed from the proxy; use your AI gateway's cache instead"
+	const perKeyConcurrencyAdvice = "per-key concurrency caps were removed; use your AI gateway's per-key parallelism control, or listen.maxConcurrentRequests for a proxy-wide ceiling"
+	if raw.RateLimit != nil {
+		slog.Warn("Ignoring removed config key `rateLimit`", "advice", rateLimitAdvice)
+	}
+	if raw.Cache != nil {
+		slog.Warn("Ignoring removed config key `cache`", "advice", cacheAdvice)
+	}
+	for i, k := range raw.Auth.APIKeys {
+		id := k.ID
+		if id == "" {
+			id = keyIDForIndex(i)
+		}
+		if k.RateLimit != nil {
+			slog.Warn("Ignoring removed config key `auth.apiKeys[].rateLimit`", "key", id, "advice", rateLimitAdvice)
+		}
+		if k.MaxConcurrent != nil {
+			slog.Warn("Ignoring removed config key `auth.apiKeys[].maxConcurrent`", "key", id, "advice", perKeyConcurrencyAdvice)
+		}
+	}
 }
 
 // SupportedConfigVersion is the config schema version this build understands.
@@ -634,42 +603,6 @@ func validateConfig(cfg *Config) error {
 		return fmt.Errorf("config: defaults.outbound.action %q is invalid (must be redact, block, or flag)", cfg.Defaults.Outbound.Action)
 	}
 
-	if cfg.RateLimit.Enabled {
-		if cfg.RateLimit.RequestsPerSecond <= 0 {
-			return fmt.Errorf("config: rateLimit.requestsPerSecond must be > 0 when rate limiting is enabled")
-		}
-		if cfg.RateLimit.Burst < 1 {
-			return fmt.Errorf("config: rateLimit.burst must be >= 1 when rate limiting is enabled")
-		}
-		if cfg.RateLimit.Global.RequestsPerSecond < 0 {
-			return fmt.Errorf("config: rateLimit.global.requestsPerSecond must be >= 0")
-		}
-		if cfg.RateLimit.Global.Burst < 0 {
-			return fmt.Errorf("config: rateLimit.global.burst must be >= 0")
-		}
-
-		validBackends := map[string]bool{"": true, "memory": true, "redis": true}
-		if !validBackends[cfg.RateLimit.Backend.Type] {
-			return fmt.Errorf("config: rateLimit.backend.type %q is invalid (must be memory or redis)", cfg.RateLimit.Backend.Type)
-		}
-		validFailureModes := map[string]bool{"": true, "open": true, "closed": true}
-		if !validFailureModes[cfg.RateLimit.Backend.FailureMode] {
-			return fmt.Errorf("config: rateLimit.backend.failureMode %q is invalid (must be open or closed)", cfg.RateLimit.Backend.FailureMode)
-		}
-		if cfg.RateLimit.Backend.Type == "redis" {
-			r := cfg.RateLimit.Backend.Redis
-			if r.Address == "" {
-				return fmt.Errorf("config: rateLimit.backend.redis.address is required when backend type is redis")
-			}
-			if r.DB < 0 {
-				return fmt.Errorf("config: rateLimit.backend.redis.db must be >= 0")
-			}
-			if r.TimeoutMs < 0 {
-				return fmt.Errorf("config: rateLimit.backend.redis.timeoutMs must be >= 0")
-			}
-		}
-	}
-
 	seen := map[string]bool{}
 	seenIDs := map[string]int{}
 	for i, entry := range cfg.Auth.APIKeys {
@@ -693,17 +626,6 @@ func validateConfig(cfg *Config) error {
 			}
 			seenIDs[entry.ID] = i
 		}
-		if entry.RateLimit != nil {
-			if entry.RateLimit.RequestsPerSecond <= 0 {
-				return fmt.Errorf("config: auth.apiKeys[%d].rateLimit.requestsPerSecond must be > 0", i)
-			}
-			if entry.RateLimit.Burst < 1 {
-				return fmt.Errorf("config: auth.apiKeys[%d].rateLimit.burst must be >= 1", i)
-			}
-		}
-		if entry.MaxConcurrent < 0 {
-			return fmt.Errorf("config: auth.apiKeys[%d].maxConcurrent must be >= 0", i)
-		}
 		if entry.Scopes != nil {
 			for j, p := range entry.Scopes.Paths {
 				if p == "" {
@@ -720,42 +642,6 @@ func validateConfig(cfg *Config) error {
 					return fmt.Errorf("config: auth.apiKeys[%d].scopes.providers[%d] must not be empty", i, j)
 				}
 			}
-		}
-	}
-
-	// validateStateBackend checks a memory/redis backend selector shared by the
-	// rate-limit and cache subsystems.
-	validateStateBackend := func(name string, b StateBackendConfig) error {
-		validTypes := map[string]bool{"": true, "memory": true, "redis": true}
-		if !validTypes[b.Type] {
-			return fmt.Errorf("config: %s.type %q is invalid (must be memory or redis)", name, b.Type)
-		}
-		if b.Type == "redis" {
-			if b.Redis.Address == "" {
-				return fmt.Errorf("config: %s.redis.address is required when type is redis", name)
-			}
-			if b.Redis.DB < 0 {
-				return fmt.Errorf("config: %s.redis.db must be >= 0", name)
-			}
-			if b.Redis.TimeoutMs < 0 {
-				return fmt.Errorf("config: %s.redis.timeoutMs must be >= 0", name)
-			}
-		}
-		return nil
-	}
-
-	if cfg.Cache.Enabled {
-		if cfg.Cache.TTLSeconds < 0 {
-			return fmt.Errorf("config: cache.ttlSeconds must be >= 0")
-		}
-		if cfg.Cache.MaxEntries < 0 {
-			return fmt.Errorf("config: cache.maxEntries must be >= 0")
-		}
-		if cfg.Cache.MaxBodyBytes < 0 {
-			return fmt.Errorf("config: cache.maxBodyBytes must be >= 0")
-		}
-		if err := validateStateBackend("cache.backend", cfg.Cache.Backend); err != nil {
-			return err
 		}
 	}
 

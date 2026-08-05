@@ -101,11 +101,15 @@ The proxy does emit `philter_proxy_prompt_tokens_total` and `philter_proxy_compl
 
 ### Can I cache responses to repeated prompts?
 
-Yes. Enable `cache` to serve a stored response for an identical `(key, model, request body)` — skipping both Philter and the LLM provider, which cuts cost and latency. Only non-streaming, 2xx `POST` responses are cached, and the tenant key is part of the cache key so tenants never share cached entries. TTL is configurable; the backend is in-memory (per-replica) or Redis (shared). Responses carry an `X-Cache: HIT|MISS` header, and `philter_proxy_cache_hits_total`/`_misses_total` track the hit rate. See [Response Cache](configuration.md#response-cache).
+Not in the proxy. Response caching is traffic management, which belongs to the AI gateway the proxy runs alongside. Caching in the proxy would also mean storing provider responses keyed by tenant, which adds a cross-tenant exposure risk to a component whose job is to reduce that risk. See [Using with an AI Gateway](ai-gateway.md).
 
-### Can I share rate limits across multiple replicas?
+### Do the proxy's replicas need shared state?
 
-Yes. By default the rate limiter keeps token buckets in process memory, so running N replicas behind a load balancer enforces roughly N× the configured limit (each replica only sees its own traffic). Set `rateLimit.backend.type: redis` to store the buckets in a shared Redis instance so all replicas enforce one consistent limit. Redis connections support authentication and TLS (including client-cert mTLS), and a configurable failure mode controls behavior when Redis is unreachable — `open` (default) falls back to the local in-memory limiter so traffic keeps flowing, `closed` rejects requests. See [Shared state for multi-replica deployments](configuration.md#shared-state-for-multi-replica-deployments).
+No. The proxy keeps no state that has to be shared between replicas, so you can scale it horizontally without a database, cache, or coordination service.
+
+### Does the proxy rate limit requests?
+
+No. Rate limiting, routing, failover, and spend controls belong to an AI gateway running alongside the proxy. See [Using with an AI Gateway](ai-gateway.md).
 
 ### Can I use the proxy with Mistral, Cohere, vLLM, or other OpenAI-compatible providers?
 
@@ -129,7 +133,7 @@ See [Configuration](configuration.md#philterretry) for retry and circuit breaker
 
 ### Can I bound how many concurrent requests the proxy will handle?
 
-Yes. Set `listen.maxConcurrentRequests` to cap the total number of in-flight requests across the whole proxy, and/or `auth.apiKeys[].maxConcurrent` to cap how many concurrent requests a single API key can hold. Both caps are off by default. When either cap is reached, the proxy returns HTTP `503` with `Retry-After: 1` and the JSON body `{"error":{"message":"concurrency limit exceeded","type":"capacity"}}` instead of queuing the request. The two metrics to watch are `philter_proxy_active_requests` (current utilization) and `philter_proxy_concurrency_shed_total{scope}` (rejections by scope). See [Configuration](configuration.md#concurrency-limits) for sizing guidance and [Monitoring](monitoring.md#concurrency) for the PromQL utilization recipe.
+Yes. Set `listen.maxConcurrentRequests` to cap the total number of in-flight requests across the whole proxy. It is off by default. When the cap is reached, the proxy returns HTTP `503` with `Retry-After: 1` and the JSON body `{"error":{"message":"concurrency limit exceeded","type":"capacity"}}` instead of queuing the request. Per-client concurrency policy belongs to your AI gateway; the proxy's cap exists to protect itself and Philter from overload. The two metrics to watch are `philter_proxy_active_requests` (current utilization) and `philter_proxy_concurrency_shed_total{scope}` (rejections by scope). See [Configuration](configuration.md#concurrency-limits) for sizing guidance and [Monitoring](monitoring.md#concurrency) for the PromQL utilization recipe.
 
 ### What format are the proxy's error responses in?
 

@@ -379,7 +379,6 @@ func TestSecurity_ShouldForwardHeader(t *testing.T) {
 		"Authorization":          true, // forwarded for OpenAI/Anthropic style
 		"X-Philter-Proxy-Key":    false,
 		"X-Philter-Policy":       false,
-		"X-Philter-Admin-Token":  false,
 		"X-Philter-Anything":     false,
 		"Connection":             false, // hop-by-hop
 		"Transfer-Encoding":      false,

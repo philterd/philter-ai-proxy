@@ -24,7 +24,6 @@ We prefer to take contributions as GitHub pull requests. This workflow allows yo
 
 * Java 25+
 * maven
-* redis-server
 
 ### Building on Linux
 
@@ -32,5 +31,4 @@ Ubuntu is our daily driver, but any Linux distribution should work.
 
 ### Building on MacOS
 
-In System Settings | Privacy & Security | Developer Tools, enable `Terminal` and `IntelliJ IDEA` (and other IDEs where you run tests).
-Otherwise you'll get errors where `redis-server` fails to start when running tests.
+No additional setup is required.

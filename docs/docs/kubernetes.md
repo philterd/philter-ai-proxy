@@ -117,7 +117,7 @@ helm upgrade proxy ./deploy/helm/philter-ai-proxy --reuse-values \
   --set serviceMonitor.enabled=true
 ```
 
-**Horizontal autoscaling.** When running more than one replica, the **in-process** rate limiter (`rateLimit.backend.type: memory`, the default) keeps per-client buckets per-pod, so the effective limit is multiplied by the number of pods. For a consistent limit across replicas, point the limiter at a shared Redis backend (`rateLimit.backend.type: redis`); see [Shared state for multi-replica deployments](configuration.md#shared-state-for-multi-replica-deployments). If you don't enable rate limiting at all, multi-replica scaling is unaffected.
+**Horizontal autoscaling.** The proxy holds no state that has to be shared between pods, so replicas scale independently with no external dependency beyond Philter itself.
 
 ```bash
 helm upgrade proxy ./deploy/helm/philter-ai-proxy --reuse-values \

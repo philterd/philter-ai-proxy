@@ -1,6 +1,6 @@
 # Using with an AI Gateway
 
-Philter AI Proxy is a redaction proxy. It does not do routing, failover, model fallback, token quotas, spend tracking, or per-tenant billing. Those are the job of an AI gateway such as [LiteLLM](https://github.com/BerriAI/litellm), [Portkey](https://portkey.ai/), [Kong AI Gateway](https://konghq.com/products/kong-ai-gateway), or a cloud provider's own gateway.
+Philter AI Proxy is a redaction proxy. It does not do routing, failover, model fallback, rate limiting, response caching, token quotas, spend tracking, or per-tenant billing. Those are the job of an AI gateway such as [LiteLLM](https://github.com/BerriAI/litellm), [Portkey](https://portkey.ai/), [Kong AI Gateway](https://konghq.com/products/kong-ai-gateway), or a cloud provider's own gateway.
 
 The two are complementary. Run the gateway for traffic management and the proxy for redaction.
 
@@ -61,13 +61,11 @@ When the gateway is the trust boundary and the proxy is on a private network rea
 
 | Proxy feature | Behind a gateway |
 |---|---|
-| `auth.apiKeys` | Usually redundant. The gateway authenticates callers. Keep it on if the proxy is reachable by anything else. |
-| `rateLimit` | Usually redundant. The gateway rate limits. Keep a global backstop if you want the proxy protected independently. |
+| `auth.apiKeys` | Redundant as authentication, but keep it if you use per-key policy binding: the key's stable ID is what pins a caller to a Philter policy regardless of what the client requests. |
 | `listen.maxConcurrentRequests` | Keep. This protects the proxy and Philter from overload regardless of what sits in front. |
-| `cache` | Disable if the gateway caches. Two caches in series waste memory and complicate invalidation. |
 | Audit logging | Keep. This is the record of what was redacted, and no gateway produces it. |
 
-If the proxy is exposed directly to clients in addition to the gateway, keep auth and rate limiting on. See [Configuration](configuration.md).
+If the proxy is exposed directly to clients in addition to the gateway, keep auth on. See [Configuration](configuration.md).
 
 ## When you do not need the proxy
 

@@ -161,14 +161,9 @@ The proxy can cap the number of requests it processes at any one time. When the 
 ```yaml
 listen:
   maxConcurrentRequests: 200   # global in-flight cap; 0 (default) = unlimited
-
-auth:
-  apiKeys:
-    - key: noisy-tenant
-      maxConcurrent: 20        # per-key in-flight cap; applied in addition to the global cap
 ```
 
-The global and per-key caps compose: a request must acquire both. The per-key cap protects the shared pool from a single noisy tenant; the global cap protects the proxy as a whole.
+This is a proxy-wide ceiling protecting the proxy and the Philter instance behind it. Per-client concurrency policy belongs to the AI gateway the proxy runs alongside.
 
 ### What an in-flight request holds
 
@@ -205,7 +200,6 @@ The `2×` is headroom for tail latency and short bursts. Cross-check against:
    ```
 3. If utilization stays below ~50% at peak, the cap is loose enough.
 4. If utilization regularly approaches 1.0 and you see `philter_proxy_concurrency_shed_total{scope="global"}` rising, you have a real capacity problem - **scale out horizontally first** (add replicas) rather than raising the cap. Removing the cap to "fix" sheds turns a graceful 503 into goroutine/FD exhaustion.
-5. If sheds are concentrated on `scope="per_key"`, talk to that tenant or raise their per-key cap - the global pool is fine.
 
 ### Metrics reference
 
@@ -213,7 +207,7 @@ The `2×` is headroom for tail latency and short bursts. Cross-check against:
 | --- | --- | --- |
 | `philter_proxy_active_requests` | gauge | Current in-flight requests holding a concurrency slot. |
 | `philter_proxy_concurrency_limit{scope="global"}` | gauge | Configured global ceiling (0 = unlimited). |
-| `philter_proxy_concurrency_shed_total{scope}` | counter | Requests rejected with 503; `scope` ∈ `global`, `per_key`. |
+| `philter_proxy_concurrency_shed_total{scope="global"}` | counter | Requests rejected with 503 because the global ceiling was reached. |
 
 ## License
 

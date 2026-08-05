@@ -61,23 +61,18 @@ func (l *modelLabelLimiter) reduce(provider, model string) string {
 }
 
 type ProxyMetrics struct {
-	requestsTotal            *prometheus.CounterVec
-	requestDuration          *prometheus.HistogramVec
-	redactionDuration        *prometheus.HistogramVec
-	entitiesRedacted         *prometheus.CounterVec
-	promptTokensTotal        *prometheus.CounterVec
-	completionTokensTotal    *prometheus.CounterVec
-	philterErrors            prometheus.Counter
-	upstreamErrors           *prometheus.CounterVec
-	activeRequests           prometheus.Gauge
-	concurrencyShed          *prometheus.CounterVec
-	concurrencyLimit         *prometheus.GaugeVec
-	rateLimitBackendDuration *prometheus.HistogramVec
-	rateLimitBackendErrors   *prometheus.CounterVec
-	rateLimitFallback        prometheus.Counter
-	cacheHits                prometheus.Counter
-	cacheMisses              prometheus.Counter
-	tlsHandshakesShed        prometheus.Counter
+	requestsTotal         *prometheus.CounterVec
+	requestDuration       *prometheus.HistogramVec
+	redactionDuration     *prometheus.HistogramVec
+	entitiesRedacted      *prometheus.CounterVec
+	promptTokensTotal     *prometheus.CounterVec
+	completionTokensTotal *prometheus.CounterVec
+	philterErrors         prometheus.Counter
+	upstreamErrors        *prometheus.CounterVec
+	activeRequests        prometheus.Gauge
+	concurrencyShed       *prometheus.CounterVec
+	concurrencyLimit      *prometheus.GaugeVec
+	tlsHandshakesShed     prometheus.Counter
 	// modelLabels caps the `model` label cardinality on the token-usage
 	// counters. The model is supplied by the client; without this bound,
 	// an attacker holding any valid key can drive the scraper out of
@@ -136,39 +131,13 @@ func newMetrics(reg prometheus.Registerer) *ProxyMetrics {
 
 		concurrencyShed: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "philter_proxy_concurrency_shed_total",
-			Help: "Total requests rejected due to the max-concurrent-requests guard, labeled by scope (global, per_key).",
+			Help: "Total requests rejected due to the max-concurrent-requests guard, labeled by scope (global).",
 		}, []string{"scope"}),
 
 		concurrencyLimit: prometheus.NewGaugeVec(prometheus.GaugeOpts{
 			Name: "philter_proxy_concurrency_limit",
 			Help: "Configured max-concurrent-requests ceiling, labeled by scope. 0 means unlimited. Pair with philter_proxy_active_requests to compute utilization.",
 		}, []string{"scope"}),
-
-		rateLimitBackendDuration: prometheus.NewHistogramVec(prometheus.HistogramOpts{
-			Name:    "philter_proxy_ratelimit_backend_duration_seconds",
-			Help:    "Latency of rate-limit backend calls in seconds, labeled by backend and result (ok, error).",
-			Buckets: []float64{.0005, .001, .0025, .005, .01, .025, .05, .1, .25, .5, 1},
-		}, []string{"backend", "result"}),
-
-		rateLimitBackendErrors: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Name: "philter_proxy_ratelimit_backend_errors_total",
-			Help: "Total rate-limit backend errors (e.g. Redis unreachable/timeout), labeled by backend.",
-		}, []string{"backend"}),
-
-		rateLimitFallback: prometheus.NewCounter(prometheus.CounterOpts{
-			Name: "philter_proxy_ratelimit_fallback_total",
-			Help: "Total rate-limit decisions that fell back to the local in-memory limiter because the configured backend was unreachable.",
-		}),
-
-		cacheHits: prometheus.NewCounter(prometheus.CounterOpts{
-			Name: "philter_proxy_cache_hits_total",
-			Help: "Total response-cache hits (served from cache without calling Philter or the provider).",
-		}),
-
-		cacheMisses: prometheus.NewCounter(prometheus.CounterOpts{
-			Name: "philter_proxy_cache_misses_total",
-			Help: "Total response-cache misses on cacheable requests.",
-		}),
 
 		tlsHandshakesShed: prometheus.NewCounter(prometheus.CounterOpts{
 			Name: "philter_proxy_tls_handshakes_shed_total",
@@ -190,11 +159,6 @@ func newMetrics(reg prometheus.Registerer) *ProxyMetrics {
 		m.activeRequests,
 		m.concurrencyShed,
 		m.concurrencyLimit,
-		m.rateLimitBackendDuration,
-		m.rateLimitBackendErrors,
-		m.rateLimitFallback,
-		m.cacheHits,
-		m.cacheMisses,
 		m.tlsHandshakesShed,
 	)
 	return m

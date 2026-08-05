@@ -158,23 +158,6 @@ func TestErrorContract(t *testing.T) {
 			},
 		},
 		{
-			name:       "rate_limit_error/rate_limited",
-			wantStatus: http.StatusTooManyRequests,
-			wantType:   "rate_limit_error",
-			wantCode:   "rate_limited",
-			wantHeader: map[string]string{"Retry-After": ""}, // present, value-not-empty-checked below
-			drive: func(t *testing.T) *httptest.ResponseRecorder {
-				p := newRateLimitedProxy("http://127.0.0.1:1", "http://127.0.0.1:1", 0.001, 1, 0, 0)
-				// First request consumes the single burst token.
-				sendRequest(p, "/v1/chat/completions", openAIBody(), nil)
-				// Second is rate-limited.
-				req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(openAIBody()))
-				w := httptest.NewRecorder()
-				p.ServeHTTP(w, req)
-				return w
-			},
-		},
-		{
 			name:       "capacity/concurrency_exceeded",
 			wantStatus: http.StatusServiceUnavailable,
 			wantType:   "capacity",
@@ -184,7 +167,7 @@ func TestErrorContract(t *testing.T) {
 				p, cleanup := proxyForErrors(t)
 				defer cleanup()
 				// Fill the only slot synthetically by giving the limiter no headroom.
-				p.concurrency = newConcurrencyLimiter(1, nil)
+				p.concurrency = newConcurrencyLimiter(1)
 				p.concurrency.global <- struct{}{} // hold the slot
 				req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(openAIBody()))
 				w := httptest.NewRecorder()

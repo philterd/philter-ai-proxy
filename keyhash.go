@@ -39,7 +39,7 @@ type storedKey struct {
 	algo string
 	hash []byte
 	// id is a stable identifier for this entry, used as the client identifier
-	// for per-key rate limits, per-key concurrency, and log lines. Derived
+	// in audit log lines. Derived
 	// from the entry's position at load time ("key-0", "key-1", ...) so it
 	// stays useful even when the raw key has been hashed away.
 	id     string
@@ -117,7 +117,7 @@ func keyIDForIndex(i int) string {
 
 // keyIDFor returns the stable identifier for an APIKeyEntry: its explicit
 // `id` when set, otherwise the legacy positional `key-N`. Use this from the
-// rate-limit and concurrency wiring so all per-key buckets agree on
+// concurrency wiring so all per-key buckets agree on
 // the same identifier the keyStore will later return from lookup().
 func keyIDFor(entry APIKeyEntry, i int) string {
 	if entry.ID != "" {

@@ -43,11 +43,6 @@ scrape_configs:
 | `philter_proxy_active_requests` | Gauge | - | Currently in-flight requests (those holding a concurrency slot) |
 | `philter_proxy_concurrency_limit` | Gauge | `scope` | Configured max-concurrent-requests ceiling. `0` means unlimited. |
 | `philter_proxy_concurrency_shed_total` | Counter | `scope` | Requests rejected (HTTP 503) due to the concurrency guard |
-| `philter_proxy_ratelimit_backend_duration_seconds` | Histogram | `backend`, `result` | Latency of rate-limit backend calls. `result` is `ok` or `error`. Only emitted when rate limiting is enabled. |
-| `philter_proxy_ratelimit_backend_errors_total` | Counter | `backend` | Rate-limit backend errors (e.g. Redis unreachable/timeout) |
-| `philter_proxy_ratelimit_fallback_total` | Counter | - | Decisions that fell back to the local in-memory limiter because the configured backend was unreachable (fail-open) |
-| `philter_proxy_cache_hits_total` | Counter | - | Response-cache hits (served from cache, skipping Philter and the provider) |
-| `philter_proxy_cache_misses_total` | Counter | - | Response-cache misses on cacheable requests |
 | `philter_proxy_tls_handshakes_shed_total` | Counter | - | Inbound TLS connections dropped because the `listen.maxConcurrentTLSHandshakes` ceiling was reached (connection-flood backstop) |
 
 Token counters are populated from each provider's native usage response field. They are not incremented for streaming responses, since token counts are not reliably available mid-stream.
@@ -60,11 +55,7 @@ Token counters are populated from each provider's native usage response field. T
 
 **`policy`**: The Philter policy name matched by the route, e.g. `default`, `hipaa-safe-harbor`.
 
-**`scope`** (on concurrency metrics): `global` for the proxy-wide cap, `per_key` for per-API-key caps.
-
-**`backend`** (on rate-limit metrics): `memory` or `redis`.
-
-**`result`** (on `philter_proxy_ratelimit_backend_duration_seconds`): `ok` for a successful backend decision, `error` for a backend failure/timeout.
+**`scope`** (on concurrency metrics): `global`, the proxy-wide cap.
 
 ## Health Endpoints
 
@@ -222,7 +213,7 @@ philter_proxy_active_requests
 sum by (scope) (rate(philter_proxy_concurrency_shed_total[5m]))
 ```
 
-If `scope="global"` is rising, you have a real capacity problem - **scale out horizontally first** rather than raising the cap. If only `scope="per_key"` is rising, talk to that tenant or raise their per-key cap; the global pool is fine.
+If `scope="global"` is rising, you have a real capacity problem - **scale out horizontally first** rather than raising the cap.
 
 ### Alerting rules
 

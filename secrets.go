@@ -72,24 +72,5 @@ func resolveSecrets(cfg *Config) error {
 		cfg.Auth.APIKeys[i].Key = resolved
 	}
 
-	// Resolve every redis password used across subsystems.
-	redisPasswords := []struct {
-		field string
-		ptr   *string
-	}{
-		{"rateLimit.backend.redis.password", &cfg.RateLimit.Backend.Redis.Password},
-		{"cache.backend.redis.password", &cfg.Cache.Backend.Redis.Password},
-	}
-	for _, p := range redisPasswords {
-		if *p.ptr == "" {
-			continue
-		}
-		resolved, err := resolveSecret(p.field, *p.ptr)
-		if err != nil {
-			return err
-		}
-		*p.ptr = resolved
-	}
-
 	return nil
 }

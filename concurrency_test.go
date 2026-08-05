@@ -16,7 +16,7 @@ import (
 
 func TestConcurrencyLimiter_NilIsAllowed(t *testing.T) {
 	var cl *ConcurrencyLimiter
-	allowed, scope, release := cl.Acquire("anything")
+	allowed, scope, release := cl.Acquire()
 	if !allowed {
 		t.Error("nil limiter must always allow")
 	}
@@ -30,9 +30,9 @@ func TestConcurrencyLimiter_NilIsAllowed(t *testing.T) {
 }
 
 func TestConcurrencyLimiter_ZeroGlobalIsUnlimited(t *testing.T) {
-	cl := newConcurrencyLimiter(0, nil)
+	cl := newConcurrencyLimiter(0)
 	for i := 0; i < 100; i++ {
-		allowed, _, release := cl.Acquire("")
+		allowed, _, release := cl.Acquire()
 		if !allowed {
 			t.Fatalf("expected unlimited when global=0, got rejection at %d", i)
 		}
@@ -41,18 +41,18 @@ func TestConcurrencyLimiter_ZeroGlobalIsUnlimited(t *testing.T) {
 }
 
 func TestConcurrencyLimiter_GlobalBound(t *testing.T) {
-	cl := newConcurrencyLimiter(2, nil)
+	cl := newConcurrencyLimiter(2)
 
 	releases := make([]func(), 0, 2)
 	for i := 0; i < 2; i++ {
-		allowed, _, release := cl.Acquire("")
+		allowed, _, release := cl.Acquire()
 		if !allowed {
 			t.Fatalf("expected allow within global capacity (i=%d)", i)
 		}
 		releases = append(releases, release)
 	}
 
-	allowed, scope, _ := cl.Acquire("")
+	allowed, scope, _ := cl.Acquire()
 	if allowed {
 		t.Fatal("expected rejection past global capacity")
 	}
@@ -61,7 +61,7 @@ func TestConcurrencyLimiter_GlobalBound(t *testing.T) {
 	}
 
 	releases[0]()
-	allowed, _, release := cl.Acquire("")
+	allowed, _, release := cl.Acquire()
 	if !allowed {
 		t.Fatal("expected slot to free after release")
 	}
@@ -69,83 +69,12 @@ func TestConcurrencyLimiter_GlobalBound(t *testing.T) {
 	releases[1]()
 }
 
-func TestConcurrencyLimiter_PerKeyBound(t *testing.T) {
-	cl := newConcurrencyLimiter(0, map[string]int{"key-a": 1, "key-b": 2})
-
-	// Key A has 1 slot; second concurrent should fail with per_key scope.
-	allowedA, _, releaseA := cl.Acquire("key-a")
-	if !allowedA {
-		t.Fatal("expected first key-a request to be allowed")
-	}
-	rejectedA, scopeA, _ := cl.Acquire("key-a")
-	if rejectedA {
-		t.Fatal("expected second concurrent key-a request to be rejected")
-	}
-	if scopeA != "per_key" {
-		t.Errorf("expected scope=per_key, got %q", scopeA)
-	}
-
-	// Key B independently has 2 slots; both should pass.
-	for i := 0; i < 2; i++ {
-		allowed, _, release := cl.Acquire("key-b")
-		if !allowed {
-			t.Fatalf("expected key-b slot %d to be allowed", i)
-		}
-		defer release()
-	}
-
-	// Unknown key has no per-key limit and no global limit -> always allowed.
-	for i := 0; i < 10; i++ {
-		allowed, _, release := cl.Acquire("unknown")
-		if !allowed {
-			t.Fatalf("expected unknown key with no global limit to be allowed (i=%d)", i)
-		}
-		release()
-	}
-
-	releaseA()
-}
-
-func TestConcurrencyLimiter_PerKeyRejection_ReleasesGlobal(t *testing.T) {
-	// Regression: when the per-key slot is full but a global slot was just
-	// taken, the global slot must be released so it doesn't leak.
-	cl := newConcurrencyLimiter(10, map[string]int{"k": 1})
-
-	allowed, _, release1 := cl.Acquire("k")
-	if !allowed {
-		t.Fatal("expected first acquire to pass")
-	}
-
-	// Hammer the global pool: 11 attempts with the same key. The first
-	// succeeds; the next 10 must all be rejected at per_key and must each
-	// return their global slot. If they didn't, we'd run out of global slots
-	// after 10 attempts, even though only one slot is actually held.
-	for i := 0; i < 100; i++ {
-		ok, scope, _ := cl.Acquire("k")
-		if ok {
-			t.Fatalf("unexpected allow at i=%d", i)
-		}
-		if scope != "per_key" {
-			t.Errorf("i=%d: expected per_key, got %q", i, scope)
-		}
-	}
-
-	// Different key should still be admitted — global pool wasn't drained.
-	allowed2, _, release2 := cl.Acquire("other")
-	if !allowed2 {
-		t.Fatal("global pool leaked: 'other' was rejected after per_key churn")
-	}
-
-	release1()
-	release2()
-}
-
 // --- ServeHTTP integration tests --------------------------------------------
 
 // newConcurrencyTestProxy builds a Proxy wired with a configurable concurrency
 // limiter, a Philter that returns immediately, and a controllable provider
 // that holds requests until the test releases them.
-func newConcurrencyTestProxy(t *testing.T, globalLimit int, perKey map[string]int, hold chan struct{}) (*Proxy, func()) {
+func newConcurrencyTestProxy(t *testing.T, globalLimit int, hold chan struct{}) (*Proxy, func()) {
 	t.Helper()
 	philterSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Write(explainJSON("hello", "doc-id", nil))
@@ -162,7 +91,7 @@ func newConcurrencyTestProxy(t *testing.T, globalLimit int, perKey map[string]in
 		philter:      testPhilterClient(philterSrv.URL),
 		openaiTarget: u,
 		openaiClient: http.DefaultClient,
-		concurrency:  newConcurrencyLimiter(globalLimit, perKey),
+		concurrency:  newConcurrencyLimiter(globalLimit),
 	}
 	cleanup := func() {
 		philterSrv.Close()
@@ -201,7 +130,7 @@ func TestConcurrency_DisabledByDefault(t *testing.T) {
 
 func TestConcurrency_GlobalLimit_Sheds(t *testing.T) {
 	hold := make(chan struct{})
-	proxy, cleanup := newConcurrencyTestProxy(t, 1, nil, hold)
+	proxy, cleanup := newConcurrencyTestProxy(t, 1, hold)
 	defer cleanup()
 
 	inflightStarted := make(chan struct{})
@@ -245,7 +174,7 @@ func TestConcurrency_GlobalLimit_Sheds(t *testing.T) {
 
 func TestConcurrency_SlotReleasesAfterRequest(t *testing.T) {
 	hold := make(chan struct{})
-	proxy, cleanup := newConcurrencyTestProxy(t, 1, nil, hold)
+	proxy, cleanup := newConcurrencyTestProxy(t, 1, hold)
 	defer cleanup()
 
 	// First request: complete it immediately so the slot frees.
@@ -261,68 +190,6 @@ func TestConcurrency_SlotReleasesAfterRequest(t *testing.T) {
 		t.Errorf("expected slot to be released after completion, got %d", w.Code)
 	}
 }
-
-func TestConcurrency_PerKeyLimit_Isolates(t *testing.T) {
-	hold := make(chan struct{})
-	// The concurrency limiter is keyed by the per-entry stable IDs the
-	// keyStore assigns ("key-0", "key-1"), not by the raw API key value.
-	proxy, cleanup := newConcurrencyTestProxy(t, 0, map[string]int{"key-0": 1, "key-1": 1}, hold)
-	defer cleanup()
-
-	// Configure two entries; their lookup IDs will be "key-0" and "key-1".
-	proxy.keyStore, _ = newKeyStore([]APIKeyEntry{{Key: "key-a"}, {Key: "key-b"}})
-
-	// Hold one slot for key-a in a goroutine.
-	inflight := make(chan struct{})
-	go func() {
-		req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(openAIBody()))
-		req.Header.Set("x-philter-proxy-key", "key-a")
-		w := httptest.NewRecorder()
-		close(inflight)
-		proxy.ServeHTTP(w, req)
-	}()
-	<-inflight
-
-	// Wait until the in-flight key-a request (entry id "key-0") has reached
-	// the provider.
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		if len(proxy.concurrency.perKey["key-0"]) == 1 {
-			break
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
-
-	// A second key-a request is rejected per-key.
-	w := sendRequest(proxy, "/v1/chat/completions", openAIBody(),
-		map[string]string{"x-philter-proxy-key": "key-a"})
-	if w.Code != http.StatusServiceUnavailable {
-		t.Errorf("expected 503 for second key-a, got %d", w.Code)
-	}
-
-	// key-b has its own bucket and must still be admitted. Release its hold
-	// first so the provider returns.
-	bDone := make(chan int)
-	go func() {
-		w := sendRequest(proxy, "/v1/chat/completions", openAIBody(),
-			map[string]string{"x-philter-proxy-key": "key-b"})
-		bDone <- w.Code
-	}()
-	// Both the key-a and key-b inflights are waiting on `hold`. Closing it
-	// releases them both.
-	close(hold)
-
-	select {
-	case code := <-bDone:
-		if code != http.StatusOK {
-			t.Errorf("expected key-b to pass independently, got %d", code)
-		}
-	case <-time.After(3 * time.Second):
-		t.Fatal("key-b request did not complete")
-	}
-}
-
-// --- Metrics tests ----------------------------------------------------------
 
 func TestConcurrency_LimitGauge_ReflectsConfig(t *testing.T) {
 	reg := prometheus.NewRegistry()
@@ -362,7 +229,7 @@ func TestConcurrency_ShedCounter_IncrementsByScope(t *testing.T) {
 		philter:      testPhilterClient(philterSrv.URL),
 		openaiTarget: u,
 		openaiClient: http.DefaultClient,
-		concurrency:  newConcurrencyLimiter(1, nil),
+		concurrency:  newConcurrencyLimiter(1),
 		metrics:      m,
 	}
 
@@ -403,7 +270,7 @@ func TestConcurrency_ShedCounter_IncrementsByScope(t *testing.T) {
 
 // --- Config validation tests ------------------------------------------------
 
-func TestValidateConfig_NegativeMaxConcurrent(t *testing.T) {
+func TestValidateConfig_NegativeMaxConcurrentRequests(t *testing.T) {
 	cfg := testConfig("http://127.0.0.1:1")
 	cfg.Listen.MaxConcurrentRequests = -1
 	if err := validateConfig(cfg); err == nil {
@@ -411,43 +278,8 @@ func TestValidateConfig_NegativeMaxConcurrent(t *testing.T) {
 	}
 
 	cfg = testConfig("http://127.0.0.1:1")
-	cfg.Auth.APIKeys = []APIKeyEntry{{Key: "k", MaxConcurrent: -5}}
-	if err := validateConfig(cfg); err == nil {
-		t.Error("expected validation error for negative auth.apiKeys[].maxConcurrent")
-	}
-
-	cfg = testConfig("http://127.0.0.1:1")
 	cfg.Listen.MaxConcurrentRequests = 50
-	cfg.Auth.APIKeys = []APIKeyEntry{{Key: "k", MaxConcurrent: 10}}
 	if err := validateConfig(cfg); err != nil {
 		t.Errorf("expected valid config to pass, got %v", err)
 	}
 }
-
-// --- Helper construction tests ----------------------------------------------
-
-func TestPerKeyConcurrencyMap(t *testing.T) {
-	if got := perKeyConcurrencyMap(nil); got != nil {
-		t.Errorf("nil input must produce nil map, got %v", got)
-	}
-	keys := []APIKeyEntry{
-		{Key: "a", MaxConcurrent: 5},
-		{Key: "b"}, // no concurrency limit
-		{Key: "c", MaxConcurrent: 0},
-		{Key: "d", MaxConcurrent: 2},
-	}
-	// Map is now keyed by the entry's stable ID ("key-0" for the first
-	// entry, "key-3" for the fourth — index "key-1" had no limit; "key-2"
-	// had MaxConcurrent=0 and is skipped).
-	got := perKeyConcurrencyMap(keys)
-	if len(got) != 2 || got["key-0"] != 5 || got["key-3"] != 2 {
-		t.Errorf("unexpected map: %v", got)
-	}
-	if !hasPerKeyConcurrency(keys) {
-		t.Error("hasPerKeyConcurrency should return true when at least one key sets a limit")
-	}
-	if hasPerKeyConcurrency([]APIKeyEntry{{Key: "x"}}) {
-		t.Error("hasPerKeyConcurrency should return false when no key sets a limit")
-	}
-}
-

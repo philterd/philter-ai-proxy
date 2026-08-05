@@ -113,26 +113,6 @@ func TestResolveSecret_NoValueEcho(t *testing.T) {
 	}
 }
 
-// TestLoadConfig_ResolvesRedisPassword confirms the secret resolver also covers
-// the Redis backend password (criterion: secret references reusable beyond API
-// keys).
-func TestLoadConfig_ResolvesRedisPassword(t *testing.T) {
-	t.Setenv("PHILTER_TEST_REDIS_PW", "redis-secret-pw")
-	dir := t.TempDir()
-	tmp := filepath.Join(dir, "config.yaml")
-	cfgYAML := "philter:\n  endpoint: https://localhost:8080\nrateLimit:\n  enabled: true\n  requestsPerSecond: 10\n  burst: 20\n  backend:\n    type: redis\n    redis:\n      address: redis:6379\n      password: ${PHILTER_TEST_REDIS_PW}\n"
-	if err := os.WriteFile(tmp, []byte(cfgYAML), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	cfg, err := loadConfig(tmp)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if cfg.RateLimit.Backend.Redis.Password != "redis-secret-pw" {
-		t.Errorf("expected resolved redis password, got %q", cfg.RateLimit.Backend.Redis.Password)
-	}
-}
-
 // TestLoadConfig_ResolvesSecrets is the end-to-end happy path: env and file
 // references resolve, and a literal still works (backwards compatibility).
 func TestLoadConfig_ResolvesSecrets(t *testing.T) {

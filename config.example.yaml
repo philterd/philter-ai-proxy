@@ -132,44 +132,4 @@ defaults:
 #     - key: ${TEAM_B_API_KEY}     # loaded from an environment variable
 #     - key: file:/run/secrets/team-c   # loaded from a mounted secret file
 #     - key: sha256$2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae
-#       # rateLimit:                 # optional: per-key override (takes precedence over global rateLimit)
-#       #   requestsPerSecond: 5.0
-#       #   burst: 10
-#       # maxConcurrent: 10          # optional: per-key in-flight cap (in addition to listen.maxConcurrentRequests)
 
-# Rate limiting is disabled by default. Uncomment to enable.
-# rateLimit:
-#   enabled: true
-#   requestsPerSecond: 10.0   # per-client limit (API key or IP)
-#   burst: 20                 # maximum burst size
-#   global:                   # optional: global backstop across all clients
-#     requestsPerSecond: 100.0
-#     burst: 200
-#   # backend:                # optional: where token-bucket state lives. Default: memory (per-replica).
-#   #   type: redis           # use redis to share one limit across replicas (multi-replica deployments)
-#   #   failureMode: open     # when redis is unreachable: open (fall back to local memory) or closed (reject)
-#   #   redis:
-#   #     address: redis.internal:6379
-#   #     password: ${REDIS_PASSWORD}   # supports ${ENV_VAR} / file: references
-#   #     # db: 0
-#   #     # keyPrefix: "philter:rl:"
-#   #     # timeoutMs: 100
-#   #     # tls:
-#   #     #   enabled: true
-#   #     #   caCert: /etc/ssl/redis-ca.pem      # optional custom CA
-#   #     #   cert: /etc/ssl/redis-client.pem    # optional client cert (mTLS)
-#   #     #   key: /etc/ssl/redis-client-key.pem
-#   # See docs/configuration.md#shared-state-for-multi-replica-deployments
-
-# Response cache is disabled by default. Serves repeated prompts from cache
-# (skipping Philter + the provider) keyed on (key, model, sha256(body)).
-# See docs/configuration.md#response-cache
-# cache:
-#   enabled: true
-#   ttlSeconds: 300
-#   maxEntries: 1024          # in-memory cap (memory backend only)
-#   maxBodyBytes: 1048576     # responses larger than this are not cached
-#   backend:
-#     type: memory            # or "redis" to share the cache across replicas
-#     # redis:
-#     #   address: redis.internal:6379

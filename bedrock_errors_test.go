@@ -181,15 +181,3 @@ func TestBedrock_OutboundScan_StreamingSkipped(t *testing.T) {
 		t.Errorf("streaming response must not be scanned/redacted, got: %s", w.Body.String())
 	}
 }
-
-// --- Close() methods -----------------------------------------------------
-
-func TestResponseCache_Close(t *testing.T) {
-	c, err := newResponseCache(CacheConfig{}) // memory backend
-	if err != nil {
-		t.Fatalf("newResponseCache: %v", err)
-	}
-	if err := c.Close(); err != nil {
-		t.Errorf("memory cache Close() = %v, want nil", err)
-	}
-}

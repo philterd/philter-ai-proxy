@@ -166,9 +166,7 @@ type Proxy struct {
 	auditLogger             *slog.Logger
 	metrics                 *ProxyMetrics
 	keyStore                *keyStore // hashed API keys; nil when auth is disabled
-	rateLimiter             *ProxyRateLimiter
 	concurrency             *ConcurrencyLimiter
-	cache                   ResponseCache // response cache; nil when disabled
 	// trustedProxies are pre-parsed CIDRs corresponding to
 	// cfg.Listen.TrustedProxies. Used by clientIP() to decide whether to
 	// honor the X-Forwarded-For header from a given peer. Empty = never
@@ -207,14 +205,6 @@ type AuditEntry struct {
 type responseCapture struct {
 	http.ResponseWriter
 	statusCode int
-	// captureBody tees response bytes into buf (up to limit) so the response
-	// can be stored in the cache after the handler returns. Enabled only for
-	// cacheable (non-streaming) cache-miss requests. If the body exceeds limit,
-	// tooLarge is set and the buffer is discarded so we never cache partials.
-	captureBody bool
-	limit       int
-	buf         bytes.Buffer
-	tooLarge    bool
 }
 
 func newResponseCapture(w http.ResponseWriter) *responseCapture {
@@ -224,27 +214,6 @@ func newResponseCapture(w http.ResponseWriter) *responseCapture {
 func (rc *responseCapture) WriteHeader(code int) {
 	rc.statusCode = code
 	rc.ResponseWriter.WriteHeader(code)
-}
-
-func (rc *responseCapture) Write(b []byte) (int, error) {
-	if rc.captureBody && !rc.tooLarge {
-		if rc.buf.Len()+len(b) > rc.limit {
-			rc.tooLarge = true
-			rc.buf.Reset()
-		} else {
-			rc.buf.Write(b)
-		}
-	}
-	return rc.ResponseWriter.Write(b)
-}
-
-// cachedBody returns the buffered response body, or nil if capture was off or
-// the response exceeded the size limit.
-func (rc *responseCapture) cachedBody() []byte {
-	if !rc.captureBody || rc.tooLarge {
-		return nil
-	}
-	return rc.buf.Bytes()
 }
 
 func (rc *responseCapture) Flush() {
@@ -266,8 +235,8 @@ var hopByHopHeaders = map[string]bool{
 
 // shouldForwardHeader reports whether a header from the inbound request
 // should be copied onto the outbound provider request. Returns false for
-// hop-by-hop headers and for any X-Philter-* header (the proxy's auth key,
-// policy hints, and admin token are all in this namespace; none should
+// hop-by-hop headers and for any X-Philter-* header (the proxy's auth key
+// and policy hints are both in this namespace; neither should
 // reach the LLM provider). Header keys from http.Header iteration are
 // already canonical-cased, so a prefix match against "X-Philter-" is
 // sufficient.
@@ -955,8 +924,8 @@ func parseTrustedProxies(cidrs []string) []*net.IPNet {
 // clientIP returns the apparent client IP for `r`. The X-Forwarded-For header
 // is consulted ONLY when the immediate TCP peer (`r.RemoteAddr`) is inside one
 // of the configured trustedProxies CIDRs; otherwise the header is ignored to
-// prevent untrusted clients from spoofing their source IP and evading per-IP
-// rate limits or audit-log correlation. The empty-trustedProxies default is
+// prevent untrusted clients from spoofing their source IP and corrupting
+// audit-log correlation. The empty-trustedProxies default is
 // therefore "never trust XFF", which is the safe behavior when the proxy is
 // exposed directly to the internet.
 func (p *Proxy) clientIP(r *http.Request) string {
@@ -1701,7 +1670,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("X-Request-Id", requestID)
 
-	// Build the audit entry early so even auth / rate-limit / concurrency
+	// Build the audit entry early so even auth / concurrency
 	// rejections produce a log line. Fields that aren't known yet stay empty;
 	// later code fills them in as the request progresses.
 	//
@@ -1760,8 +1729,8 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// API key authentication. Enforced only when keys are configured; disabled by default.
-	// clientKeyID is the stable per-entry identifier used downstream for
-	// per-key rate limits and per-key concurrency caps; never the raw key.
+	// clientKeyID is the stable per-entry identifier recorded in the audit
+	// log and operator log lines; never the raw key.
 	var clientKeyID string
 	var keyBoundPolicy string
 	var keyScopes *APIKeyScopes
@@ -1788,33 +1757,11 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		r.Header.Del(headerName)
 	}
 
-	// Rate limiting. Uses the stable per-entry key ID as client identifier when
-	// auth is enabled, falling back to client IP. Disabled by default
-	// (rateLimiter == nil). The raw API key never reaches the rate limiter so
-	// it cannot leak into log fields like `client`.
-	if p.rateLimiter != nil {
-		id := clientKeyID
-		if id == "" {
-			id = p.clientIP(r)
-		}
-		if allowed, retryAfter := p.rateLimiter.Allow(r.Context(), id); !allowed {
-			slog.Warn("Rate limit exceeded", "client", id, "request_id", requestID)
-			retrySecs := int(retryAfter.Seconds())
-			if retrySecs < 1 {
-				retrySecs = 1
-			}
-			rc.Header().Set("Retry-After", strconv.Itoa(retrySecs))
-			writeError(rc, audit, http.StatusTooManyRequests, "rate_limit_error", "rate_limited", "rate limit exceeded")
-			return
-		}
-	}
-
 	// Concurrency guard. Bounds the number of in-flight requests with a graceful
 	// 503 + Retry-After when the configured ceiling is reached. Acquire happens
-	// after auth and rate limiting so shedded requests are charged against the
-	// right client identity and never starve the global pool with junk traffic.
+	// after auth so junk traffic is rejected before it can occupy a slot.
 	if p.concurrency != nil {
-		allowed, scope, release := p.concurrency.Acquire(clientKeyID)
+		allowed, scope, release := p.concurrency.Acquire()
 		if !allowed {
 			slog.Warn("Concurrency limit exceeded", "scope", scope, "client", clientKeyID, "request_id", requestID)
 			if p.metrics != nil {
@@ -1897,39 +1844,6 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	audit.PolicyName = philter_policy_name
 	audit.DocumentID = philter_document_id
 
-	// Response cache lookup. Only non-streaming POSTs are cacheable. A hit is
-	// served directly, skipping Philter and the provider entirely. The key is
-	// (tenant key, model, sha256(body)) so tenants never share cached entries.
-	var cacheKey string
-	cacheable := p.cache != nil && r.Method == http.MethodPost && !isStreamingRequest(r.URL.Path, bodyBytes)
-	if cacheable {
-		tenant := clientKeyID
-		if tenant == "" {
-			tenant = "anon"
-		}
-		cacheKey = cacheKeyFor(tenant, model, bodyBytes)
-		if cached, ok := p.cache.Get(r.Context(), cacheKey); ok {
-			if p.metrics != nil {
-				p.metrics.cacheHits.Inc()
-			}
-			audit.Model = model
-			rc.Header().Set("X-Cache", "HIT")
-			if cached.ContentType != "" {
-				rc.Header().Set("Content-Type", cached.ContentType)
-			}
-			rc.WriteHeader(cached.Status)
-			rc.Write(cached.Body)
-			return
-		}
-		if p.metrics != nil {
-			p.metrics.cacheMisses.Inc()
-		}
-		rc.Header().Set("X-Cache", "MISS")
-		// Buffer the response so it can be stored after the handler returns.
-		rc.captureBody = true
-		rc.limit = p.cacheBodyLimit()
-	}
-
 	if openaiCompatName != "" {
 		audit.Provider = openaiCompatName
 		p.handleOpenAICompatible(rc, r, bodyBytes, philter_context, philter_document_id, philter_policy_name, audit, route.Outbound, openaiCompatTarget, openaiCompatClient, openaiCompatName)
@@ -1969,18 +1883,6 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	} else {
 		audit.Provider = "openai"
 		p.handleOpenAI(rc, r, bodyBytes, philter_context, philter_document_id, philter_policy_name, audit, route.Outbound)
-	}
-
-	// Post-response bookkeeping: populate the cache on a successful,
-	// non-streaming miss.
-	if cacheable && rc.statusCode >= 200 && rc.statusCode < 300 {
-		if body := rc.cachedBody(); len(body) > 0 {
-			p.cache.Set(r.Context(), cacheKey, &CachedResponse{
-				Status:      rc.statusCode,
-				ContentType: rc.Header().Get("Content-Type"),
-				Body:        append([]byte(nil), body...),
-			})
-		}
 	}
 }
 
@@ -2328,42 +2230,6 @@ func buildInboundMTLSConfig(clientCAPath string) (*tls.Config, error) {
 		ClientCAs:  pool,
 		MinVersion: tls.VersionTLS12,
 	}, nil
-}
-
-// backendTypeName normalizes an empty backend type to its "memory" default for
-// log lines.
-func backendTypeName(t string) string {
-	if t == "" {
-		return "memory"
-	}
-	return t
-}
-
-// cacheBodyLimit is the maximum response size the cache will store; larger
-// responses are passed through uncached.
-func (p *Proxy) cacheBodyLimit() int {
-	if p.config.Cache.MaxBodyBytes > 0 {
-		return p.config.Cache.MaxBodyBytes
-	}
-	return 1 << 20 // 1 MiB
-}
-
-// isStreamingRequest reports whether the request asks for a streaming response,
-// which must never be cached. Covers the `"stream": true` JSON flag
-// (OpenAI/Anthropic/Ollama) and the streaming URL forms (Gemini
-// streamGenerateContent, Bedrock converse-stream).
-func isStreamingRequest(path string, body []byte) bool {
-	lp := strings.ToLower(path)
-	if strings.Contains(lp, "streamgeneratecontent") || strings.Contains(lp, "converse-stream") {
-		return true
-	}
-	var probe struct {
-		Stream *bool `json:"stream"`
-	}
-	if err := json.Unmarshal(body, &probe); err != nil {
-		return false
-	}
-	return probe.Stream != nil && *probe.Stream
 }
 
 func (p *Proxy) handleOllamaGenerate(w http.ResponseWriter, r *http.Request, bodyBytes []byte, context string, documentId string, policyName string, audit *AuditEntry, outbound OutboundConfig) {
@@ -2998,43 +2864,13 @@ func main() {
 		slog.Info("API key authentication enabled", "keys", len(keyStoreInstance.entries))
 	}
 
-	var proxyRateLimiter *ProxyRateLimiter
-	if cfg.RateLimit.Enabled {
-		proxyRateLimiter, err = newProxyRateLimiter(cfg.RateLimit, cfg.Auth.APIKeys, proxyMetrics)
-		if err != nil {
-			slog.Error("Failed to initialize rate-limit backend", "error", err)
-			os.Exit(1)
-		}
-		slog.Info("Rate limiting enabled",
-			"requestsPerSecond", cfg.RateLimit.RequestsPerSecond,
-			"burst", cfg.RateLimit.Burst)
-	}
-
 	var proxyConcurrency *ConcurrencyLimiter
-	if cfg.Listen.MaxConcurrentRequests > 0 || hasPerKeyConcurrency(cfg.Auth.APIKeys) {
-		proxyConcurrency = newConcurrencyLimiter(
-			cfg.Listen.MaxConcurrentRequests,
-			perKeyConcurrencyMap(cfg.Auth.APIKeys),
-		)
-		slog.Info("Concurrency guard enabled",
-			"global", cfg.Listen.MaxConcurrentRequests,
-			"perKeyEntries", len(perKeyConcurrencyMap(cfg.Auth.APIKeys)),
-		)
+	if cfg.Listen.MaxConcurrentRequests > 0 {
+		proxyConcurrency = newConcurrencyLimiter(cfg.Listen.MaxConcurrentRequests)
+		slog.Info("Concurrency guard enabled", "global", cfg.Listen.MaxConcurrentRequests)
 	}
 	if proxyMetrics != nil {
 		proxyMetrics.concurrencyLimit.WithLabelValues("global").Set(float64(cfg.Listen.MaxConcurrentRequests))
-	}
-
-	var responseCache ResponseCache
-	if cfg.Cache.Enabled {
-		responseCache, err = newResponseCache(cfg.Cache)
-		if err != nil {
-			slog.Error("Failed to initialize response cache", "error", err)
-			os.Exit(1)
-		}
-		slog.Info("Response cache enabled",
-			"ttlSeconds", cfg.Cache.TTLSeconds,
-			"backend", backendTypeName(cfg.Cache.Backend.Type))
 	}
 
 	p := &Proxy{
@@ -3062,9 +2898,7 @@ func main() {
 		auditLogger:             auditLogger,
 		metrics:                 proxyMetrics,
 		keyStore:                keyStoreInstance,
-		rateLimiter:             proxyRateLimiter,
 		concurrency:             proxyConcurrency,
-		cache:                   responseCache,
 		trustedProxies:          parseTrustedProxies(cfg.Listen.TrustedProxies),
 	}
 	port := fmt.Sprintf("%d", cfg.Listen.Port)
@@ -3152,14 +2986,6 @@ func main() {
 
 	if metricsSrv != nil {
 		metricsSrv.Shutdown(ctx)
-	}
-
-	if proxyRateLimiter != nil {
-		proxyRateLimiter.Close()
-	}
-
-	if responseCache != nil {
-		responseCache.Close()
 	}
 
 	if err := srv.Shutdown(ctx); err != nil {

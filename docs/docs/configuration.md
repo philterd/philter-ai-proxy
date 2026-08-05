@@ -118,7 +118,7 @@ The current schema version is **1**.
 | `readTimeoutMs` | int | `0` (disabled) | Time to read the entire request including body. Bounds slow-body attacks; affects only request reads, never response streaming. Disabled by default so large/slow uploads aren't truncated. |
 | `tlsHandshakeTimeoutMs` | int | `10000` (10s) | Time a client may take to complete the TLS handshake before the connection is dropped (slow-handshake slowloris mitigation). Independent of `readHeaderTimeoutMs`, which only starts ticking after the handshake completes. See [Request Hardening](#request-hardening) below. |
 | `maxConcurrentTLSHandshakes` | int | `16384` | Ceiling on simultaneous in-flight TLS handshakes. Bounds handshake goroutine count under a connection flood; excess connections are dropped immediately and counted by `philter_proxy_tls_handshakes_shed_total`. Established connections are unaffected. See [Request Hardening](#request-hardening) below. |
-| `trustedProxies` | string list | empty (XFF ignored) | CIDR ranges of upstream load balancers / reverse proxies whose `X-Forwarded-For` header should be honored. Empty (default) means XFF is **never** trusted -- the safe behavior when the proxy is exposed directly to the internet. Operators behind a trusted LB **must** populate this with the LB's source CIDR(s) to restore accurate per-IP rate limits and audit-log IPs. See [Trusted Proxies / X-Forwarded-For](#trusted-proxies--x-forwarded-for). |
+| `trustedProxies` | string list | empty (XFF ignored) | CIDR ranges of upstream load balancers / reverse proxies whose `X-Forwarded-For` header should be honored. Empty (default) means XFF is **never** trusted -- the safe behavior when the proxy is exposed directly to the internet. Operators behind a trusted LB **must** populate this with the LB's source CIDR(s) to restore accurate audit-log IPs. See [Trusted Proxies / X-Forwarded-For](#trusted-proxies--x-forwarded-for). |
 
 ### `logging`
 
@@ -404,127 +404,6 @@ defaults:
     enabled: false
 ```
 
-## Rate Limiting
-
-Rate limiting is **disabled by default**. When enabled, the proxy enforces per-client request rate limits using the token bucket algorithm. The client identifier is the **API key** (when auth is enabled) or the **client IP address** (when auth is disabled).
-
-### Configuration
-
-```yaml
-rateLimit:
-  enabled: true
-  requestsPerSecond: 10.0   # per-client sustained rate
-  burst: 20                 # maximum burst size above the sustained rate
-  global:                   # optional: hard cap across all clients combined
-    requestsPerSecond: 100.0
-    burst: 200
-```
-
-Per-key overrides are configured on the API key entry:
-
-```yaml
-auth:
-  apiKeys:
-    - key: standard-team-key
-    - key: high-volume-service-key
-      rateLimit:
-        requestsPerSecond: 50.0   # this key gets a higher limit
-        burst: 100
-```
-
-### `rateLimit` reference
-
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `enabled` | bool | `false` | Enable rate limiting. When false all other fields are ignored. |
-| `requestsPerSecond` | float | - (required when enabled) | Sustained per-client request rate (requests per second) |
-| `burst` | int | - (required when enabled) | Maximum number of requests a client may send in a burst above the sustained rate. Must be ≥ 1. |
-| `global.requestsPerSecond` | float | `0` (disabled) | Global sustained rate across all clients combined. `0` disables the global backstop. |
-| `global.burst` | int | `0` (disabled) | Global burst size. Must be set alongside `global.requestsPerSecond` to enable the global limit. |
-| `backend` | object | `memory` | Where token-bucket state lives. Use `redis` to share state across replicas. See [Shared state for multi-replica deployments](#shared-state-for-multi-replica-deployments). |
-
-Per-key rate limit overrides (`auth.apiKeys[].rateLimit`) accept the same `requestsPerSecond` and `burst` fields and take precedence over the global defaults for that key.
-
-### Shared state for multi-replica deployments
-
-By default, token-bucket state lives in process memory (`backend.type: memory`). This is correct for a single replica, but **running N replicas behind a load balancer multiplies the effective limit by N** — each replica counts only the requests it sees. To enforce one consistent limit across all replicas, point the limiter at a shared Redis backend:
-
-```yaml
-rateLimit:
-  enabled: true
-  requestsPerSecond: 100.0
-  burst: 200
-  backend:
-    type: redis              # default: memory
-    failureMode: open        # "open" (default) or "closed" — see below
-    redis:
-      address: redis.internal:6379
-      username: philter       # optional (Redis 6+ ACL)
-      password: ${REDIS_PASSWORD}   # supports ${ENV_VAR} / file: references
-      db: 0
-      keyPrefix: "philter:rl:"      # optional namespace
-      timeoutMs: 100                # per-call timeout
-      tls:
-        enabled: true
-        caCert: /etc/ssl/redis-ca.pem        # optional custom CA
-        cert: /etc/ssl/redis-client.pem      # optional client cert (mTLS)
-        key: /etc/ssl/redis-client-key.pem
-        # insecureSkipVerify: true           # development only
-```
-
-The Redis backend implements an **atomic token bucket** in a server-side Lua script (a single round-trip per decision) and uses the Redis server clock, so replicas with skewed clocks still agree. The same per-client and global buckets described above apply — they are simply stored in Redis instead of process memory.
-
-**Failure mode when Redis is unreachable** (`backend.failureMode`):
-
-| Mode | Behaviour when the backend errors or times out |
-|------|------------------------------------------------|
-| `open` (default) | **Fail open** — degrade to the local in-memory limiter so traffic keeps flowing, still bounded per-replica. Availability is preserved at the cost of temporarily enforcing per-replica rather than global limits. |
-| `closed` | **Fail closed** — reject requests with `429` while the backend is down. Choose this when exceeding the limit is worse than dropping traffic. |
-
-The local-memory limiter is always retained and is used as the fail-open fallback, so a Redis outage never takes the proxy down.
-
-**Backend health is observable** via Prometheus metrics: `philter_proxy_ratelimit_backend_duration_seconds` (call latency, labeled by backend and `ok`/`error` result), `philter_proxy_ratelimit_backend_errors_total` (backend error count), and `philter_proxy_ratelimit_fallback_total` (decisions that fell back to local memory). See [Monitoring](monitoring.md).
-
-#### `rateLimit.backend` reference
-
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `type` | string | `memory` | `memory` (per-replica, in-process) or `redis` (shared across replicas). |
-| `failureMode` | string | `open` | Behaviour when the redis backend is unreachable: `open` (fall back to local memory) or `closed` (reject). |
-| `redis.address` | string | - (required for redis) | Redis endpoint, `host:port`. |
-| `redis.username` | string | (none) | Redis ACL username (Redis 6+). |
-| `redis.password` | string | (none) | Redis password. Accepts `${ENV_VAR}` / `file:` [secret references](#loading-secrets-from-environment-variables-and-files). |
-| `redis.db` | int | `0` | Logical database number. |
-| `redis.keyPrefix` | string | `philter:rl:` | Namespace prefix for the proxy's keys. |
-| `redis.timeoutMs` | int | `100` | Per-call Redis timeout in milliseconds. On timeout the failure mode applies. |
-| `redis.tls.enabled` | bool | `false` | Connect to Redis over TLS. |
-| `redis.tls.caCert` | string | (system roots) | PEM CA bundle for verifying the Redis server certificate. |
-| `redis.tls.cert` / `redis.tls.key` | string | (none) | Client certificate + key for mutual TLS to Redis. Both required together. |
-| `redis.tls.insecureSkipVerify` | bool | `false` | Skip server certificate verification (development only). |
-
-### Behaviour when the limit is exceeded
-
-When a client exceeds its limit the proxy returns `HTTP 429 Too Many Requests` with:
-
-- `Content-Type: application/json`
-- `Retry-After: <seconds>` header indicating when the client may retry
-- JSON body: `{"error":{"message":"rate limit exceeded","type":"rate_limit_error"}}`
-
-A structured warning is logged with the client identifier:
-
-```json
-{"time":"...","level":"WARN","msg":"Rate limit exceeded","client":"api-key-or-ip"}
-```
-
-### Client identification
-
-| Auth state | Client ID used |
-|-----------|----------------|
-| Auth enabled, valid key | The API key value |
-| Auth disabled | Client IP address (supports `X-Forwarded-For`) |
-
-The global backstop, when configured, is checked before the per-client limit and applies regardless of which client is making the request.
-
 ## Authentication
 
 Authentication is **disabled by default**. The proxy accepts requests from any client with no credentials required. This is appropriate for simple deployments where network-level controls (firewall, VPC, service mesh) are sufficient. Enable authentication for environments where multiple teams or services share a proxy instance, or where access needs to be scoped per client.
@@ -576,10 +455,8 @@ curl -k https://localhost:8080/v1/chat/completions \
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `key` | string | Yes | The API key value. Accepts plaintext, a pre-hashed value (see [Hashing](#api-key-hashing)), or a `${ENV_VAR}` / `file:` secret reference (see [Loading secrets from environment variables and files](#loading-secrets-from-environment-variables-and-files)). |
-| `id` | string | No | **Strongly recommended.** Stable opaque identifier used as the rate-limit / concurrency / cache-tenant / audit-log `key_id`. Falls back to the legacy positional `key-N` when unset, which is fragile across `apiKeys` reorders. See [Per-key Stable Identifiers](#per-key-stable-identifiers). |
+| `id` | string | No | **Strongly recommended.** Stable opaque identifier used as the concurrency / audit-log `key_id`. Falls back to the legacy positional `key-N` when unset, which is fragile across `apiKeys` reorders. See [Per-key Stable Identifiers](#per-key-stable-identifiers). |
 | `policy` | string | No | Philter policy to enforce for all requests authenticated with this key. Overrides route and default policy. |
-| `rateLimit` | object | No | Per-key rate-limit override. See [Rate Limiting](#rate-limiting). |
-| `maxConcurrent` | int | No | Per-key in-flight concurrency cap (0 = unlimited). Applied in addition to the global `listen.maxConcurrentRequests` cap. See [Concurrency Limits](#concurrency-limits). |
 | `scopes` | object | No | Per-key allow-lists for providers, models, and request paths. Empty / unset means full access (backwards compatible). See [Per-key Authorization](#per-key-authorization-scopes). |
 
 #### Per-key Authorization (scopes)
@@ -662,11 +539,11 @@ python3 -c "import bcrypt; print('bcrypt$' + bcrypt.hashpw(b'SuperSecretAPIKey12
 - Default (SHA256): no tuning needed.
 - bcrypt: pick the lowest cost your compliance requirements allow. cost=4 is appropriate for high-throughput API key use.
 
-**Per-key features (rate-limit, concurrency).** The proxy assigns each `auth.apiKeys[]` entry an opaque stable identifier. Per-key rate-limit, per-key concurrency, the response-cache tenant prefix, and audit-log `key_id` are all keyed by this identifier, so the raw API key never has to reach those subsystems. See [Per-key Stable Identifiers](#per-key-stable-identifiers) for the explicit `id:` field (strongly recommended) and the legacy positional fallback (`key-0`, `key-1`, ...).
+**Per-key features (audit, policy binding).** The proxy assigns each `auth.apiKeys[]` entry an opaque stable identifier. The audit-log `key_id` is keyed by this identifier, so the raw API key never has to reach the log. See [Per-key Stable Identifiers](#per-key-stable-identifiers) for the explicit `id:` field (strongly recommended) and the legacy positional fallback (`key-0`, `key-1`, ...).
 
 #### Per-key Stable Identifiers
 
-Each `auth.apiKeys[]` entry can declare an explicit `id:` field, which is used as its stable opaque identifier wherever the proxy needs one (rate-limit bucket, concurrency bucket, cache tenant prefix, audit log `key_id`):
+Each `auth.apiKeys[]` entry can declare an explicit `id:` field, which is used as its stable opaque identifier wherever the proxy needs one (concurrency bucket, audit log `key_id`):
 
 ```yaml
 auth:
@@ -677,14 +554,14 @@ auth:
       id: team-b
 ```
 
-When `id:` is omitted the proxy falls back to the legacy positional identifier (`key-0`, `key-1`, ... derived from the entry's position in the list). **Setting `id:` explicitly is strongly recommended** because the positional fallback is fragile: inserting a new entry at the top of the list, removing a middle entry, or even reordering for readability re-shuffles which key owns which historical state. With a response cache enabled, that re-shuffle is a real cross-tenant data leak -- the new `key-0` would inherit the old `key-0`'s cached responses.
+When `id:` is omitted the proxy falls back to the legacy positional identifier (`key-0`, `key-1`, ... derived from the entry's position in the list). **Setting `id:` explicitly is strongly recommended** because the positional fallback is fragile: inserting a new entry at the top of the list, removing a middle entry, or even reordering for readability re-shuffles which key owns which identifier, so audit-log history silently follows the wrong key.
 
 Validation:
 
 - Each explicit `id:` must be unique across `auth.apiKeys`.
 - Explicit `id:` values must not start with the reserved prefix `key-` (which would collide with the legacy positional scheme).
 
-Migrating from positional IDs: add `id:` to each entry, choosing a stable label (`team-a`, `team-b`, etc.). The transition is opt-in -- entries without `id:` continue to receive their positional identifier so existing rate-limit / cache state is not invalidated mid-flight.
+Migrating from positional IDs: add `id:` to each entry, choosing a stable label (`team-a`, `team-b`, etc.). The transition is opt-in -- entries without `id:` continue to receive their positional identifier, so audit-log continuity is preserved for keys you have not relabelled yet.
 
 #### Loading secrets from environment variables and files
 
@@ -911,32 +788,27 @@ The proxy can cap the number of requests it processes at any one time. When the 
 ```yaml
 listen:
   maxConcurrentRequests: 200   # global in-flight cap; 0 (default) = unlimited
-
-auth:
-  apiKeys:
-    - key: noisy-tenant
-      maxConcurrent: 20        # per-key in-flight cap; applied in addition to the global cap
 ```
 
-The global and per-key caps **compose** - a request must acquire both. The per-key cap protects the shared pool from a single noisy tenant; the global cap protects the proxy as a whole.
+This is a proxy-wide ceiling protecting the proxy and the Philter instance behind it from unbounded in-flight work. Per-client concurrency policy is deliberately not handled here: use your AI gateway's per-key parallelism control. See [Using with an AI Gateway](ai-gateway.md).
 
-!!! warning "Pair concurrency caps with `listen.readTimeoutMs` for hostile clients"
-    The proxy acquires its concurrency slot *before* reading the request body, so a slow-body uploader holds the slot for the duration of its upload. With `listen.readTimeoutMs` disabled (the documented default for large/slow legitimate uploads), a single authenticated key whose value has been compromised can dribble bodies indefinitely and hold `maxConcurrent` slots; with multiple compromised keys the attacker can hold `keys × maxConcurrent` slots. When you configure `maxConcurrent` to defend against this class of abuse, also set `listen.readTimeoutMs` to a value that bounds reasonable upload time (e.g. 60000 for 60s). See [Request Hardening](#request-hardening).
+!!! warning "Pair the concurrency cap with `listen.readTimeoutMs` for hostile clients"
+    The proxy acquires its concurrency slot *before* reading the request body, so a slow-body uploader holds the slot for the duration of its upload. With `listen.readTimeoutMs` disabled (the documented default for large/slow legitimate uploads), a hostile client can dribble bodies indefinitely and occupy slots. When you configure `maxConcurrentRequests` to defend against this class of abuse, also set `listen.readTimeoutMs` to a value that bounds reasonable upload time (e.g. 60000 for 60s). See [Request Hardening](#request-hardening).
 
 ### Behaviour when the limit is exceeded
 
-When either cap is reached, the proxy returns:
+When the cap is reached, the proxy returns:
 
 - HTTP status `503 Service Unavailable`
 - Headers: `Retry-After: 1`, `Content-Type: application/json`
 - JSON body: `{"error":{"message":"concurrency limit exceeded","type":"capacity"}}`
 
-The `Retry-After` value is fixed at 1 second because, unlike rate limits, there is no deterministic time at which a concurrency slot will free up.
+The `Retry-After` value is fixed at 1 second because there is no deterministic time at which a concurrency slot will free up.
 
-A structured warning is logged with the scope (`global` or `per_key`) and the client identifier:
+A structured warning is logged with the scope and the client identifier:
 
 ```json
-{"time":"...","level":"WARN","msg":"Concurrency limit exceeded","scope":"per_key","client":"noisy-tenant"}
+{"time":"...","level":"WARN","msg":"Concurrency limit exceeded","scope":"global","client":"team-a"}
 ```
 
 ### Choosing a value
@@ -982,9 +854,9 @@ listen:
 
 ### Trusted Proxies / X-Forwarded-For
 
-The proxy uses the apparent client IP for **per-IP rate limiting** (when authentication is disabled), for the **audit log's `client_ip` field**, and for operator-facing log lines such as the admin-endpoint access record.
+The proxy uses the apparent client IP for the **audit log's `client_ip` field** and for operator-facing log lines.
 
-By default, `r.RemoteAddr` -- the immediate TCP peer -- is used, and `X-Forwarded-For` is ignored. This is the safe behavior when the proxy is exposed directly to clients: any attacker could otherwise set XFF to a value of their choosing, evading per-IP rate limits and corrupting audit-log IPs.
+By default, `r.RemoteAddr` -- the immediate TCP peer -- is used, and `X-Forwarded-For` is ignored. This is the safe behavior when the proxy is exposed directly to clients: any attacker could otherwise set XFF to a value of their choosing, corrupting audit-log IPs.
 
 When the proxy runs behind a trusted upstream (ALB, NLB, Nginx, Cloudflare, an Istio sidecar, etc.), `listen.trustedProxies` must list the CIDR ranges those upstreams connect from, so the proxy can recognize them and honor the XFF they set:
 
@@ -1005,41 +877,6 @@ Behavior:
 This is a **behavioral change vs earlier releases**, which trusted XFF unconditionally. Deployments that legitimately relied on XFF (those running behind a real LB) need to add the LB's source CIDR(s) to restore the previous behavior.
 
 These limits apply per request and are independent of the concurrency guard: concurrency bounds *how many* requests run at once, while these bound *how big* and *how slow* any single request may be.
-
-## Response Cache
-
-The optional response cache returns a stored response for repeated prompts, skipping both Philter and the LLM provider to cut cost and latency. It is **disabled by default**.
-
-```yaml
-cache:
-  enabled: true
-  ttlSeconds: 300       # entry lifetime; default 300
-  maxEntries: 1024      # in-memory cap (memory backend only); default 1024
-  maxBodyBytes: 1048576 # responses larger than this are not cached; default 1 MiB
-  backend:
-    type: memory        # or "redis" to share the cache across replicas
-    # redis:
-    #   address: redis.internal:6379
-```
-
-**Cache key.** Entries are keyed on `(API key, model, sha256(request body))`. Because the tenant key is part of the key, **one tenant can never read another tenant's cached response**, and a different model or any change to the request body is a different entry. When auth is disabled, all clients share an `anon` namespace.
-
-**What is cached.** Only **non-streaming** (`"stream": true` is excluded, as are Gemini `streamGenerateContent` and Bedrock `converse-stream` paths), **`POST`**, **2xx** responses up to `maxBodyBytes`. Larger or streaming responses pass through uncached. Responses carry an `X-Cache: HIT` or `X-Cache: MISS` header so clients and dashboards can see cache behavior. A hit is served without calling Philter or the provider.
-
-**Backends.** `memory` is a per-replica LRU-ish cache bounded by `maxEntries`; `redis` shares entries across replicas (TTL enforced by Redis). A Redis read/write failure is treated as a miss and never fails the request.
-
-### `cache` reference
-
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `enabled` | bool | `false` | Enable the response cache. |
-| `ttlSeconds` | int | `300` | Lifetime of a cached entry. |
-| `maxEntries` | int | `1024` | Maximum in-memory entries (memory backend only). |
-| `maxBodyBytes` | int | `1048576` | Responses larger than this are not cached. |
-| `backend.type` | string | `memory` | `memory` or `redis`. |
-| `backend.redis.*` | — | — | Same Redis fields as the [rate-limit backend](#shared-state-for-multi-replica-deployments). |
-
-Cache hit/miss counters are exported as `philter_proxy_cache_hits_total` / `philter_proxy_cache_misses_total`; see [Monitoring](monitoring.md).
 
 ## Error Responses
 
@@ -1082,7 +919,6 @@ The `(type, code)` set below is part of the proxy's public API. New codes may be
 | 404 | `not_found` | `azure_disabled` | An Azure path (`/openai/deployments/...`) was requested but `providers.azure.target` is unset | - |
 | 404 | `not_found` | `vertex_disabled` | A Vertex path (`/v1/projects/.../models/...:generateContent`) was requested but `providers.vertex.project` is unset | - |
 | 502 | `provider_error` | `vertex_auth_failed` | The proxy could not acquire a Google ADC bearer token for Vertex | - |
-| 429 | `rate_limit_error` | `rate_limited` | Rate-limit token bucket exhausted for this client | seconds until refill |
 | 500 | `internal_error` | `marshal_failed` | Re-serialising the redacted request body failed (should not occur in normal operation) | - |
 | 500 | `internal_error` | `request_creation_failed` | `http.NewRequest` failed when building the upstream call (typically an invalid target URL) | - |
 | 500 | `internal_error` | `bedrock_sign_failed` | AWS SigV4 signing failed (credentials cannot be retrieved) | - |
