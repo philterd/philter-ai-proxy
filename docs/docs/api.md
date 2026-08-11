@@ -30,9 +30,28 @@ The proxy inspects and redacts all text-bearing fields in the request body befor
 
 Fields not in the table (e.g., model names, IDs, non-string values) are forwarded unchanged. The OpenAI-family endpoint rows apply equally to the OpenAI, Azure OpenAI, and openai-compatible providers, since they share one request handler.
 
-**Passed through unchanged:** the `/batches` JSON request body — a batch references an uploaded file by ID rather than carrying inline prompts, so there is no inline text to redact.
+Fields not in the table above (model names, IDs, non-string values) are forwarded unchanged.
 
-**Not supported:** the proxy handles **text conversations only**. It expects a JSON request body and rejects `multipart/form-data` with `400 invalid_request` / `unsupported_content_type`, so file uploads (`/files`), audio transcriptions (`/audio/transcriptions`), and image edits/variations cannot be proxied. Route those calls directly to the provider. File uploads will not be supported: a batch file is many embedded requests, so redacting one upload would mean one Philter call per record inside a single synchronous request. Redact the file contents with Philter before uploading. Audio ([#40](https://github.com/philterd/philter-ai-proxy/issues/40)) and image edits ([#41](https://github.com/philterd/philter-ai-proxy/issues/41)) are tracked.
+## Supported request types
+
+The proxy accepts a JSON request body. **It does not parse `multipart/form-data`.** That single rule decides every endpoint below, and predicts the answer for any endpoint not listed.
+
+| Request type | Behavior | Error |
+|---|---|---|
+| Chat, Responses, embeddings, moderations, completions, image generations, audio speech | Redacted per the table above, then forwarded | - |
+| `/v1/batches` | Forwarded unchanged. A batch references an uploaded file by ID, so there is no inline text to redact | - |
+| Any endpoint the proxy does not recognise, with a JSON body | Forwarded unchanged, no redaction | - |
+| `/v1/images/edits`, `/v1/images/variations` | **Rejected.** Not supported, and not planned | `400` `invalid_request` / `unsupported_content_type` |
+| `/v1/files` (uploads) | **Rejected.** Not supported, and not planned | `400` `invalid_request` / `unsupported_content_type` |
+| `/v1/audio/transcriptions`, `/v1/audio/translations` | **Rejected** today. Support is tracked in [#40](https://github.com/philterd/philter-ai-proxy/issues/40) | `400` `invalid_request` / `unsupported_content_type` |
+
+Route rejected calls directly to the provider.
+
+**Why image edits are not planned.** Redacting the `prompt` form field would mean parsing a multipart body, rewriting one field, and re-encoding the rest, which is the thing the proxy deliberately does not do.
+
+**Why file uploads are not planned.** A batch file is many embedded requests, so redacting one upload would mean one Philter call per record inside a single synchronous request. Redact the file contents with Philter before uploading.
+
+**Why audio can be supported.** Audio needs no multipart parsing: the body is binary with no inbound text to redact, so it can be forwarded untouched and the transcript scanned on the way back. It is an outbound-scanning feature, not an inbound-redaction one, which is why it does not break the rule above.
 
 ## Response Scanning (Outbound)
 

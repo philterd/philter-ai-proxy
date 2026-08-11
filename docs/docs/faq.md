@@ -33,7 +33,7 @@ Outbound response scanning can only inspect non-streaming responses. Under `acti
 
 No. The proxy handles text conversations only. It expects a JSON request body and rejects `multipart/form-data` with `400 invalid_request` / `unsupported_content_type`, so file uploads (`/v1/files`), audio transcriptions (`/v1/audio/transcriptions`), and image edits and variations are not proxied. Route those calls directly to the provider.
 
-File uploads will not be supported: a batch file is many embedded requests, and redacting one upload would mean one Philter call per record inside a single synchronous request. Redact the file contents with Philter before uploading. Audio ([#40](https://github.com/philterd/philter-ai-proxy/issues/40)) and image edits ([#41](https://github.com/philterd/philter-ai-proxy/issues/41)) are tracked for support.
+The proxy does not parse multipart bodies, so image edits and file uploads will not be supported. Audio is the exception and is tracked in [#40](https://github.com/philterd/philter-ai-proxy/issues/40): its body is binary with no inbound text, so it can be forwarded untouched and the transcript scanned on the way back. See [Supported request types](api.md#supported-request-types).
 
 ### Is any sensitive data logged?
 
