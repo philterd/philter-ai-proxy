@@ -11,18 +11,20 @@
 
 The dashboard exposes one variable, `datasource`, so the same JSON can be imported into multiple environments.
 
+Panels are ordered so redaction comes first. Throughput, latency, and capacity follow: useful, but not specific to what this proxy does.
+
 ## Panels
 
 | Panel | Metric(s) | Purpose |
 |---|---|---|
+| Entities redacted by type | `philter_proxy_entities_redacted_total` | Volume and mix of PII the proxy is catching. The signal no other component in the stack can produce, and the one that goes quiet when redaction silently stops working. |
+| Philter backend errors | `philter_proxy_philter_errors_total` | Health of the redaction backend everything above depends on |
 | Request rate by provider | `philter_proxy_requests_total` | Throughput overview, broken out by provider |
 | Request latency (p50/p95/p99) | `philter_proxy_request_duration_seconds` | End-to-end latency budget, including Philter + LLM |
 | Error rate | `philter_proxy_requests_total{status_code=~"5.."}` | % of requests returning 5xx |
 | Active in-flight requests | `philter_proxy_active_requests` | Live concurrency |
 | Concurrency utilization | `philter_proxy_active_requests / philter_proxy_concurrency_limit{scope="global"}` | % of the configured concurrency ceiling in use. Only meaningful when `listen.maxConcurrentRequests > 0`. |
 | Concurrency sheds | `philter_proxy_concurrency_shed_total` | Requests rejected (503) by the capacity guard, by scope |
-| Entities redacted by type | `philter_proxy_entities_redacted_total` | Volume and mix of PII the proxy is catching |
-| Philter backend errors | `philter_proxy_philter_errors_total` | Health of the redaction backend |
 | Upstream LLM errors | `philter_proxy_upstream_errors_total` | Health of the LLM providers |
 
 ## Customising

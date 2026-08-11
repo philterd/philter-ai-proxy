@@ -205,6 +205,21 @@ If `scope="global"` is rising, you have a real capacity problem - **scale out ho
 groups:
   - name: philter-ai-proxy
     rules:
+      # The silent failure this proxy exists to prevent: traffic flowing,
+      # 200s returning, and nothing being redacted. Every other alert here
+      # stays green through it. `or vector(0)` is required because the
+      # counter has no series at all until the first entity is redacted.
+      - alert: RedactionDetectionStopped
+        expr: |
+          (sum(rate(philter_proxy_entities_redacted_total[30m])) or vector(0)) == 0
+          and sum(rate(philter_proxy_requests_total[30m])) > 0
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Proxy is serving traffic but has redacted nothing for 30 minutes"
+          description: "Check that the Philter policy is loaded and matches the traffic, and that any NER model the policy depends on is available."
+
       - alert: PhilterBackendDown
         expr: rate(philter_proxy_philter_errors_total[5m]) > 0
         for: 1m
@@ -240,3 +255,5 @@ groups:
         annotations:
           summary: "Proxy is shedding requests at the global concurrency cap - scale out or raise listen.maxConcurrentRequests"
 ```
+
+`RedactionDetectionStopped` is a warning rather than a critical because a deployment whose traffic genuinely contains no PII will trip it. Tune the window to your traffic, or drop the rule if zero detections is normal for you. On a route where PII is expected on every request, raise it to critical: a policy that silently stops matching produces exactly this signal and nothing else does.

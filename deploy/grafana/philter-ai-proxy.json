@@ -32,11 +32,43 @@
   },
   "panels": [
     {
+      "id": 7,
+      "type": "timeseries",
+      "title": "Entities redacted by type",
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
+      "fieldConfig": {"defaults": {"unit": "short", "custom": {"drawStyle": "line", "lineWidth": 1, "fillOpacity": 10, "stacking": {"mode": "normal"}}}},
+      "options": {"legend": {"displayMode": "table", "placement": "bottom"}},
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (entity_type) (rate(philter_proxy_entities_redacted_total[5m]))",
+          "legendFormat": "{{entity_type}}"
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "type": "timeseries",
+      "title": "Philter backend errors",
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
+      "fieldConfig": {"defaults": {"unit": "reqps", "custom": {"drawStyle": "line", "lineWidth": 1, "fillOpacity": 10}}},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}},
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "rate(philter_proxy_philter_errors_total[5m])",
+          "legendFormat": "errors/s"
+        }
+      ]
+    },
+    {
       "id": 1,
       "type": "timeseries",
       "title": "Request rate by provider",
       "datasource": {"type": "prometheus", "uid": "${datasource}"},
-      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8},
       "fieldConfig": {
         "defaults": {
           "unit": "reqps",
@@ -57,7 +89,7 @@
       "type": "timeseries",
       "title": "Request latency p50 / p95 / p99 by provider",
       "datasource": {"type": "prometheus", "uid": "${datasource}"},
-      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8},
       "fieldConfig": {
         "defaults": {
           "unit": "s",
@@ -88,7 +120,7 @@
       "type": "stat",
       "title": "5xx error rate (last 5m)",
       "datasource": {"type": "prometheus", "uid": "${datasource}"},
-      "gridPos": {"h": 4, "w": 6, "x": 0, "y": 8},
+      "gridPos": {"h": 4, "w": 6, "x": 0, "y": 16},
       "fieldConfig": {
         "defaults": {
           "unit": "percentunit",
@@ -115,7 +147,7 @@
       "type": "stat",
       "title": "Active in-flight requests",
       "datasource": {"type": "prometheus", "uid": "${datasource}"},
-      "gridPos": {"h": 4, "w": 6, "x": 6, "y": 8},
+      "gridPos": {"h": 4, "w": 6, "x": 6, "y": 16},
       "fieldConfig": {"defaults": {"unit": "short"}},
       "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value"},
       "targets": [
@@ -128,7 +160,7 @@
       "title": "Concurrency utilization (% of global cap)",
       "description": "Only meaningful when listen.maxConcurrentRequests is set. NaN when concurrency_limit{scope=\"global\"} is 0 (unlimited).",
       "datasource": {"type": "prometheus", "uid": "${datasource}"},
-      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 16},
       "fieldConfig": {
         "defaults": {
           "unit": "percentunit",
@@ -150,7 +182,7 @@
       "type": "timeseries",
       "title": "Concurrency sheds by scope (503 rejections)",
       "datasource": {"type": "prometheus", "uid": "${datasource}"},
-      "gridPos": {"h": 4, "w": 12, "x": 0, "y": 12},
+      "gridPos": {"h": 4, "w": 12, "x": 0, "y": 20},
       "fieldConfig": {"defaults": {"unit": "reqps", "custom": {"drawStyle": "line", "lineWidth": 1, "fillOpacity": 10}}},
       "options": {"legend": {"displayMode": "list", "placement": "bottom"}},
       "targets": [
@@ -162,43 +194,11 @@
       ]
     },
     {
-      "id": 7,
-      "type": "timeseries",
-      "title": "Entities redacted by type",
-      "datasource": {"type": "prometheus", "uid": "${datasource}"},
-      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 16},
-      "fieldConfig": {"defaults": {"unit": "short", "custom": {"drawStyle": "line", "lineWidth": 1, "fillOpacity": 10, "stacking": {"mode": "normal"}}}},
-      "options": {"legend": {"displayMode": "table", "placement": "bottom"}},
-      "targets": [
-        {
-          "refId": "A",
-          "expr": "sum by (entity_type) (rate(philter_proxy_entities_redacted_total[5m]))",
-          "legendFormat": "{{entity_type}}"
-        }
-      ]
-    },
-    {
-      "id": 9,
-      "type": "timeseries",
-      "title": "Philter backend errors",
-      "datasource": {"type": "prometheus", "uid": "${datasource}"},
-      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 24},
-      "fieldConfig": {"defaults": {"unit": "reqps", "custom": {"drawStyle": "line", "lineWidth": 1, "fillOpacity": 10}}},
-      "options": {"legend": {"displayMode": "list", "placement": "bottom"}},
-      "targets": [
-        {
-          "refId": "A",
-          "expr": "rate(philter_proxy_philter_errors_total[5m])",
-          "legendFormat": "errors/s"
-        }
-      ]
-    },
-    {
       "id": 10,
       "type": "timeseries",
       "title": "Upstream LLM errors by provider",
       "datasource": {"type": "prometheus", "uid": "${datasource}"},
-      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 24},
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 24},
       "fieldConfig": {"defaults": {"unit": "reqps", "custom": {"drawStyle": "line", "lineWidth": 1, "fillOpacity": 10}}},
       "options": {"legend": {"displayMode": "table", "placement": "bottom"}},
       "targets": [
