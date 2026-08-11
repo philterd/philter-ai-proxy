@@ -293,8 +293,6 @@ var auditEntryFields = []string{
 	"ClientIP",
 	"KeyID",
 	"HTTPStatus",
-	"PromptTokens",
-	"CompletionTokens",
 	"ErrorType",
 	"ErrorCode",
 	"TraceID",

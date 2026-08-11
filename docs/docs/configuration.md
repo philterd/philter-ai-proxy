@@ -244,11 +244,11 @@ If the host credentials do not have Bedrock access directly (e.g., in a multi-ac
 
 **Supported models**: Any model available through the [Bedrock Converse API](https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_Converse.html) in the configured region, including Anthropic Claude, Amazon Titan, Meta Llama, Mistral, and Cohere models.
 
-**Streaming**: The `/model/{modelId}/converse-stream` endpoint is supported. The inbound request is redacted as usual and the AWS binary event-stream response is forwarded to the client incrementally, without buffering. As with the other providers, streamed responses are not outbound-scanned, and streamed token usage is not recorded in the audit log (Bedrock carries usage in a terminal binary `metadata` frame the proxy does not parse).
+**Streaming**: The `/model/{modelId}/converse-stream` endpoint is supported. The inbound request is redacted as usual and the AWS binary event-stream response is forwarded to the client incrementally, without buffering. As with the other providers, streamed responses are not outbound-scanned.
 
 ### `providers.azure`
 
-Azure OpenAI is an optional first-class provider. It is enabled by setting `providers.azure.target` to your resource endpoint. Azure uses deployment-based routing rather than OpenAI's model-in-body convention: the proxy routes any request whose path begins with `/openai/deployments/{deployment}/`, preserves the path and the `api-version` query parameter, and forwards it to the configured Azure endpoint. Request and response bodies are OpenAI-compatible, so **inbound redaction and token-usage accounting are identical to the OpenAI provider**.
+Azure OpenAI is an optional first-class provider. It is enabled by setting `providers.azure.target` to your resource endpoint. Azure uses deployment-based routing rather than OpenAI's model-in-body convention: the proxy routes any request whose path begins with `/openai/deployments/{deployment}/`, preserves the path and the `api-version` query parameter, and forwards it to the configured Azure endpoint. Request and response bodies are OpenAI-compatible, so **inbound redaction is identical to the OpenAI provider**.
 
 !!! note "Redaction scope"
     Inbound redaction covers the text-bearing fields of all JSON endpoints the proxy understands — see the [Redacted Fields](api.md#redacted-fields) table for the full per-endpoint list. Multipart/binary uploads (file uploads, audio transcriptions, image edits) are **not supported**: the proxy expects a JSON body and rejects multipart requests with `400 invalid_request`.
@@ -665,8 +665,6 @@ Every proxy request produces a structured JSON log entry (JSONL) to stdout. All 
 | `client_ip` | string | Client IP address (supports `X-Forwarded-For`) |
 | `key_id` | string | Opaque stable identifier (`key-N`) of the authenticated API key, or empty when no key was authenticated. Never the raw key. Use this to correlate per-key authorization decisions (including [scope denials](#per-key-authorization-scopes)) end-to-end. |
 | `http_status` | int | HTTP status code of the upstream provider response |
-| `prompt_tokens` | int | Prompt (input) token count reported by the provider. Omitted for streaming responses and when the provider does not return usage data. |
-| `completion_tokens` | int | Completion (output) token count reported by the provider. Omitted under the same conditions as `prompt_tokens`. |
 | `error_type` | string | The `error.type` value the client received. Empty on 2xx responses. See [Error Responses](#error-responses). |
 | `error_code` | string | The `error.code` value the client received. Empty on 2xx responses. See [Error Responses](#error-responses). |
 | `trace_id` | string | W3C trace ID, when OpenTelemetry tracing is enabled and the request was sampled. Use it to cross-reference audit log entries with traces in your APM. See [Distributed Tracing](monitoring.md#distributed-tracing). |
@@ -678,14 +676,14 @@ This table is the whole entry. No field carries message content, prompt text, or
 When outbound scanning is disabled (default), one entry is emitted per request:
 
 ```json
-{"time":"2026-01-15T10:30:00Z","level":"INFO","msg":"request","request_id":"a1b2c3d4","direction":"inbound","provider":"openai","model":"gpt-4","policy_name":"default","document_id":"doc-789","fields_redacted":2,"entity_count":3,"entity_types":["NER_ENTITY","SSN"],"redact_latency_ms":45,"client_ip":"10.0.0.1","http_status":200,"prompt_tokens":312,"completion_tokens":87}
+{"time":"2026-01-15T10:30:00Z","level":"INFO","msg":"request","request_id":"a1b2c3d4","direction":"inbound","provider":"openai","model":"gpt-4","policy_name":"default","document_id":"doc-789","fields_redacted":2,"entity_count":3,"entity_types":["NER_ENTITY","SSN"],"redact_latency_ms":45,"client_ip":"10.0.0.1","http_status":200}
 ```
 
 When outbound scanning is enabled, two entries are emitted per request - one for the inbound scan and one for the outbound scan. Both share the same `request_id` and `document_id` for correlation. Token counts appear on the inbound entry only:
 
 ```json
 {"time":"2026-01-15T10:30:00Z","level":"INFO","msg":"request","request_id":"a1b2c3d4","direction":"outbound","provider":"openai","model":"gpt-4","policy_name":"default","document_id":"doc-789","fields_redacted":1,"entity_count":1,"entity_types":["NER_ENTITY"],"redact_latency_ms":12,"client_ip":"10.0.0.1","http_status":200}
-{"time":"2026-01-15T10:30:00Z","level":"INFO","msg":"request","request_id":"a1b2c3d4","direction":"inbound","provider":"openai","model":"gpt-4","policy_name":"default","document_id":"doc-789","fields_redacted":2,"entity_count":3,"entity_types":["NER_ENTITY","SSN"],"redact_latency_ms":45,"client_ip":"10.0.0.1","http_status":200,"prompt_tokens":312,"completion_tokens":87}
+{"time":"2026-01-15T10:30:00Z","level":"INFO","msg":"request","request_id":"a1b2c3d4","direction":"inbound","provider":"openai","model":"gpt-4","policy_name":"default","document_id":"doc-789","fields_redacted":2,"entity_count":3,"entity_types":["NER_ENTITY","SSN"],"redact_latency_ms":45,"client_ip":"10.0.0.1","http_status":200}
 ```
 
 ### SIEM Integration

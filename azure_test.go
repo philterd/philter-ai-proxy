@@ -243,15 +243,6 @@ func TestAzure_DisabledReturns404(t *testing.T) {
 	}
 }
 
-func TestAzure_TokenUsageParsedLikeOpenAI(t *testing.T) {
-	// Azure responses are OpenAI-shaped; token accounting must match OpenAI.
-	body := []byte(`{"usage":{"prompt_tokens":11,"completion_tokens":4}}`)
-	p, c := extractTokenUsage("azure", body)
-	if p != 11 || c != 4 {
-		t.Errorf("azure token usage = (%d,%d), want (11,4)", p, c)
-	}
-}
-
 func TestAzureAuthMode(t *testing.T) {
 	if azureAuthMode(true) != "entra-id" {
 		t.Errorf("entra-id expected, got %q", azureAuthMode(true))

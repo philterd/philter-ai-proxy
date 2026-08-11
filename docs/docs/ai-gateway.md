@@ -81,6 +81,6 @@ For a compliance boundary you have to defend to an auditor, the network-layer ve
 
 ## Token accounting
 
-The proxy does not enforce token budgets, but it does observe them. Per-request prompt and completion token counts appear in the audit log, and `philter_proxy_prompt_tokens_total` / `philter_proxy_completion_tokens_total` are exported for Prometheus, labeled by provider and model. See [Monitoring](monitoring.md).
+The proxy does not track token usage at all: not in the audit log, not as a metric. Token counts say nothing about redaction, and duplicating them here would mean carrying per-provider usage-parsing for every provider and streaming format the proxy supports, to produce a partial copy of what the gateway already records accurately.
 
-Streamed responses from Gemini, Vertex, Ollama, and Bedrock do not carry usage in a shape the proxy parses, so their token counts are absent from the audit log. Use the gateway's accounting as the system of record for spend.
+Use the gateway's accounting as the system of record for spend, budgets, and per-tenant usage. If you run without a gateway, the provider's own usage dashboard is the source of truth.

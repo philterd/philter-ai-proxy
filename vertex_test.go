@@ -204,48 +204,6 @@ func TestVertex_EndToEnd_Forwards_WithBearerToken_AndRedactsBody(t *testing.T) {
 	}
 }
 
-func TestVertex_TokenUsageRecorded(t *testing.T) {
-	philterSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write(explainJSON("hi", "doc-id", nil))
-	}))
-	defer philterSrv.Close()
-
-	// Upstream returns a Vertex-shaped response with usageMetadata.
-	vertexSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"candidates":[{"content":{"parts":[{"text":"hi"}]}}],"usageMetadata":{"promptTokenCount":7,"candidatesTokenCount":3}}`))
-	}))
-	defer vertexSrv.Close()
-
-	cfg := testConfig(philterSrv.URL)
-	cfg.Providers.Vertex = VertexConfig{Project: "p", Location: "us-central1"}
-	u, _ := url.Parse(vertexSrv.URL)
-
-	var auditBuf bytes.Buffer
-	p := &Proxy{
-		config:            cfg,
-		philter:           testPhilterClient(philterSrv.URL),
-		vertexTarget:      u,
-		vertexClient:      http.DefaultClient,
-		vertexTokenSource: staticTokenSource{value: "tok"},
-		auditLogger:       slog.New(slog.NewJSONHandler(&auditBuf, nil)),
-	}
-
-	w := sendRequest(p,
-		"/v1/projects/p/locations/us-central1/publishers/google/models/gemini-1.5-pro:generateContent",
-		`{"contents":[{"parts":[{"text":"hello"}]}]}`,
-		nil)
-	if w.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d", w.Code)
-	}
-	out := auditBuf.String()
-	if !strings.Contains(out, `"prompt_tokens":7`) {
-		t.Errorf("expected prompt_tokens=7 in audit; got %s", out)
-	}
-	if !strings.Contains(out, `"completion_tokens":3`) {
-		t.Errorf("expected completion_tokens=3 in audit; got %s", out)
-	}
-}
 
 func TestVertex_AuditModelFromPath(t *testing.T) {
 	philterSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

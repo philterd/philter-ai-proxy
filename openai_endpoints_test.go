@@ -151,22 +151,6 @@ func TestBatch_PassthroughUnchanged(t *testing.T) {
 	}
 }
 
-func TestResponsesAPI_TokenUsageParsed(t *testing.T) {
-	// Responses API reports input_tokens/output_tokens (not prompt/completion).
-	p, c := extractTokenUsage("openai", []byte(`{"usage":{"input_tokens":12,"output_tokens":7}}`))
-	if p != 12 || c != 7 {
-		t.Errorf("responses usage = (%d,%d), want (12,7)", p, c)
-	}
-}
-
-func TestEmbeddings_TokenUsageParsed(t *testing.T) {
-	// Embeddings report prompt_tokens + total_tokens, no completion.
-	p, c := extractTokenUsage("openai", []byte(`{"usage":{"prompt_tokens":9,"total_tokens":9}}`))
-	if p != 9 || c != 0 {
-		t.Errorf("embeddings usage = (%d,%d), want (9,0)", p, c)
-	}
-}
-
 // redactCaptureSelective is like redactCapture but uses a Philter mock that only
 // redacts the given PII substrings (echoing every other string unchanged), so
 // tests can assert that structural fields survive realistic redaction.

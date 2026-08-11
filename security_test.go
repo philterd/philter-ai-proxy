@@ -540,54 +540,6 @@ func TestSecurity_PathTraversal_ScopeBypass(t *testing.T) {
 
 // --- #14 Bounded model label cardinality -----------------------------------
 
-func TestSecurity_ModelLabelLimiter_RetainsRecognizedModels(t *testing.T) {
-	l := newModelLabelLimiter(5)
-	for _, m := range []string{"gpt-4", "gpt-3.5-turbo", "gpt-4o", "claude-3", "gemini-1.5-pro"} {
-		if got := l.reduce("openai", m); got != m {
-			t.Errorf("admitted model rejected: %q -> %q", m, got)
-		}
-	}
-}
-
-func TestSecurity_ModelLabelLimiter_OverflowBucketsToOther(t *testing.T) {
-	l := newModelLabelLimiter(3)
-	for _, m := range []string{"gpt-4", "gpt-3.5-turbo", "gpt-4o"} {
-		if got := l.reduce("openai", m); got != m {
-			t.Errorf("model %q must be retained until cap; got %q", m, got)
-		}
-	}
-	// Now the cap is full: every subsequent unique model becomes "other".
-	for _, m := range []string{"attacker-1", "attacker-2", "attacker-3"} {
-		if got := l.reduce("openai", m); got != overflowModelLabel {
-			t.Errorf("overflow model %q must reduce to %q; got %q", m, overflowModelLabel, got)
-		}
-	}
-	// Re-seen admitted models stay verbatim even after overflow.
-	if got := l.reduce("openai", "gpt-4"); got != "gpt-4" {
-		t.Errorf("re-seen admitted model must stay verbatim; got %q", got)
-	}
-}
-
-func TestSecurity_ModelLabelLimiter_PerProviderIndependent(t *testing.T) {
-	l := newModelLabelLimiter(2)
-	// Fill openai's cap.
-	l.reduce("openai", "a")
-	l.reduce("openai", "b")
-	if got := l.reduce("openai", "c"); got != overflowModelLabel {
-		t.Fatalf("openai should overflow; got %q", got)
-	}
-	// Vertex must still admit its own first two models.
-	if got := l.reduce("vertex", "x"); got != "x" {
-		t.Errorf("vertex's own cap should still have headroom; got %q", got)
-	}
-}
-
-func TestSecurity_ModelLabelLimiter_EmptyModelPassesThrough(t *testing.T) {
-	l := newModelLabelLimiter(2)
-	if got := l.reduce("openai", ""); got != "" {
-		t.Errorf("empty model should pass through unchanged; got %q", got)
-	}
-}
 
 // --- #15 Constant-time auth walk -------------------------------------------
 

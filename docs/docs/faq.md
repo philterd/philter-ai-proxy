@@ -99,8 +99,6 @@ To keep the secret out of the config file entirely, the `key:` field also accept
 
 Not in the proxy. Token quotas, usage export, and per-tenant billing are the job of an AI gateway, and the proxy is designed to run alongside one rather than duplicate it. See [Using with an AI Gateway](ai-gateway.md).
 
-The proxy does emit `philter_proxy_prompt_tokens_total` and `philter_proxy_completion_tokens_total` (labeled by provider and model), and records per-request token counts in the audit log, so token volume is observable for capacity planning even though it is not enforced. See [Monitoring](monitoring.md).
-
 ### Can I cache responses to repeated prompts?
 
 Not in the proxy. Response caching is traffic management, which belongs to the AI gateway the proxy runs alongside. Caching in the proxy would also mean storing provider responses keyed by tenant, which adds a cross-tenant exposure risk to a component whose job is to reduce that risk. See [Using with an AI Gateway](ai-gateway.md).
@@ -153,7 +151,9 @@ Errors that originate from the upstream LLM provider are forwarded through uncha
 
 ### Does the proxy track token usage?
 
-Yes. For non-streaming responses, the proxy reads the token usage reported by the provider and includes it in the audit log (`prompt_tokens`, `completion_tokens`) and as two Prometheus counters (`philter_proxy_prompt_tokens_total`, `philter_proxy_completion_tokens_total`), both labeled by `provider` and `model`. These counters can be used to build cost-attribution dashboards in Grafana. Token counts are not available for streaming responses and are omitted from the audit log in that case. See [Monitoring](monitoring.md) for PromQL examples.
+No. Token counts appear in neither the audit log nor the metrics. They say nothing about redaction, which is what this proxy exists to do and what its audit trail is evidence of. Tracking them would mean carrying usage-parsing for every provider and streaming format the proxy supports, to produce a partial copy of data the provider already reports accurately.
+
+Use your AI gateway's accounting, or the provider's own usage dashboard. See [Using with an AI Gateway](ai-gateway.md).
 
 ### Is commercial support available?
 

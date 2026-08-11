@@ -188,10 +188,8 @@ type AuditEntry struct {
 	ClientIP       string        `json:"client_ip"`
 	// KeyID is the opaque stable identifier (`key-N`) of the authenticated
 	// API key, or empty when no key was authenticated. Never the raw key.
-	KeyID            string `json:"key_id,omitempty"`
-	HTTPStatus       int    `json:"http_status"`
-	PromptTokens     int    `json:"prompt_tokens,omitempty"`
-	CompletionTokens int    `json:"completion_tokens,omitempty"`
+	KeyID      string `json:"key_id,omitempty"`
+	HTTPStatus int    `json:"http_status"`
 	// ErrorType / ErrorCode mirror the values the client received in the
 	// JSON error body. Empty on 2xx responses.
 	ErrorType string `json:"error_type,omitempty"`
@@ -487,180 +485,6 @@ func (p *Proxy) handleHealth(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte(`{"status":"degraded","philter":"unreachable"}`))
 }
 
-// extractTokenUsage parses prompt and completion token counts from a non-streaming
-// provider response body. Returns (0, 0) when the body cannot be parsed or does
-// not contain usage data (e.g. streaming responses, errors).
-func extractTokenUsage(provider string, body []byte) (promptTokens, completionTokens int) {
-	var raw map[string]interface{}
-	if err := json.Unmarshal(body, &raw); err != nil {
-		return
-	}
-	fi := func(m map[string]interface{}, key string) int {
-		if m == nil {
-			return 0
-		}
-		v, _ := m[key].(float64)
-		return int(v)
-	}
-	switch provider {
-	case "anthropic":
-		usage, _ := raw["usage"].(map[string]interface{})
-		return fi(usage, "input_tokens"), fi(usage, "output_tokens")
-	case "gemini", "vertex":
-		// Vertex returns the same Gemini schema (usageMetadata with
-		// promptTokenCount / candidatesTokenCount).
-		meta, _ := raw["usageMetadata"].(map[string]interface{})
-		return fi(meta, "promptTokenCount"), fi(meta, "candidatesTokenCount")
-	case "ollama":
-		return fi(raw, "prompt_eval_count"), fi(raw, "eval_count")
-	case "bedrock":
-		usage, _ := raw["usage"].(map[string]interface{})
-		return fi(usage, "inputTokens"), fi(usage, "outputTokens")
-	default: // openai, openai-compatible, azure
-		usage, _ := raw["usage"].(map[string]interface{})
-		// Chat/embeddings report prompt_tokens/completion_tokens; the Responses
-		// API reports input_tokens/output_tokens. Fall back so all OpenAI-style
-		// endpoints are accounted for. (Embeddings omit completion entirely.)
-		prompt := fi(usage, "prompt_tokens")
-		if prompt == 0 {
-			prompt = fi(usage, "input_tokens")
-		}
-		completion := fi(usage, "completion_tokens")
-		if completion == 0 {
-			completion = fi(usage, "output_tokens")
-		}
-		return prompt, completion
-	}
-}
-
-// jsonInt returns m[key] as an int when present and numeric, else 0.
-func jsonInt(m map[string]interface{}, key string) int {
-	if m == nil {
-		return 0
-	}
-	v, _ := m[key].(float64)
-	return int(v)
-}
-
-// streamingUsageSupported reports whether streamed token-usage extraction is
-// implemented for a provider. Only OpenAI-family and Anthropic streams carry a
-// usage event in a shape we parse; the others (Gemini/Vertex/Ollama/Bedrock)
-// are not extracted from streams, so the scanner stays a no-op for them.
-func streamingUsageSupported(provider string) bool {
-	switch provider {
-	case "gemini", "vertex", "ollama", "bedrock":
-		return false
-	default: // openai, azure, openai-compatible custom names, anthropic
-		return true
-	}
-}
-
-// extractStreamingUsage pulls token usage from a single streamed SSE/NDJSON
-// event's JSON object. Streaming usage shapes differ from the non-streaming
-// body: OpenAI emits a final chunk carrying a top-level `usage` object (when the
-// client sets stream_options.include_usage); Anthropic splits usage across
-// `message_start` (input_tokens nested under message.usage) and `message_delta`
-// (output_tokens in a top-level usage). Returns (0, 0) for events without usage.
-func extractStreamingUsage(provider string, eventJSON []byte) (prompt, completion int) {
-	var raw map[string]interface{}
-	if err := json.Unmarshal(eventJSON, &raw); err != nil {
-		return 0, 0
-	}
-	switch provider {
-	case "anthropic":
-		// message_start nests usage under message.usage; message_delta carries
-		// a top-level usage. Read whichever this event has.
-		if msg, ok := raw["message"].(map[string]interface{}); ok {
-			if u, ok := msg["usage"].(map[string]interface{}); ok {
-				return jsonInt(u, "input_tokens"), jsonInt(u, "output_tokens")
-			}
-		}
-		if u, ok := raw["usage"].(map[string]interface{}); ok {
-			return jsonInt(u, "input_tokens"), jsonInt(u, "output_tokens")
-		}
-		return 0, 0
-	default: // openai, azure, openai-compatible
-		u, _ := raw["usage"].(map[string]interface{})
-		prompt = jsonInt(u, "prompt_tokens")
-		if prompt == 0 {
-			prompt = jsonInt(u, "input_tokens")
-		}
-		completion = jsonInt(u, "completion_tokens")
-		if completion == 0 {
-			completion = jsonInt(u, "output_tokens")
-		}
-		return prompt, completion
-	}
-}
-
-// streamUsageScanner extracts token usage from a streamed response without
-// buffering the whole stream: it retains only the current partial line and
-// parses each complete SSE/NDJSON line as it arrives, keeping the last non-zero
-// usage seen for each field. Last-wins is correct for both supported providers
-// (OpenAI reports usage once in the final chunk; Anthropic sets input_tokens in
-// message_start and updates output_tokens across message_delta events).
-type streamUsageScanner struct {
-	provider   string
-	enabled    bool
-	partial    []byte
-	prompt     int
-	completion int
-}
-
-func newStreamUsageScanner(provider string) *streamUsageScanner {
-	return &streamUsageScanner{provider: provider, enabled: streamingUsageSupported(provider)}
-}
-
-// write feeds a chunk of streamed bytes to the scanner, parsing any newly
-// completed lines. It is a no-op for providers without streaming-usage support.
-func (s *streamUsageScanner) write(p []byte) {
-	if !s.enabled {
-		return
-	}
-	s.partial = append(s.partial, p...)
-	for {
-		i := bytes.IndexByte(s.partial, '\n')
-		if i < 0 {
-			break
-		}
-		line := s.partial[:i]
-		s.partial = s.partial[i+1:]
-		s.scanLine(line)
-	}
-}
-
-// close flushes any trailing line not terminated by a newline (e.g. a provider
-// that omits the final newline). Malformed remnants are ignored by the parser.
-func (s *streamUsageScanner) close() {
-	if !s.enabled {
-		return
-	}
-	s.scanLine(s.partial)
-	s.partial = nil
-}
-
-func (s *streamUsageScanner) scanLine(line []byte) {
-	line = bytes.TrimSpace(line)
-	if len(line) == 0 {
-		return
-	}
-	// SSE data lines are "data: {json}"; NDJSON lines are a bare "{json}".
-	if rest, ok := bytes.CutPrefix(line, []byte("data:")); ok {
-		line = bytes.TrimSpace(rest)
-	}
-	if len(line) == 0 || line[0] != '{' {
-		return // "[DONE]", "event: ...", id/retry/comment lines
-	}
-	if prompt, completion := extractStreamingUsage(s.provider, line); prompt > 0 || completion > 0 {
-		if prompt > 0 {
-			s.prompt = prompt
-		}
-		if completion > 0 {
-			s.completion = completion
-		}
-	}
-}
-
 func (p *Proxy) forwardToProvider(w http.ResponseWriter, origReq *http.Request, target *url.URL, client *http.Client, body []byte, provider string, audit *AuditEntry) {
 	targetURL := *target
 	targetURL.Path = origReq.URL.Path
@@ -719,45 +543,25 @@ func (p *Proxy) forwardToProvider(w http.ResponseWriter, origReq *http.Request, 
 			writeError(w, audit, http.StatusBadGateway, "provider_error", "response_read_failed", "failed to read provider response")
 			return
 		}
-		if audit != nil && resp.StatusCode >= 200 && resp.StatusCode < 300 {
-			audit.PromptTokens, audit.CompletionTokens = extractTokenUsage(provider, respBody)
-		}
 		w.WriteHeader(resp.StatusCode)
 		w.Write(respBody)
 		return
 	}
 
 	w.WriteHeader(resp.StatusCode)
-	// Tee streamed bytes through a usage scanner so token accounting works for
-	// streaming responses too. Chunks are still written and flushed immediately,
-	// so this does not buffer or delay the stream.
-	usage := newStreamUsageScanner(provider)
-	streamCopy(w, resp.Body, usage.write)
-	usage.close()
-	if audit != nil && resp.StatusCode >= 200 && resp.StatusCode < 300 {
-		if usage.prompt > 0 {
-			audit.PromptTokens = usage.prompt
-		}
-		if usage.completion > 0 {
-			audit.CompletionTokens = usage.completion
-		}
-	}
+	streamCopy(w, resp.Body)
 }
 
 // streamCopy forwards a response body to the client chunk by chunk, flushing
 // after each write so streamed responses are delivered in real time rather than
-// buffered. When tee is non-nil, each chunk is also handed to it (e.g. a
-// token-usage scanner) before the next read reuses the buffer.
-func streamCopy(w http.ResponseWriter, body io.Reader, tee func([]byte)) {
+// buffered.
+func streamCopy(w http.ResponseWriter, body io.Reader) {
 	flusher, canFlush := w.(http.Flusher)
 	buf := make([]byte, 4096)
 	for {
 		n, readErr := body.Read(buf)
 		if n > 0 {
 			w.Write(buf[:n])
-			if tee != nil {
-				tee(buf[:n])
-			}
 			if canFlush {
 				flusher.Flush()
 			}
@@ -786,8 +590,6 @@ func emitAuditLog(logger *slog.Logger, entry AuditEntry) {
 		"client_ip", entry.ClientIP,
 		"key_id", entry.KeyID,
 		"http_status", entry.HTTPStatus,
-		"prompt_tokens", entry.PromptTokens,
-		"completion_tokens", entry.CompletionTokens,
 		"error_type", entry.ErrorType,
 		"error_code", entry.ErrorCode,
 		"trace_id", entry.TraceID,
@@ -1170,10 +972,6 @@ func (p *Proxy) forwardWithOutboundScan(
 		return
 	}
 
-	if audit != nil && statusCode >= 200 && statusCode < 300 {
-		audit.PromptTokens, audit.CompletionTokens = extractTokenUsage(provider, respBody)
-	}
-
 	outboundAudit := &AuditEntry{
 		RequestID:  audit.RequestID,
 		Direction:  "outbound",
@@ -1519,7 +1317,7 @@ func (p *Proxy) forwardToBedrockProvider(w http.ResponseWriter, origReq *http.Re
 	// other providers, where streamed usage is only extracted for OpenAI/Anthropic).
 	if isStreamingResponse(resp.Header) {
 		w.WriteHeader(resp.StatusCode)
-		streamCopy(w, resp.Body, nil)
+		streamCopy(w, resp.Body)
 		return
 	}
 
@@ -1528,9 +1326,6 @@ func (p *Proxy) forwardToBedrockProvider(w http.ResponseWriter, origReq *http.Re
 		slog.Error("Failed to read Bedrock response", "error", err, "request_id", audit.RequestID)
 		writeError(w, audit, http.StatusBadGateway, "provider_error", "response_read_failed", "failed to read provider response")
 		return
-	}
-	if audit != nil && resp.StatusCode >= 200 && resp.StatusCode < 300 {
-		audit.PromptTokens, audit.CompletionTokens = extractTokenUsage("bedrock", respBody)
 	}
 
 	w.WriteHeader(resp.StatusCode)
@@ -1580,10 +1375,6 @@ func (p *Proxy) forwardBedrockWithOutboundScan(
 	if err != nil {
 		writeError(w, audit, http.StatusBadGateway, "provider_error", "unreachable", "provider request failed")
 		return
-	}
-
-	if statusCode >= 200 && statusCode < 300 {
-		audit.PromptTokens, audit.CompletionTokens = extractTokenUsage("bedrock", respBody)
 	}
 
 	outboundAudit := &AuditEntry{
@@ -1734,18 +1525,6 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 			for entityType, count := range audit.EntityTypeCounts {
 				p.metrics.entitiesRedacted.WithLabelValues(entityType, audit.Provider).Add(float64(count))
-			}
-			if audit.PromptTokens > 0 || audit.CompletionTokens > 0 {
-				// modelLabel is reduced through the per-provider
-				// cardinality cap so a client cannot drive Prometheus
-				// OOM by emitting one request per random model string.
-				modelLabel := p.metrics.modelLabels.reduce(audit.Provider, audit.Model)
-				if audit.PromptTokens > 0 {
-					p.metrics.promptTokensTotal.WithLabelValues(audit.Provider, modelLabel).Add(float64(audit.PromptTokens))
-				}
-				if audit.CompletionTokens > 0 {
-					p.metrics.completionTokensTotal.WithLabelValues(audit.Provider, modelLabel).Add(float64(audit.CompletionTokens))
-				}
 			}
 		}
 	}()

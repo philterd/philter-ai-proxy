@@ -166,7 +166,7 @@
       "type": "timeseries",
       "title": "Entities redacted by type",
       "datasource": {"type": "prometheus", "uid": "${datasource}"},
-      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 16},
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 16},
       "fieldConfig": {"defaults": {"unit": "short", "custom": {"drawStyle": "line", "lineWidth": 1, "fillOpacity": 10, "stacking": {"mode": "normal"}}}},
       "options": {"legend": {"displayMode": "table", "placement": "bottom"}},
       "targets": [
@@ -174,27 +174,6 @@
           "refId": "A",
           "expr": "sum by (entity_type) (rate(philter_proxy_entities_redacted_total[5m]))",
           "legendFormat": "{{entity_type}}"
-        }
-      ]
-    },
-    {
-      "id": 8,
-      "type": "timeseries",
-      "title": "Token throughput by provider",
-      "datasource": {"type": "prometheus", "uid": "${datasource}"},
-      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 16},
-      "fieldConfig": {"defaults": {"unit": "short", "custom": {"drawStyle": "line", "lineWidth": 1, "fillOpacity": 10}}},
-      "options": {"legend": {"displayMode": "table", "placement": "bottom"}},
-      "targets": [
-        {
-          "refId": "A",
-          "expr": "sum by (provider) (rate(philter_proxy_prompt_tokens_total{provider=~\"$provider\"}[5m]))",
-          "legendFormat": "prompt {{provider}}"
-        },
-        {
-          "refId": "B",
-          "expr": "sum by (provider) (rate(philter_proxy_completion_tokens_total{provider=~\"$provider\"}[5m]))",
-          "legendFormat": "completion {{provider}}"
         }
       ]
     },

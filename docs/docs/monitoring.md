@@ -36,8 +36,6 @@ scrape_configs:
 | `philter_proxy_request_duration_seconds` | Histogram | `provider` | End-to-end request latency |
 | `philter_proxy_redaction_duration_seconds` | Histogram | `provider`, `policy` | Time spent on Philter redaction calls |
 | `philter_proxy_entities_redacted_total` | Counter | `entity_type`, `provider` | Total entities redacted |
-| `philter_proxy_prompt_tokens_total` | Counter | `provider`, `model` | Total prompt (input) tokens reported by providers. The `model` label is bounded to 64 distinct values per provider; any additional unseen model is reported under `model="other"`. |
-| `philter_proxy_completion_tokens_total` | Counter | `provider`, `model` | Total completion (output) tokens reported by providers. Same `model` cardinality cap as above. |
 | `philter_proxy_philter_errors_total` | Counter | - | Failed calls to the Philter backend |
 | `philter_proxy_upstream_errors_total` | Counter | `provider`, `status_code` | Failed calls to LLM providers |
 | `philter_proxy_active_requests` | Gauge | - | Currently in-flight requests (those holding a concurrency slot) |
@@ -45,7 +43,7 @@ scrape_configs:
 | `philter_proxy_concurrency_shed_total` | Counter | `scope` | Requests rejected (HTTP 503) due to the concurrency guard |
 | `philter_proxy_tls_handshakes_shed_total` | Counter | - | Inbound TLS connections dropped because the `listen.maxConcurrentTLSHandshakes` ceiling was reached (connection-flood backstop) |
 
-Token counters are populated from each provider's native usage response field. They are not incremented for streaming responses, since token counts are not reliably available mid-stream.
+The proxy does not export token-usage metrics. Token accounting is an AI-gateway concern; see [Running Behind an AI Gateway](ai-gateway.md).
 
 ### Label values
 
@@ -57,7 +55,7 @@ Token counters are populated from each provider's native usage response field. T
 
 **`scope`** (on concurrency metrics): `global`, the proxy-wide cap.
 
-Every label value is drawn from a fixed vocabulary, except `model`, which is client-supplied and cardinality-capped. No label carries message content. See [Is any sensitive data logged?](faq.md#is-any-sensitive-data-logged) for the full guarantee and how it is enforced.
+Every label value is drawn from a fixed vocabulary. No label is client-supplied, and none carries message content. See [Is any sensitive data logged?](faq.md#is-any-sensitive-data-logged) for the full guarantee and how it is enforced.
 
 ## Health Endpoints
 
@@ -174,22 +172,6 @@ histogram_quantile(0.95, sum by (policy, le) (rate(philter_proxy_redaction_durat
 **Entities redacted per minute by type**:
 ```promql
 sum by (entity_type) (rate(philter_proxy_entities_redacted_total[1m])) * 60
-```
-
-**Token throughput by provider** (tokens per minute):
-```promql
-sum by (provider) (rate(philter_proxy_prompt_tokens_total[5m]) + rate(philter_proxy_completion_tokens_total[5m])) * 60
-```
-
-**Prompt vs. completion token split by model**:
-```promql
-sum by (model) (rate(philter_proxy_prompt_tokens_total[5m]))
-sum by (model) (rate(philter_proxy_completion_tokens_total[5m]))
-```
-
-**Cumulative tokens by provider** (useful for cost attribution dashboards):
-```promql
-sum by (provider) (philter_proxy_prompt_tokens_total + philter_proxy_completion_tokens_total)
 ```
 
 **Philter backend error rate**:

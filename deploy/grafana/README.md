@@ -22,7 +22,6 @@ The dashboard exposes one variable, `datasource`, so the same JSON can be import
 | Concurrency utilization | `philter_proxy_active_requests / philter_proxy_concurrency_limit{scope="global"}` | % of the configured concurrency ceiling in use. Only meaningful when `listen.maxConcurrentRequests > 0`. |
 | Concurrency sheds | `philter_proxy_concurrency_shed_total` | Requests rejected (503) by the capacity guard, by scope |
 | Entities redacted by type | `philter_proxy_entities_redacted_total` | Volume and mix of PII the proxy is catching |
-| Token throughput | `philter_proxy_prompt_tokens_total` + `philter_proxy_completion_tokens_total` | Input/output tokens per provider for cost attribution |
 | Philter backend errors | `philter_proxy_philter_errors_total` | Health of the redaction backend |
 | Upstream LLM errors | `philter_proxy_upstream_errors_total` | Health of the LLM providers |
 
