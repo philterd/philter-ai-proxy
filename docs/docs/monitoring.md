@@ -57,6 +57,8 @@ Token counters are populated from each provider's native usage response field. T
 
 **`scope`** (on concurrency metrics): `global`, the proxy-wide cap.
 
+Every label value is drawn from a fixed vocabulary, except `model`, which is client-supplied and cardinality-capped. No label carries message content. See [Is any sensitive data logged?](faq.md#is-any-sensitive-data-logged) for the full guarantee and how it is enforced.
+
 ## Health Endpoints
 
 The proxy exposes three HTTP endpoints on the proxy port (not the metrics port) for use as load-balancer health checks and Kubernetes probes.

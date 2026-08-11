@@ -671,6 +671,8 @@ Every proxy request produces a structured JSON log entry (JSONL) to stdout. All 
 | `error_code` | string | The `error.code` value the client received. Empty on 2xx responses. See [Error Responses](#error-responses). |
 | `trace_id` | string | W3C trace ID, when OpenTelemetry tracing is enabled and the request was sampled. Use it to cross-reference audit log entries with traces in your APM. See [Distributed Tracing](monitoring.md#distributed-tracing). |
 
+This table is the whole entry. No field carries message content, prompt text, or the redacted text Philter returns, and the same holds for the application log and for Prometheus metric labels. See [Is any sensitive data logged?](faq.md#is-any-sensitive-data-logged) for how that is enforced. `client_ip` is present by design and may be considered personal data under GDPR.
+
 ### Example Log Entries
 
 When outbound scanning is disabled (default), one entry is emitted per request:

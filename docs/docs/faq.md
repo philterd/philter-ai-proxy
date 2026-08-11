@@ -37,6 +37,8 @@ The three cases differ in what redaction would even mean: an image edit carries 
 
 No. The audit log contains only metadata (provider, model, entity types, counts, latency, etc.). No message content or filtered text is ever logged. Client IP addresses are included, which may be considered personal data under GDPR.
 
+The same holds for the application log and for Prometheus metric labels, which are exported to anyone who can scrape `/metrics`. A regression test drives distinctively marked content through inbound redaction, all three outbound actions, a streaming response, and the error paths, then asserts the markers appear in none of the three. Adding a field to the audit entry fails that test until the field is declared as metadata, so the guarantee is enforced rather than maintained by convention.
+
 ### Do I need a Philter instance?
 
 Yes, the proxy requires a running instance of Philter to perform the redaction. You can launch one in your cloud or on-premise. Visit [philterd.ai](https://philterd.ai/philter/) for more information.
