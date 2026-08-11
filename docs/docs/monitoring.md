@@ -143,47 +143,6 @@ When tracing is disabled or the request was not sampled, `trace_id` is omitted f
 
 A pre-built dashboard covering every metric in the table above is shipped at [`deploy/grafana/philter-ai-proxy.json`](https://github.com/philterd/philter-ai-proxy/blob/main/deploy/grafana/philter-ai-proxy.json). Import it via Grafana → **Dashboards** → **New** → **Import** and pick the Prometheus datasource that's scraping `philter_proxy_*`. The dashboard exposes a `datasource` template variable so the same JSON works across environments.
 
-If you'd rather build your own, the recipes below are the queries the bundled dashboard uses.
-
-### Recommended panels
-
-**Request rate** (requests per second by provider):
-```promql
-sum by (provider) (rate(philter_proxy_requests_total[5m]))
-```
-
-**Error rate** (% of requests that failed):
-```promql
-sum(rate(philter_proxy_requests_total{status_code=~"5.."}[5m]))
-  /
-sum(rate(philter_proxy_requests_total[5m]))
-```
-
-**p95 request latency by provider**:
-```promql
-histogram_quantile(0.95, sum by (provider, le) (rate(philter_proxy_request_duration_seconds_bucket[5m])))
-```
-
-**p95 redaction latency by policy**:
-```promql
-histogram_quantile(0.95, sum by (policy, le) (rate(philter_proxy_redaction_duration_seconds_bucket[5m])))
-```
-
-**Entities redacted per minute by type**:
-```promql
-sum by (entity_type) (rate(philter_proxy_entities_redacted_total[1m])) * 60
-```
-
-**Philter backend error rate**:
-```promql
-rate(philter_proxy_philter_errors_total[5m])
-```
-
-**Active in-flight requests**:
-```promql
-philter_proxy_active_requests
-```
-
 ### Concurrency
 
 **Utilization (% of the global concurrency ceiling currently in use)** - only meaningful when `listen.maxConcurrentRequests > 0`:

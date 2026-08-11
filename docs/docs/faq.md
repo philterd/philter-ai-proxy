@@ -2,7 +2,7 @@
 
 ### What is the Philter AI Proxy?
 
-The Philter AI Proxy is a proxy for OpenAI, Anthropic (Claude), Google Gemini, Ollama, and Amazon Bedrock that uses [Philter](https://philterd.ai/philter/) to remove PII, PHI, and other sensitive information from LLM requests before they are sent to the provider.
+The Philter AI Proxy is a proxy for OpenAI, Azure OpenAI, Anthropic (Claude), Google Gemini (public API and Vertex AI), Ollama, and Amazon Bedrock that uses [Philter](https://philterd.ai/philter/) to remove PII, PHI, and other sensitive information from LLM requests before they are sent to the provider.
 
 ### Why should I use it?
 
@@ -13,8 +13,10 @@ By using the proxy, you ensure that sensitive information never leaves your envi
 The proxy supports:
 
 * OpenAI
+* Azure OpenAI
 * Anthropic (Claude)
 * Google Gemini
+* Google Vertex AI
 * Ollama
 * Amazon Bedrock (Converse and ConverseStream APIs)
 * Any OpenAI-compatible provider (Mistral, Cohere, vLLM, LM Studio, etc.) via `providers.openaiCompatible`

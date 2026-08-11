@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-- Go 1.21 or later
+- Go 1.25 or later
 - [Philter](https://philterd.ai/philter/) instance running and accessible
 
 ## Building from Source
@@ -118,6 +118,8 @@ listen:
 ```
 
 **Evaluation.** Set `listen.devSelfSignedCert: true` and the proxy generates a throwaway certificate at startup, in memory, different on every start. Clients must disable certificate verification to connect, so use it for local trials and tests only. This is what `config.example.yaml` ships with, and it is the line to remove first when moving to production.
+
+A rotated certificate is picked up on restart; the proxy does not reload TLS material while running.
 
 To generate a self-signed keypair on disk instead, for example to share one certificate across a local stack:
 

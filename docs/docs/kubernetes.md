@@ -42,7 +42,7 @@ helm install proxy ./deploy/helm/philter-ai-proxy \
   --set config.philter.endpoint=http://philter.philter-system.svc.cluster.local:8080
 ```
 
-To issue the TLS cert via cert-manager instead:
+To issue the TLS cert via cert-manager instead (a renewed certificate is picked up on pod restart, so run more than one replica if renewal must be gap-free):
 
 ```bash
 helm install proxy ./deploy/helm/philter-ai-proxy \
@@ -96,37 +96,9 @@ helm upgrade proxy ./deploy/helm/philter-ai-proxy --reuse-values \
   --set mtls.caSecretName=philter-ai-proxy-client-ca
 ```
 
-**Ingress.**
+**Ingress.** Since the proxy terminates TLS itself, prefer TLS passthrough at the ingress over re-encryption.
 
-```bash
-helm upgrade proxy ./deploy/helm/philter-ai-proxy --reuse-values \
-  --set ingress.enabled=true \
-  --set ingress.className=nginx \
-  --set 'ingress.hosts[0].host=proxy.example.com' \
-  --set 'ingress.hosts[0].paths[0].path=/' \
-  --set 'ingress.hosts[0].paths[0].pathType=Prefix' \
-  --set 'ingress.annotations.nginx\.ingress\.kubernetes\.io/backend-protocol=HTTPS'
-```
-
-Since the proxy terminates TLS itself, prefer TLS passthrough at the ingress (e.g. `nginx-ingress` with `ssl-passthrough`) over re-encryption.
-
-**Prometheus Operator.**
-
-```bash
-helm upgrade proxy ./deploy/helm/philter-ai-proxy --reuse-values \
-  --set serviceMonitor.enabled=true
-```
-
-**Horizontal autoscaling.** The proxy holds no state that has to be shared between pods, so replicas scale independently with no external dependency beyond Philter itself.
-
-```bash
-helm upgrade proxy ./deploy/helm/philter-ai-proxy --reuse-values \
-  --set autoscaling.enabled=true \
-  --set autoscaling.minReplicas=3 \
-  --set autoscaling.maxReplicas=20 \
-  --set autoscaling.targetCPUUtilizationPercentage=70 \
-  --set podDisruptionBudget.enabled=true
-```
+**Scaling.** The proxy holds no state shared between pods, so replicas scale independently with no dependency beyond Philter itself. Ingress, `ServiceMonitor`, autoscaling, and Pod Disruption Budget are standard chart values; see `values.yaml`.
 
 ### Reference
 
@@ -156,6 +128,4 @@ curl -k https://localhost:8443/readyz
 
 ## Grafana dashboard
 
-A starter dashboard covering request rate, latency, error rate, redactions, tokens, and concurrency lives at [`deploy/grafana/philter-ai-proxy.json`](https://github.com/philterd/philter-ai-proxy/blob/main/deploy/grafana/philter-ai-proxy.json). Import it in Grafana → **Dashboards** → **New** → **Import**.
-
-It exposes a `datasource` variable so the same JSON works across environments. Pair it with the alerting rules in [Monitoring](monitoring.md#alerting-rules) for a baseline observability setup.
+A starter dashboard ships at [`deploy/grafana/philter-ai-proxy.json`](https://github.com/philterd/philter-ai-proxy/blob/main/deploy/grafana/philter-ai-proxy.json). See [Monitoring](monitoring.md#grafana-dashboard).
