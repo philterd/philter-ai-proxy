@@ -605,8 +605,7 @@ Because secrets are resolved at config load, rotation follows the lifecycle of t
 1. **Issue the new key** in your secret store (Vault, Secrets Manager, Kubernetes Secret, etc.).
 2. **Add it alongside the old one** as a second `auth.apiKeys[]` entry so both are valid during the cutover window (zero-downtime). For example, mount the new secret at `file:/run/secrets/team-a-next` and add a second entry referencing it.
 3. **Reload the proxy** so it re-resolves the references and picks up the new value:
-     - The proxy currently re-reads its config (and therefore re-resolves `${ENV_VAR}` / `file:` references) **on process restart**. In Kubernetes, trigger a rolling restart (`kubectl rollout restart deployment/philter-ai-proxy`) — updated Secret/env values are picked up by the new pods with no dropped connections.
-     - *(Planned: in-place reload on `SIGHUP` so a running process can re-resolve secrets without a restart. Until that ships, use a rolling restart.)*
+     - The proxy re-reads its config (and therefore re-resolves `${ENV_VAR}` / `file:` references) **on process restart**.
 4. **Migrate clients** to the new key.
 5. **Remove the old entry** and revoke the old secret in your store, then reload again.
 
