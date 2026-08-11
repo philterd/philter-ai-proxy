@@ -13,8 +13,8 @@ PHILTER_PROXY_CONFIG=config.yaml ./philter-ai-proxy
 ```yaml
 listen:
   port: 8080
-  cert: cert.pem
-  key: key.pem
+  cert: /etc/philter-proxy/tls/tls.crt
+  key: /etc/philter-proxy/tls/tls.key
   shutdownTimeout: 30
 
 logging:
@@ -107,8 +107,9 @@ The current schema version is **1**.
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `port` | int | `8080` | Port the proxy listens on |
-| `cert` | string | `cert.pem` | Path to the TLS certificate file |
-| `key` | string | `key.pem` | Path to the TLS private key file |
+| `cert` | string | (none) | Path to the TLS certificate file. Required unless `devSelfSignedCert` is set. Relative paths resolve against the process working directory, not the config file's directory, so prefer absolute paths. |
+| `key` | string | (none) | Path to the TLS private key file. Required unless `devSelfSignedCert` is set. |
+| `devSelfSignedCert` | bool | `false` | Generate a throwaway self-signed certificate at startup instead of loading one. **Evaluation only.** Ignored when `cert` and `key` are set. See [Evaluation Certificates](#evaluation-certificates) below. |
 | `shutdownTimeout` | int | `30` | Seconds to wait for in-flight requests during graceful shutdown |
 | `clientCA` | string | (none) | Path to a PEM CA certificate used to verify client certificates. When set, mTLS is enabled and the proxy requires a valid client certificate on every connection. See [mTLS](#mtls-mutual-tls) below. |
 | `maxConcurrentRequests` | int | `0` (unlimited) | Maximum number of in-flight requests the proxy will process at once. Excess requests get HTTP 503 with `Retry-After: 1`. See [Concurrency Limits](#concurrency-limits) below. |
@@ -618,8 +619,8 @@ For service-to-service authentication in zero-trust environments, the proxy can 
 ```yaml
 listen:
   port: 8080
-  cert: cert.pem
-  key: key.pem
+  cert: /etc/philter-proxy/tls/tls.crt
+  key: /etc/philter-proxy/tls/tls.key
   clientCA: /etc/ssl/client-ca.pem
 ```
 
@@ -709,6 +710,35 @@ The proxy supports streaming responses (`stream: true`) for all four providers:
 Streaming requires no additional configuration. Inbound prompt redaction works identically for streaming and non-streaming requests. Response chunks are forwarded to the client in real time without buffering.
 
 ## TLS Configuration
+
+### Listener certificate
+
+The proxy always listens over TLS, so it needs a certificate before it will start. Set `listen.cert` and `listen.key` to your keypair:
+
+```yaml
+listen:
+  cert: /etc/philter-proxy/tls/tls.crt
+  key: /etc/philter-proxy/tls/tls.key
+```
+
+There is no default path. Starting with neither a keypair nor `devSelfSignedCert` fails immediately with an error naming both fields.
+
+### Evaluation certificates
+
+`listen.devSelfSignedCert: true` makes the proxy generate a self-signed certificate at startup so it can run with no setup:
+
+```yaml
+listen:
+  devSelfSignedCert: true
+```
+
+The key is generated in memory, is different on every start, and is never written to disk. The container image ships no certificate of its own for the same reason: a keypair baked into an image at build time is the same private key for everyone who pulls it.
+
+Clients must disable certificate verification to connect, which removes the protection TLS is there to provide, so this is for local evaluation and automated tests only. The proxy logs a warning on every start while it is enabled.
+
+**An operator-supplied keypair always wins.** If `cert` and `key` are set, they are used even when `devSelfSignedCert` is also true, and the proxy warns that the flag is being ignored. A configured keypair that fails to load is a startup failure, never a reason to fall back to a generated certificate.
+
+### Outbound verification
 
 By default, TLS certificate verification is enabled for all outbound connections (both to the Philter backend and to LLM providers). This is the recommended configuration for production deployments.
 

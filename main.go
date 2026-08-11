@@ -2937,8 +2937,6 @@ func main() {
 		trustedProxies:          parseTrustedProxies(cfg.Listen.TrustedProxies),
 	}
 	port := fmt.Sprintf("%d", cfg.Listen.Port)
-	cert_file := cfg.Listen.Cert
-	key_file := cfg.Listen.Key
 	shutdownTimeoutSec := cfg.Listen.ShutdownTimeout
 
 	srv := hardenedServer(":"+port, instrumentHandler(p, tracingActive), cfg.Listen)
@@ -2980,9 +2978,9 @@ func main() {
 	// cannot be independently configured). We then call srv.Serve, not
 	// srv.ServeTLS, since ServeTLS would unconditionally re-wrap with another
 	// tls.NewListener.
-	cert, err := tls.LoadX509KeyPair(cert_file, key_file)
+	cert, err := resolveServerCertificate(cfg.Listen)
 	if err != nil {
-		slog.Error("Failed to load TLS certificate", "error", err)
+		slog.Error("TLS certificate error", "error", err)
 		os.Exit(1)
 	}
 	if srv.TLSConfig == nil {

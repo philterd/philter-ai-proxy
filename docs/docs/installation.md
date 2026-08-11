@@ -105,8 +105,28 @@ The [Kubernetes Quickstart](kubernetes.md) walks through both paths end-to-end.
 
 ## Certificates
 
-The proxy listens over TLS and requires a certificate and private key. You can generate a self-signed certificate for testing with the following command:
+The proxy listens over TLS and needs a certificate before it will start. There is no default path and the container image ships no keypair, so one of the two options below is required.
+
+**Production.** Point `listen.cert` and `listen.key` at your keypair:
+
+```yaml
+listen:
+  cert: /etc/philter-proxy/tls/tls.crt
+  key: /etc/philter-proxy/tls/tls.key
+```
+
+**Evaluation.** Set `listen.devSelfSignedCert: true` and the proxy generates a throwaway certificate at startup, in memory, different on every start. Clients must disable certificate verification to connect, so use it for local trials and tests only. This is what `config.example.yaml` ships with, and it is the line to remove first when moving to production.
+
+To generate a self-signed keypair on disk instead, for example to share one certificate across a local stack:
 
 ```bash
 make cert
+```
+
+Starting with neither a keypair nor `devSelfSignedCert` fails immediately:
+
+```
+TLS certificate error: no TLS certificate configured: set listen.cert and listen.key
+to your certificate and private key, or set listen.devSelfSignedCert: true to generate
+a throwaway certificate for evaluation
 ```

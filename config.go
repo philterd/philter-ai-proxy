@@ -13,9 +13,12 @@ import (
 )
 
 type ListenConfig struct {
-	Port                  int    `yaml:"port"`
-	Cert                  string `yaml:"cert"`
-	Key                   string `yaml:"key"`
+	Port int `yaml:"port"`
+	// TLS keypair paths. No default; relative paths resolve against the working directory.
+	Cert string `yaml:"cert"`
+	Key  string `yaml:"key"`
+	// Evaluation only: generates a throwaway in-memory certificate at startup.
+	DevSelfSignedCert     bool   `yaml:"devSelfSignedCert"`
 	ShutdownTimeout       int    `yaml:"shutdownTimeout"`
 	ClientCA              string `yaml:"clientCA"`
 	MaxConcurrentRequests int    `yaml:"maxConcurrentRequests"` // 0 = unlimited (default)
@@ -338,8 +341,6 @@ func defaultConfig() *Config {
 	return &Config{
 		Listen: ListenConfig{
 			Port:            8080,
-			Cert:            "cert.pem",
-			Key:             "key.pem",
 			ShutdownTimeout: 30,
 		},
 		Logging: LoggingConfig{

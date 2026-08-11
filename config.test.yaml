@@ -1,7 +1,6 @@
 listen:
   port: 8080
-  cert: cert.pem
-  key: key.pem
+  devSelfSignedCert: true
   shutdownTimeout: 30
 
 logging:

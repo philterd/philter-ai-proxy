@@ -2,8 +2,12 @@
 
 listen:
   port: 8080
-  cert: cert.pem
-  key: key.pem
+  # Generates a throwaway self-signed certificate at startup so this config runs
+  # with no setup. Clients must disable certificate verification to connect.
+  # REMOVE THIS BEFORE PRODUCTION and set cert/key below to a real keypair.
+  devSelfSignedCert: true
+  # cert: /etc/philter-proxy/tls/tls.crt   # required for production; takes precedence over devSelfSignedCert
+  # key: /etc/philter-proxy/tls/tls.key
   shutdownTimeout: 30
   # clientCA: /etc/ssl/client-ca.pem  # optional: enable mTLS by specifying the CA that signed client certs
   # maxConcurrentRequests: 0          # max in-flight requests; 0 = unlimited (default). Excess requests get HTTP 503 + Retry-After.

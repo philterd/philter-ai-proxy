@@ -1,7 +1,7 @@
 # Load-test stack. Brings up Philter, a stub LLM provider, and the proxy
-# itself wired to point at the stub. The proxy listens on HTTPS (the existing
-# Dockerfile generates a self-signed cert at build time); k6 scenarios pass
-# `--insecure-skip-tls-verify` to ignore that.
+# itself wired to point at the stub. The proxy listens on HTTPS using the
+# certificate that `listen.devSelfSignedCert` generates at startup; k6 scenarios
+# pass `--insecure-skip-tls-verify` to ignore that.
 #
 # Run from the repo root:
 #
