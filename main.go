@@ -1934,10 +1934,12 @@ func (l *handshakeTimeoutListener) acceptLoop() {
 			// Handshake concurrency ceiling reached: shed this connection
 			// immediately instead of spawning an unbounded goroutine. The
 			// accept loop keeps running so established peers are unaffected.
-			c.Close()
+			// Count before closing, so the peer cannot observe the drop
+			// before the counter moves.
 			if l.onShed != nil {
 				l.onShed()
 			}
+			c.Close()
 		}
 	}
 }

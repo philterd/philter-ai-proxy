@@ -21,8 +21,9 @@ jobs:
     - name: Install dependencies
       run: go mod download
 
+    # -race on a network-facing proxy: data races here are production bugs.
     - name: Test and coverage gate
-      run: make cover-check TESTFLAGS=-v
+      run: make cover-check TESTFLAGS="-v -race"
 
     - name: Upload coverage profile
       if: always()

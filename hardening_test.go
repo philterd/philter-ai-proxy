@@ -8,6 +8,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
+	"errors"
 	"io"
 	"math/big"
 	"net"
@@ -447,17 +448,22 @@ func TestHandshakeTimeoutListener_OverCapSheds(t *testing.T) {
 	}
 	defer shedConn.Close()
 
-	shedConn.SetReadDeadline(time.Now().Add(1 * time.Second))
+	// A shed conn is closed on the accept path, so the read fails at once with
+	// EOF or a reset. An un-shed one stays open and instead hits this deadline.
+	// Keying off which error arrives beats timing the read: it says the same
+	// thing without a wall-clock threshold to lose under CI contention.
+	shedConn.SetReadDeadline(time.Now().Add(3 * time.Second))
 	buf := make([]byte, 1)
-	start := time.Now()
 	_, err = shedConn.Read(buf)
-	elapsed := time.Since(start)
 	if err == nil {
 		t.Fatal("expected the over-cap connection to be dropped, got read error nil")
 	}
-	if elapsed > 900*time.Millisecond {
-		t.Errorf("over-cap conn dropped too late (%v); it was not shed immediately", elapsed)
+	var nerr net.Error
+	if errors.As(err, &nerr) && nerr.Timeout() {
+		t.Errorf("over-cap conn was not shed; the read hit its own deadline instead of a close")
 	}
+	// Read returning means the peer saw the close, which the accept path does
+	// only after onShed. Loading the counter here pins that ordering.
 	if got := atomic.LoadInt64(&shed); got != 1 {
 		t.Errorf("shed = %d, want 1", got)
 	}
