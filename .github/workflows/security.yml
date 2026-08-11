@@ -1,0 +1,64 @@
+name: Security
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  schedule:
+    # Weekly. A vulnerability disclosed after the last commit still needs to
+    # surface on a repository that can go quiet between releases.
+    - cron: '0 7 * * 1'
+
+permissions:
+  contents: read
+
+jobs:
+
+  # GATES the build. Reports only vulnerabilities in code paths the binary
+  # actually reaches, so a finding here is real.
+  #
+  # The action resolves the latest 1.25 patch deliberately: most findings are in
+  # the standard library and are fixed by building with a newer patch release.
+  #
+  # govulncheck has no ignore file. If upstream has no patch, set
+  # continue-on-error: true on this step with a comment naming the GO-ID and the
+  # tracking issue, and remove it when the fix lands.
+  govulncheck:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v7
+
+    - name: Run govulncheck
+      uses: golang/govulncheck-action@v1.1.0
+      with:
+        go-version-input: '1.25'
+        go-package: ./...
+
+  # GATES the build, and mirrors the scan in docker-build-push.sh so a failure
+  # shows up on the pull request rather than at publish time.
+  #
+  # ignore-unfixed means only findings with an upstream fix can fail, since an
+  # unfixable Alpine CVE is not something a rebuild can resolve. Suppress a
+  # specific finding in .trivyignore.
+  image:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v7
+
+    - name: Build image
+      run: docker build -t philter-ai-proxy:scan .
+
+    - name: Scan image
+      uses: aquasecurity/trivy-action@v0.36.0
+      env:
+        # Pull the database from the mirror first. Anonymous ghcr.io pulls from
+        # shared CI address ranges get rate limited.
+        TRIVY_DB_REPOSITORY: mirror.gcr.io/aquasec/trivy-db:2,ghcr.io/aquasecurity/trivy-db:2
+      with:
+        image-ref: philter-ai-proxy:scan
+        scanners: vuln
+        ignore-unfixed: true
+        severity: HIGH,CRITICAL
+        exit-code: '1'
+        format: table

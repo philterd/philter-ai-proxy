@@ -1,0 +1,7 @@
+# Vulnerabilities Trivy should not fail the build on.
+#
+# Only for a finding that is real but cannot be acted on: no upstream fix, or
+# the affected code is not reachable from this binary. Give each entry a reason
+# and a date to revisit, and delete it once a fix ships.
+#
+# CVE-2024-0000  # unreachable: <why>. Revisit 2026-01-01.

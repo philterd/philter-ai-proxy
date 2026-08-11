@@ -72,6 +72,8 @@ make docker-push                      # build + push linux/amd64,linux/arm64
 make docker-push-dry-run              # print the plan without touching buildx or the registry
 ```
 
+The push is gated on a [Trivy](https://trivy.dev) scan of the image, so `trivy` must be on your PATH. A HIGH or CRITICAL vulnerability that has a fix available blocks the push; unfixable findings do not, since no rebuild resolves them. Rebuild on a patched base, or record an exception with a reason in `.trivyignore`. `SKIP_SCAN=1` bypasses the gate.
+
 Two tags are pushed: `latest` and a derived version tag.
 
 - The version comes from `git describe --tags --always --dirty`, or `VERSION=` if set explicitly.

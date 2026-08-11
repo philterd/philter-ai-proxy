@@ -1,0 +1,20 @@
+version: 2
+
+updates:
+  # GitHub Actions only, grouped into one pull request a month.
+  #
+  # Go module version updates are deliberately not enabled: 102 modules of churn
+  # for a solo maintainer. Dependabot security updates are enabled separately in
+  # the repository settings and cover the case that matters.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      actions:
+        patterns:
+          - "*"
+    labels:
+      - dependencies
+    commit-message:
+      prefix: "ci"
