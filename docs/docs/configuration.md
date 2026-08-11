@@ -939,6 +939,7 @@ The `(type, code)` set below is part of the proxy's public API. New codes may be
 | Status | `type` | `code` | Trigger | `Retry-After` |
 |---|---|---|---|---|
 | 400 | `invalid_request` | `bad_json` | Request body is not valid JSON for the matched provider | - |
+| 400 | `invalid_request` | `unsupported_content_type` | Request body is `multipart/form-data`. The proxy redacts JSON bodies; multipart endpoints (file uploads, audio, image edits) are not proxied | - |
 | 400 | `invalid_request` | `body_read` | Request body could not be read from the client connection | - |
 | 400 | `invalid_request` | `path_not_canonical` | Request path contained `.` / `..` segments, redundant slashes, or a trailing slash. Real LLM clients construct canonical paths; the proxy refuses non-canonical paths up front to close a class of path-traversal-based scope bypass. | - |
 | 413 | `payload_too_large` | `request_body_too_large` | Request body exceeded `listen.maxRequestBodyBytes` | - |

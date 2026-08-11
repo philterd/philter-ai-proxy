@@ -32,7 +32,7 @@ Fields not in the table (e.g., model names, IDs, non-string values) are forwarde
 
 **Passed through unchanged:** the `/batches` JSON request body — a batch references an uploaded file by ID rather than carrying inline prompts, so there is no inline text to redact.
 
-**Not supported:** the proxy handles **text conversations only**. It expects a JSON request body and rejects `multipart/form-data` with `400 invalid_request`, so file uploads (`/files`), audio transcriptions (`/audio/transcriptions`), and image edits/variations cannot be proxied. Route those calls directly to the provider. Tracked in [#30](https://github.com/philterd/philter-ai-proxy/issues/30).
+**Not supported:** the proxy handles **text conversations only**. It expects a JSON request body and rejects `multipart/form-data` with `400 invalid_request` / `unsupported_content_type`, so file uploads (`/files`), audio transcriptions (`/audio/transcriptions`), and image edits/variations cannot be proxied. Route those calls directly to the provider. File uploads will not be supported: a batch file is many embedded requests, so redacting one upload would mean one Philter call per record inside a single synchronous request. Redact the file contents with Philter before uploading. Audio ([#40](https://github.com/philterd/philter-ai-proxy/issues/40)) and image edits ([#41](https://github.com/philterd/philter-ai-proxy/issues/41)) are tracked.
 
 ## Response Scanning (Outbound)
 

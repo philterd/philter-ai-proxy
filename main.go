@@ -12,6 +12,7 @@ import (
 	"io"
 	"io/ioutil"
 	"log/slog"
+	"mime"
 	"net"
 	"net/http"
 	"net/url"
@@ -268,6 +269,29 @@ func shouldForwardHeader(key string) bool {
 // parser and helps fingerprint version differences. The audit log carries
 // the request_id so an operator can trace the failure back to this server
 // log line.
+// isMultipartRequest reports whether the request body is a multipart form.
+func isMultipartRequest(contentType string) bool {
+	if contentType == "" {
+		return false
+	}
+	mt, _, err := mime.ParseMediaType(contentType)
+	if err != nil {
+		return false
+	}
+	return mt == "multipart/form-data"
+}
+
+// writeUnsupportedContentType rejects a multipart body with a code distinct
+// from bad_json, since the body is well formed, just not JSON.
+func (p *Proxy) writeUnsupportedContentType(w http.ResponseWriter, audit *AuditEntry, path string) {
+	msg := "multipart/form-data requests are not proxied; this proxy redacts JSON request bodies"
+	if strings.HasPrefix(path, "/v1/files") {
+		msg = "file uploads are not proxied; redact the file contents with Philter before uploading"
+	}
+	slog.Warn("Unsupported request content type", "path", path, "request_id", auditRequestID(audit))
+	writeError(w, audit, http.StatusBadRequest, "invalid_request", "unsupported_content_type", msg)
+}
+
 func (p *Proxy) writeBadJSON(w http.ResponseWriter, audit *AuditEntry, err error) {
 	slog.Warn("Invalid JSON request body", "error", err, "request_id", auditRequestID(audit))
 	writeError(w, audit, http.StatusBadRequest, "invalid_request", "bad_json", "invalid JSON in request body")
@@ -1641,6 +1665,15 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		audit.Model = scopeModel
 		slog.Warn("Per-key scope denied", "client", clientKeyID, "field", denial.Field, "value", denial.Value, "request_id", requestID)
 		writeError(rc, audit, http.StatusForbidden, "forbidden", denial.Code, "request not permitted by API key scope")
+		return
+	}
+
+	// Multipart is the only non-JSON body any supported endpoint uses; the
+	// handlers below would report bad_json for it. After auth so an
+	// unauthenticated caller still gets 401.
+	if isMultipartRequest(r.Header.Get("Content-Type")) {
+		audit.Provider = providerName
+		p.writeUnsupportedContentType(rc, audit, r.URL.Path)
 		return
 	}
 

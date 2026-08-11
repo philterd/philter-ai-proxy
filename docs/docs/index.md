@@ -33,4 +33,4 @@ The proxy ships as a single Go binary. From there:
 
 The proxy does redaction and the audit trail that goes with it. It deliberately does not do routing, failover, token quotas, or per-tenant billing; those belong to an AI gateway, and the proxy is designed to run alongside one. See [Using with an AI Gateway](ai-gateway.md).
 
-It also handles **text conversations only**. Multipart requests (file uploads, audio transcriptions, image edits) are rejected with `400 invalid_request` and should be routed directly to the provider. Tracked in [#30](https://github.com/philterd/philter-ai-proxy/issues/30).
+It also handles **text conversations only**. Multipart requests (file uploads, audio transcriptions, image edits) are rejected with `400 invalid_request` / `unsupported_content_type` and should be routed directly to the provider. Audio ([#40](https://github.com/philterd/philter-ai-proxy/issues/40)) and image edits ([#41](https://github.com/philterd/philter-ai-proxy/issues/41)) are tracked; file uploads will not be supported.

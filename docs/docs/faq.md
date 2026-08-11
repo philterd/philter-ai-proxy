@@ -29,9 +29,9 @@ Outbound response scanning can only inspect non-streaming responses. Under `acti
 
 ### Can it redact file uploads, audio, or images?
 
-No. The proxy handles text conversations only. It expects a JSON request body and rejects `multipart/form-data` with `400 invalid_request`, so file uploads (`/v1/files`), audio transcriptions (`/v1/audio/transcriptions`), and image edits and variations are not proxied. Route those calls directly to the provider.
+No. The proxy handles text conversations only. It expects a JSON request body and rejects `multipart/form-data` with `400 invalid_request` / `unsupported_content_type`, so file uploads (`/v1/files`), audio transcriptions (`/v1/audio/transcriptions`), and image edits and variations are not proxied. Route those calls directly to the provider.
 
-The three cases differ in what redaction would even mean: an image edit carries a redactable `prompt` in a form field, a file upload may be interpretable JSONL or an opaque binary, and audio has no inbound text at all (the redactable text is the transcript that comes back). Support is tracked in [#30](https://github.com/philterd/philter-ai-proxy/issues/30).
+File uploads will not be supported: a batch file is many embedded requests, and redacting one upload would mean one Philter call per record inside a single synchronous request. Redact the file contents with Philter before uploading. Audio ([#40](https://github.com/philterd/philter-ai-proxy/issues/40)) and image edits ([#41](https://github.com/philterd/philter-ai-proxy/issues/41)) are tracked for support.
 
 ### Is any sensitive data logged?
 
