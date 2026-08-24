@@ -62,27 +62,42 @@ To build a local Docker image (single arch, no push):
 make docker-build
 ```
 
+### Building for both architectures
+
+`build-image.sh` builds `linux/amd64` and `linux/arm64` images and loads each into the local Docker daemon under its own tag, so both are available to run and test before anything is published. It pushes nothing.
+
+```bash
+./build-image.sh                      # philterd/philter-ai-proxy:latest-amd64 and :latest-arm64
+./build-image.sh v1.2.3               # philterd/philter-ai-proxy:v1.2.3-amd64 and :v1.2.3-arm64
+make docker-build-multiarch           # same, using the Makefile's derived VERSION
+```
+
+A single multi-arch tag cannot be loaded into the local daemon, which is why the images carry per-architecture tags. `IMAGE=` overrides the repository name and `ARCHES=` the architecture list.
+
 ### Publishing multi-arch images
 
-The `docker-build-push.sh` script builds and pushes a multi-arch image (`linux/amd64`, `linux/arm64`) to Docker Hub at `philterd/philter-ai-proxy`. It uses `docker buildx`, which ships with Docker Desktop and is available in modern Docker Engine installs.
+Publishing is two deliberate steps, run by hand from a machine holding the credential. Nothing in CI pushes an image.
+
+`build-image.sh` produces the per-architecture images (above); `push-image.sh` pushes them to Docker Hub at [`philterd/philter-ai-proxy`](https://hub.docker.com/repository/docker/philterd/philter-ai-proxy) and joins them into one multi-arch tag with `docker buildx imagetools create`. `push-image.sh` builds nothing, so what gets published is exactly what you built and tested.
 
 ```bash
 docker login                          # one-time, as a user with push access
-make docker-push                      # build + push linux/amd64,linux/arm64
-make docker-push-dry-run              # print the plan without touching buildx or the registry
+./build-image.sh v1.2.3               # build linux/amd64 and linux/arm64
+./push-image.sh v1.2.3                # scan, push, and join into philterd/philter-ai-proxy:v1.2.3
+./push-image.sh                       # repeat for the :latest tag
 ```
 
-The push is gated on a [Trivy](https://trivy.dev) scan of the image, so `trivy` must be on your PATH. A HIGH or CRITICAL vulnerability that has a fix available blocks the push; unfixable findings do not, since no rebuild resolves them. Rebuild on a patched base, or record an exception with a reason in `.trivyignore`. `SKIP_SCAN=1` bypasses the gate.
-
-Two tags are pushed: `latest` and a derived version tag.
-
-- The version comes from `git describe --tags --always --dirty`, or `VERSION=` if set explicitly.
-- A `-dirty` working tree is refused unless `ALLOW_DIRTY=1` is set, to prevent accidentally publishing an image that doesn't correspond to any committed state.
+The Makefile wraps both, using its derived `VERSION`:
 
 ```bash
-VERSION=v1.2.3 make docker-push       # explicit version tag
-ALLOW_DIRTY=1 make docker-push        # override the dirty-tree guard
+make docker-build-multiarch
+make docker-push
+make docker-push-dry-run              # scan and print the plan, push nothing
 ```
+
+The push is gated on a [Trivy](https://trivy.dev) scan of each image being pushed, so `trivy` must be on your PATH. A HIGH or CRITICAL vulnerability that has a fix available blocks the push; unfixable findings do not, since no rebuild resolves them. Rebuild on a patched base, or record an exception with a reason in `.trivyignore`. `SKIP_SCAN=1` bypasses the gate.
+
+Each invocation publishes one tag, taken from the argument (default `latest`). A version built from a dirty working tree carries a `-dirty` suffix and is refused, to prevent publishing an image that corresponds to no committed state; `ALLOW_DIRTY=1` overrides that.
 
 ## Docker Compose
 

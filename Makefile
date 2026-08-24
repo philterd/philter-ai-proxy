@@ -1,7 +1,7 @@
 # All targets are phony (no target produces a file by the same name). Without
 # this, `make test` is shadowed by the test/ directory and reports
 # "up to date" instead of running the tests.
-.PHONY: build run cert docker-build docker-push docker-push-dry-run test cover cover-html cover-check integration-up integration-down test-integration
+.PHONY: build run cert docker-build docker-build-multiarch docker-push docker-push-dry-run test cover cover-html cover-check integration-up integration-down test-integration
 
 # Version stamped into the binary (reported by --version and logged at startup).
 # Derived from the current git tag/commit; override with `make build VERSION=v1.2.3`.
@@ -26,11 +26,16 @@ cert:
 docker-build:
 	docker build --build-arg VERSION=$(VERSION) -t philter-ai-proxy .
 
+# Builds a loadable image per architecture (amd64, arm64) for local testing.
+docker-build-multiarch:
+	./build-image.sh $(VERSION)
+
+# Pushes what docker-build-multiarch built. Run that first.
 docker-push:
-	./docker-build-push.sh
+	./push-image.sh $(VERSION)
 
 docker-push-dry-run:
-	DRY_RUN=1 ./docker-build-push.sh
+	DRY_RUN=1 ./push-image.sh $(VERSION)
 
 test:
 	go test -v ./...

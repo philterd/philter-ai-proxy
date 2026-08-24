@@ -35,7 +35,7 @@ jobs:
         go-version-input: '1.25'
         go-package: ./...
 
-  # GATES the build, and mirrors the scan in docker-build-push.sh so a failure
+  # GATES the build, and mirrors the scan in push-image.sh so a failure
   # shows up on the pull request rather than at publish time.
   #
   # ignore-unfixed means only findings with an upstream fix can fail, since an
