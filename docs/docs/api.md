@@ -106,6 +106,8 @@ The proxy routes requests based on the URL path:
 | `/openai/deployments/{deployment}/...` | Azure OpenAI (configured via `providers.azure`) |
 | `/{name}/v1/...` | OpenAI-compatible (configured via `providers.openaiCompatible`) |
 | `/health` | Health check (no proxying) |
+| `/livez` | Liveness probe (no proxying) |
+| `/readyz` | Readiness probe (no proxying) |
 | All other paths | OpenAI |
 
 ## Endpoints
@@ -234,9 +236,12 @@ The proxy strips the `/{name}` prefix before forwarding, so the provider receive
 
 - **URL**: `/health`
 - **Method**: `GET`
-- **Description**: Returns the health status of the proxy.
-- **Response**: `200 OK` with body `ok`.
+- **Authentication**: None. The endpoint is reachable without an API key even when `auth.apiKeys` is configured.
+- **Description**: Returns the health status of the proxy in the standard Philterd health shape. Actively probes Philter (2-second timeout).
+- **Response**: `200 OK` with `{"status":"UP","applicationVersion":"<version>","philter":"ok"}` when healthy; `503 Service Unavailable` with `{"status":"DOWN","applicationVersion":"<version>","philter":"unreachable"}` when Philter cannot be reached.
 - **Example**:
   ```bash
   curl -k https://localhost:8080/health
   ```
+
+For Kubernetes probes use `/livez` (liveness) and `/readyz` (readiness) instead. See [Monitoring -> Health Endpoints](monitoring.md#health-endpoints).

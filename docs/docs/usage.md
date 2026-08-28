@@ -232,4 +232,10 @@ To check the health of the proxy, send a GET request to the `/health` endpoint:
 curl -k https://localhost:8080/health
 ```
 
-The proxy will return an HTTP 200 OK status and the body `ok`.
+When the proxy and Philter are both healthy this returns HTTP 200 with:
+
+```json
+{"status":"UP","applicationVersion":"1.0.0","philter":"ok"}
+```
+
+If Philter cannot be reached the proxy returns HTTP 503 with `"status":"DOWN"` and `"philter":"unreachable"`. The endpoint needs no API key. For Kubernetes probes, point liveness at `/livez` and readiness at `/readyz` instead - see [Monitoring -> Health Endpoints](monitoring.md#health-endpoints).

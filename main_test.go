@@ -588,8 +588,8 @@ func TestProxy_ServeHTTP_Health(t *testing.T) {
 		t.Errorf("Expected Content-Type application/json, got %s", ct)
 	}
 	body := w.Body.String()
-	if !strings.Contains(body, `"status":"ok"`) {
-		t.Errorf("Expected ok status in body, got %s", body)
+	if !strings.Contains(body, `"status":"UP"`) {
+		t.Errorf("Expected UP status in body, got %s", body)
 	}
 }
 
@@ -607,8 +607,8 @@ func TestProxy_ServeHTTP_Health_Degraded(t *testing.T) {
 		t.Errorf("Expected status 503, got %d", w.Code)
 	}
 	body := w.Body.String()
-	if !strings.Contains(body, `"status":"degraded"`) {
-		t.Errorf("Expected degraded status in body, got %s", body)
+	if !strings.Contains(body, `"status":"DOWN"`) {
+		t.Errorf("Expected DOWN status in body, got %s", body)
 	}
 }
 

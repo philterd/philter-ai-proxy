@@ -480,33 +480,80 @@ func (p *Proxy) handleReadyz(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte(`{"status":"ok"}`))
 }
 
-// handleHealth is retained for backwards compatibility. New deployments
-// should point Kubernetes probes at /livez (liveness) and /readyz
-// (readiness) instead.
-func (p *Proxy) handleHealth(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
+// healthResponse is the standard Philterd health contract, shared across
+// Philterd products so one probe works against any of them: a JSON object
+// carrying at least `status` and `applicationVersion` at the top level,
+// answering 200 with `"status":"UP"` when healthy and a non-200 with some
+// other status when not.
+type healthResponse struct {
+	Status             string `json:"status"`
+	ApplicationVersion string `json:"applicationVersion"`
+	// Philter reports reachability of the redaction service ("ok" or
+	// "unreachable"). It is an extension beyond the shared contract, kept
+	// from the endpoint's earlier shape so existing operator scripts that
+	// grep for it keep working.
+	Philter string `json:"philter,omitempty"`
+}
 
+// writeHealth marshals a health response. Marshaling can only fail on
+// unencodable types, which healthResponse has none of, so the error is
+// impossible in practice; a failure still yields valid JSON rather than an
+// empty body.
+func writeHealth(w http.ResponseWriter, code int, resp healthResponse) {
+	body, err := json.Marshal(resp)
+	if err != nil {
+		body = []byte(`{"status":"DOWN","applicationVersion":"unknown"}`)
+		code = http.StatusInternalServerError
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(code)
+	w.Write(body)
+}
+
+// handleHealth serves the standard Philterd health endpoint. It is
+// unauthenticated - a container runtime or load balancer must be able to probe
+// it - and answers with the shared contract described on healthResponse.
+//
+// Unlike /livez and /readyz, this endpoint makes an active outbound probe to
+// Philter on every call, so it reflects the health of the proxy *and* its
+// redaction dependency. Kubernetes probes should still point at /livez and
+// /readyz: treating Philter unreachability as a liveness failure restarts
+// healthy pods during transient outages, which is the failure mode the split
+// endpoints exist to avoid.
+//
+// /livez and /readyz deliberately do NOT adopt this response shape. They are
+// Kubernetes probe endpoints with their own vocabulary ("ok" / "not_ready" plus
+// a machine-readable reason), and deployed manifests and operator scripts parse
+// those bodies today. The status code is what an orchestrator keys on, so
+// uniformity of the body across all three would buy nothing and break readers.
+func (p *Proxy) handleHealth(w http.ResponseWriter, r *http.Request) {
 	if p.config == nil || p.philter == nil {
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"status":"ok"}`))
+		writeHealth(w, http.StatusOK, healthResponse{Status: "UP", ApplicationVersion: version})
 		return
 	}
 
 	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
 	defer cancel()
 
-	req, _ := http.NewRequestWithContext(ctx, "GET", p.config.Philter.Endpoint, nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", p.config.Philter.Endpoint, nil)
+	if err != nil {
+		// Startup validation parses the endpoint, so this is unreachable in a
+		// running proxy. Report DOWN rather than handing a nil request to
+		// Do, which would panic on an unauthenticated endpoint.
+		slog.Warn("Philter health check could not build a request", "error", err)
+		writeHealth(w, http.StatusServiceUnavailable, healthResponse{Status: "DOWN", ApplicationVersion: version, Philter: "unreachable"})
+		return
+	}
+
 	resp, err := p.philter.httpClient.Do(req)
 	if err == nil {
 		resp.Body.Close()
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"status":"ok","philter":"ok"}`))
+		writeHealth(w, http.StatusOK, healthResponse{Status: "UP", ApplicationVersion: version, Philter: "ok"})
 		return
 	}
 
 	slog.Warn("Philter health check failed", "error", err)
-	w.WriteHeader(http.StatusServiceUnavailable)
-	w.Write([]byte(`{"status":"degraded","philter":"unreachable"}`))
+	writeHealth(w, http.StatusServiceUnavailable, healthResponse{Status: "DOWN", ApplicationVersion: version, Philter: "unreachable"})
 }
 
 func (p *Proxy) forwardToProvider(w http.ResponseWriter, origReq *http.Request, target *url.URL, client *http.Client, body []byte, provider string, audit *AuditEntry) {

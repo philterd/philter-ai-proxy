@@ -239,7 +239,7 @@ func TestIntegration_OpenAI_PhilterRedacts(t *testing.T) {
 }
 
 // TestIntegration_Health verifies the /health endpoint returns 200 with
-// "philter":"ok" when the real Philter container is reachable.
+// "status":"UP" and "philter":"ok" when the real Philter container is reachable.
 func TestIntegration_Health(t *testing.T) {
 	philterURL := philterIntegrationURL()
 	waitForPhilter(t, philterURL, 30*time.Second)
@@ -255,8 +255,8 @@ func TestIntegration_Health(t *testing.T) {
 		t.Fatalf("expected /health 200, got %d: %s", w.Code, w.Body.String())
 	}
 	body := w.Body.String()
-	if !strings.Contains(body, `"status":"ok"`) {
-		t.Errorf("expected ok status, got %s", body)
+	if !strings.Contains(body, `"status":"UP"`) {
+		t.Errorf("expected UP status, got %s", body)
 	}
 	if !strings.Contains(body, `"philter":"ok"`) {
 		t.Errorf("expected philter:ok in health body, got %s", body)

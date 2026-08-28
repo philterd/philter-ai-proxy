@@ -73,11 +73,28 @@ Returns `200 OK` with body `{"status":"ok"}` when the proxy is willing to accept
 
 Use this as a Kubernetes readiness probe.
 
-### `/health` (deprecated)
+### `/health` (standard Philterd health contract)
 
-Retained for backwards compatibility. Returns `200 OK` with `{"status":"ok","philter":"ok"}` when Philter is reachable; `503` with `{"status":"degraded","philter":"unreachable"}` when not. Unlike `/readyz`, this endpoint makes an active outbound probe to Philter on every call (2-second timeout).
+Implements the health contract shared across Philterd products, so one probe works against any of them: a JSON body carrying at least `status` and `applicationVersion` at the top level, answering `200` with `"status":"UP"` when healthy and a non-`200` with some other status when not.
 
-**Deprecated in favor of `/livez` and `/readyz`.** New deployments should use the split endpoints; treating Philter unreachability as a liveness failure causes Kubernetes to restart healthy pods during transient outages, which is precisely the failure mode the split was introduced to fix.
+```json
+{"status":"UP","applicationVersion":"1.0.0","philter":"ok"}
+```
+
+- **Healthy**: `200 OK` with `"status":"UP"` and `"philter":"ok"`.
+- **Degraded**: `503 Service Unavailable` with `"status":"DOWN"` and `"philter":"unreachable"` when Philter cannot be reached.
+
+`applicationVersion` is the bare build version stamped into the binary at release time (`-X main.version=...`), reported as `dev` for an unstamped local build. It is the version part of what `--version` prints; unlike `--version` it carries no commit revision or Go toolchain suffix. `philter` is a proxy-specific extension beyond the shared contract, reporting reachability of the redaction service.
+
+Unlike `/readyz`, this endpoint makes an active outbound probe to Philter on every call (2-second timeout).
+
+Like `/livez` and `/readyz`, `/health` is unauthenticated: it is reachable without an API key even when `auth.apiKeys` is configured, so a container runtime or load balancer can probe it.
+
+**Use `/livez` and `/readyz` for Kubernetes probes, not `/health`.** Treating Philter unreachability as a liveness failure causes Kubernetes to restart healthy pods during transient outages, which is precisely the failure mode the split endpoints were introduced to fix. `/health` is for load balancers, uptime checks, and appliance-wide health rollups that want the dependency reflected.
+
+### Why only `/health` uses the shared shape
+
+`/livez` and `/readyz` deliberately keep their own `{"status":"ok"}` / `{"status":"not_ready","reason":...}` vocabulary and carry no `applicationVersion`. They are Kubernetes probe endpoints: an orchestrator keys on the status code, deployed manifests and operator scripts already parse those bodies, and `not_ready` with a machine-readable `reason` says something `DOWN` does not. Adopting the shared shape there would break existing readers without buying anything a probe consumer can use.
 
 ## Distributed Tracing
 
