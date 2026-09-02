@@ -1,0 +1,3645 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="User guide for Philter AI Proxy, a PII/PHI redaction proxy for OpenAI, Claude, and Gemini.">
+      
+      
+        <meta name="author" content="philterd">
+      
+      
+        <link rel="canonical" href="https://philterd.github.io/philter-ai-proxy/configuration/">
+      
+      
+        <link rel="prev" href="../api/">
+      
+      
+        <link rel="next" href="../ai-gateway/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>Configuration - Philter AI Proxy</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="red" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#configuration" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href=".." title="Philter AI Proxy" class="md-header__button md-logo" aria-label="Philter AI Proxy" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Philter AI Proxy
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Configuration
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+    
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/philterd/philter-ai-proxy" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="Philter AI Proxy" class="md-nav__button md-logo" aria-label="Philter AI Proxy" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    Philter AI Proxy
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/philterd/philter-ai-proxy" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../installation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Installation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../kubernetes/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Kubernetes Quickstart
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../usage/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Usage
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#example-configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Example Configuration
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#configuration-compatibility" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Configuration Compatibility
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#configuration-reference" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Configuration Reference
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Configuration Reference">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#version" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        version
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#listen" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        listen
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#logging" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        logging
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#metrics" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        metrics
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#tracing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        tracing
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#philter" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        philter
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="philter">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#philterretry" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        philter.retry
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#philtercircuitbreaker" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        philter.circuitBreaker
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#providers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        providers
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#providersopenaicompatible" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        providers.openaiCompatible
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#providersbedrock" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        providers.bedrock
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#providersazure" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        providers.azure
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#providersvertex" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        providers.vertex
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#routes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        routes
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#defaults" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        defaults
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#outbound" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        outbound
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#authentication" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Authentication
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Authentication">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#api-key-authentication" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        API Key Authentication
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="API Key Authentication">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#auth-reference" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        auth reference
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#authapikeys-entry" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        auth.apiKeys[] entry
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#per-key-authorization-scopes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Per-key Authorization (scopes)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#api-key-hashing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        API Key Hashing
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#per-key-stable-identifiers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Per-key Stable Identifiers
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#loading-secrets-from-environment-variables-and-files" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Loading secrets from environment variables and files
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rotating-api-keys" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Rotating API keys
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#mtls-mutual-tls" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        mTLS (Mutual TLS)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#audit-logging" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Audit Logging
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Audit Logging">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#log-schema" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Log Schema
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#example-log-entries" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Example Log Entries
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#siem-integration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        SIEM Integration
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#streaming" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Streaming
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#tls-configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        TLS Configuration
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="TLS Configuration">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#listener-certificate" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Listener certificate
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#evaluation-certificates" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Evaluation certificates
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#outbound-verification" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Outbound verification
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#philter-backend-with-self-signed-certificate" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Philter Backend with Self-Signed Certificate
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#disabling-tls-verification-development-only" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Disabling TLS Verification (Development Only)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#provider-timeouts" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Provider Timeouts
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Provider Timeouts">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#fields-and-defaults" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fields and defaults
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#streaming-and-timeouts" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Streaming and timeouts
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#when-to-tune" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        When to tune
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#concurrency-limits" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Concurrency Limits
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Concurrency Limits">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#behaviour-when-the-limit-is-exceeded" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Behaviour when the limit is exceeded
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#choosing-a-value" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Choosing a value
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#request-hardening" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Request Hardening
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Request Hardening">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#trusted-proxies-x-forwarded-for" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Trusted Proxies / X-Forwarded-For
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#error-responses" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Error Responses
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Error Responses">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#response-shape" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Response shape
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#stable-enum" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Stable enum
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#audit-correlation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Audit correlation
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../ai-gateway/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Using with an AI Gateway
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../monitoring/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Monitoring
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../load-tests/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Load tests
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../faq/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    FAQ
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#example-configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Example Configuration
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#configuration-compatibility" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Configuration Compatibility
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#configuration-reference" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Configuration Reference
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Configuration Reference">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#version" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        version
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#listen" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        listen
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#logging" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        logging
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#metrics" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        metrics
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#tracing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        tracing
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#philter" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        philter
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="philter">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#philterretry" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        philter.retry
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#philtercircuitbreaker" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        philter.circuitBreaker
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#providers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        providers
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#providersopenaicompatible" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        providers.openaiCompatible
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#providersbedrock" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        providers.bedrock
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#providersazure" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        providers.azure
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#providersvertex" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        providers.vertex
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#routes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        routes
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#defaults" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        defaults
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#outbound" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        outbound
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#authentication" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Authentication
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Authentication">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#api-key-authentication" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        API Key Authentication
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="API Key Authentication">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#auth-reference" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        auth reference
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#authapikeys-entry" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        auth.apiKeys[] entry
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#per-key-authorization-scopes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Per-key Authorization (scopes)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#api-key-hashing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        API Key Hashing
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#per-key-stable-identifiers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Per-key Stable Identifiers
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#loading-secrets-from-environment-variables-and-files" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Loading secrets from environment variables and files
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rotating-api-keys" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Rotating API keys
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#mtls-mutual-tls" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        mTLS (Mutual TLS)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#audit-logging" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Audit Logging
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Audit Logging">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#log-schema" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Log Schema
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#example-log-entries" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Example Log Entries
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#siem-integration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        SIEM Integration
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#streaming" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Streaming
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#tls-configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        TLS Configuration
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="TLS Configuration">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#listener-certificate" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Listener certificate
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#evaluation-certificates" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Evaluation certificates
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#outbound-verification" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Outbound verification
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#philter-backend-with-self-signed-certificate" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Philter Backend with Self-Signed Certificate
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#disabling-tls-verification-development-only" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Disabling TLS Verification (Development Only)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#provider-timeouts" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Provider Timeouts
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Provider Timeouts">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#fields-and-defaults" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fields and defaults
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#streaming-and-timeouts" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Streaming and timeouts
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#when-to-tune" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        When to tune
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#concurrency-limits" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Concurrency Limits
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Concurrency Limits">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#behaviour-when-the-limit-is-exceeded" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Behaviour when the limit is exceeded
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#choosing-a-value" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Choosing a value
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#request-hardening" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Request Hardening
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Request Hardening">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#trusted-proxies-x-forwarded-for" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Trusted Proxies / X-Forwarded-For
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#error-responses" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Error Responses
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Error Responses">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#response-shape" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Response shape
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#stable-enum" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Stable enum
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#audit-correlation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Audit correlation
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="configuration">Configuration</h1>
+<p>The proxy is configured via a YAML configuration file. The config file is required and must be specified via <code>--config</code> flag or <code>PHILTER_PROXY_CONFIG</code> environment variable.</p>
+<pre><code class="language-bash">./philter-ai-proxy --config config.yaml
+# or
+PHILTER_PROXY_CONFIG=config.yaml ./philter-ai-proxy
+</code></pre>
+<h2 id="example-configuration">Example Configuration</h2>
+<pre><code class="language-yaml">listen:
+  port: 8080
+  cert: /etc/philter-proxy/tls/tls.crt
+  key: /etc/philter-proxy/tls/tls.key
+  shutdownTimeout: 30
+
+logging:
+  enabled: true
+  # file: /var/log/philter-ai-proxy/audit.log
+
+philter:
+  endpoint: https://philter.internal:8080
+  tlsVerify: true
+  # caCert: /etc/ssl/internal-ca.pem
+  retry:
+    maxAttempts: 3
+    initialBackoffMs: 100
+    maxBackoffMs: 2000
+  # circuitBreaker:
+  #   enabled: true
+  #   threshold: 5
+  #   timeoutSeconds: 30
+  #   fallback: block
+
+providers:
+  openai:
+    target: https://api.openai.com
+    # tlsVerify: true
+  anthropic:
+    target: https://api.anthropic.com
+    # tlsVerify: true
+  gemini:
+    target: https://generativelanguage.googleapis.com
+    # tlsVerify: true
+  ollama:
+    target: http://localhost:11434
+    # tlsVerify: true
+
+routes:
+  - match:
+      header: x-philter-policy
+      value: hipaa
+    policy: hipaa-safe-harbor
+    context: healthcare-chatbot
+
+  - match:
+      path: /v1/chat/completions
+      model: gpt-4
+    policy: general-purpose
+    context: internal-analytics
+
+  - match:
+      model: claude-sonnet-4-20250514
+    policy: code-review-policy
+
+defaults:
+  policy: default
+  context: none
+</code></pre>
+<h2 id="configuration-compatibility">Configuration Compatibility</h2>
+<p>The configuration file carries an optional top-level schema version:</p>
+<pre><code class="language-yaml">version: 1   # optional; defaults to the current schema when omitted
+</code></pre>
+<p><strong>Backward-compatibility policy</strong> (the config-schema counterpart of the stable <a href="#error-responses">error-code contract</a>):</p>
+<ul>
+<li><strong>Additive changes ship in any release.</strong> New optional fields with safe defaults may be added at any time. A config that is valid for version <em>N</em> keeps working on later releases of the same major version without edits.</li>
+<li><strong><code>version</code> is optional and defaults to the current schema.</strong> Omitting it is fully supported, so existing configs need no changes. Setting it explicitly (<code>version: 1</code>) lets you pin the schema your automation was written against and get a clear startup error if a future build no longer supports it.</li>
+<li><strong>No silent breaking changes.</strong> Existing fields will not be removed, renamed, or have their meaning/defaults changed in a way that breaks a valid config across minor versions. Anything breaking is reserved for a major-version bump.</li>
+<li><strong>Unsupported version → clear startup failure.</strong> If <code>version</code> is set to a value this build does not understand, the proxy exits at startup (and <code>--validate-config</code> returns non-zero) with <code>config: unsupported config version &lt;n&gt; (this build supports version &lt;m&gt;) ...</code> — it never silently ignores the field.</li>
+</ul>
+<p><strong>Migration guidance.</strong> When a breaking schema change is unavoidable, the schema version is incremented, the release notes document the field-by-field migration, and both the old and new versions are accepted for at least one minor release so deployments can migrate without downtime. Validate a config against the running build before rollout with:</p>
+<pre><code class="language-bash">./philter-ai-proxy --validate-config --config config.yaml
+</code></pre>
+<p>The current schema version is <strong>1</strong>.</p>
+<h2 id="configuration-reference">Configuration Reference</h2>
+<h3 id="version"><code>version</code></h3>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>version</code></td>
+<td>int</td>
+<td>current schema (<code>1</code>)</td>
+<td>Optional config schema version. Omit to track the current schema, or pin it (e.g. <code>1</code>) so an unsupported future schema fails fast at startup. See <a href="#configuration-compatibility">Configuration Compatibility</a>.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="listen"><code>listen</code></h3>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>port</code></td>
+<td>int</td>
+<td><code>8080</code></td>
+<td>Port the proxy listens on</td>
+</tr>
+<tr>
+<td><code>cert</code></td>
+<td>string</td>
+<td>(none)</td>
+<td>Path to the TLS certificate file. Required unless <code>devSelfSignedCert</code> is set. Relative paths resolve against the process working directory, not the config file's directory, so prefer absolute paths.</td>
+</tr>
+<tr>
+<td><code>key</code></td>
+<td>string</td>
+<td>(none)</td>
+<td>Path to the TLS private key file. Required unless <code>devSelfSignedCert</code> is set.</td>
+</tr>
+<tr>
+<td><code>devSelfSignedCert</code></td>
+<td>bool</td>
+<td><code>false</code></td>
+<td>Generate a throwaway self-signed certificate at startup instead of loading one. <strong>Evaluation only.</strong> Ignored when <code>cert</code> and <code>key</code> are set. See <a href="#evaluation-certificates">Evaluation Certificates</a> below.</td>
+</tr>
+<tr>
+<td><code>shutdownTimeout</code></td>
+<td>int</td>
+<td><code>30</code></td>
+<td>Seconds to wait for in-flight requests during graceful shutdown</td>
+</tr>
+<tr>
+<td><code>clientCA</code></td>
+<td>string</td>
+<td>(none)</td>
+<td>Path to a PEM CA certificate used to verify client certificates. When set, mTLS is enabled and the proxy requires a valid client certificate on every connection. See <a href="#mtls-mutual-tls">mTLS</a> below.</td>
+</tr>
+<tr>
+<td><code>maxConcurrentRequests</code></td>
+<td>int</td>
+<td><code>0</code> (unlimited)</td>
+<td>Maximum number of in-flight requests the proxy will process at once. Excess requests get HTTP 503 with <code>Retry-After: 1</code>. See <a href="#concurrency-limits">Concurrency Limits</a> below.</td>
+</tr>
+<tr>
+<td><code>maxRequestBodyBytes</code></td>
+<td>int</td>
+<td><code>10485760</code> (10 MiB)</td>
+<td>Maximum inbound request body size in bytes. Larger bodies are rejected with HTTP 413. See <a href="#request-hardening">Request Hardening</a> below.</td>
+</tr>
+<tr>
+<td><code>maxHeaderBytes</code></td>
+<td>int</td>
+<td><code>1048576</code> (1 MiB)</td>
+<td>Maximum total size of inbound request headers.</td>
+</tr>
+<tr>
+<td><code>readHeaderTimeoutMs</code></td>
+<td>int</td>
+<td><code>10000</code> (10s)</td>
+<td>Time a client may take to send the request headers before the connection is dropped (slowloris mitigation).</td>
+</tr>
+<tr>
+<td><code>readTimeoutMs</code></td>
+<td>int</td>
+<td><code>0</code> (disabled)</td>
+<td>Time to read the entire request including body. Bounds slow-body attacks; affects only request reads, never response streaming. Disabled by default so large/slow uploads aren't truncated.</td>
+</tr>
+<tr>
+<td><code>tlsHandshakeTimeoutMs</code></td>
+<td>int</td>
+<td><code>10000</code> (10s)</td>
+<td>Time a client may take to complete the TLS handshake before the connection is dropped (slow-handshake slowloris mitigation). Independent of <code>readHeaderTimeoutMs</code>, which only starts ticking after the handshake completes. See <a href="#request-hardening">Request Hardening</a> below.</td>
+</tr>
+<tr>
+<td><code>maxConcurrentTLSHandshakes</code></td>
+<td>int</td>
+<td><code>16384</code></td>
+<td>Ceiling on simultaneous in-flight TLS handshakes. Bounds handshake goroutine count under a connection flood; excess connections are dropped immediately and counted by <code>philter_proxy_tls_handshakes_shed_total</code>. Established connections are unaffected. See <a href="#request-hardening">Request Hardening</a> below.</td>
+</tr>
+<tr>
+<td><code>trustedProxies</code></td>
+<td>string list</td>
+<td>empty (XFF ignored)</td>
+<td>CIDR ranges of upstream load balancers / reverse proxies whose <code>X-Forwarded-For</code> header should be honored. Empty (default) means XFF is <strong>never</strong> trusted -- the safe behavior when the proxy is exposed directly to the internet. Operators behind a trusted LB <strong>must</strong> populate this with the LB's source CIDR(s) to restore accurate audit-log IPs. See <a href="#trusted-proxies-x-forwarded-for">Trusted Proxies / X-Forwarded-For</a>.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="logging"><code>logging</code></h3>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>enabled</code></td>
+<td>bool</td>
+<td><code>true</code></td>
+<td>Enable structured audit logging</td>
+</tr>
+<tr>
+<td><code>file</code></td>
+<td>string</td>
+<td>(none)</td>
+<td>Path to an additional log output file. When set, logs are written to both stdout and this file.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="metrics"><code>metrics</code></h3>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>enabled</code></td>
+<td>bool</td>
+<td><code>true</code></td>
+<td>Enable the Prometheus metrics endpoint</td>
+</tr>
+<tr>
+<td><code>port</code></td>
+<td>int</td>
+<td><code>9090</code></td>
+<td>Port for the metrics HTTP server (separate from the proxy TLS port)</td>
+</tr>
+</tbody>
+</table>
+<p>See <a href="../monitoring/">Monitoring</a> for available metrics, PromQL examples, and Grafana dashboard setup.</p>
+<h3 id="tracing"><code>tracing</code></h3>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>enabled</code></td>
+<td>bool</td>
+<td><code>false</code></td>
+<td>Initialise the OpenTelemetry SDK. With this off the proxy pays zero per-request tracing overhead.</td>
+</tr>
+<tr>
+<td><code>serviceName</code></td>
+<td>string</td>
+<td><code>philter-ai-proxy</code></td>
+<td>The OTel <code>service.name</code> resource attribute when <code>OTEL_SERVICE_NAME</code> is not set.</td>
+</tr>
+</tbody>
+</table>
+<p>OTLP exporter destination, protocol, headers, sampler, and other tuning are all configured via the standard OTel env vars (<code>OTEL_EXPORTER_OTLP_ENDPOINT</code>, <code>OTEL_TRACES_SAMPLER</code>, etc.). See <a href="../monitoring/#distributed-tracing">Monitoring -&gt; Distributed Tracing</a> for the full list and worked examples.</p>
+<h3 id="philter"><code>philter</code></h3>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>endpoint</code></td>
+<td>string</td>
+<td><code>https://localhost:8080</code></td>
+<td>URL of the Philter instance</td>
+</tr>
+<tr>
+<td><code>tlsVerify</code></td>
+<td>bool</td>
+<td><code>true</code></td>
+<td>Enable TLS certificate verification for the Philter connection</td>
+</tr>
+<tr>
+<td><code>caCert</code></td>
+<td>string</td>
+<td>(none)</td>
+<td>Path to a custom CA certificate (PEM) for the Philter connection</td>
+</tr>
+<tr>
+<td><code>retry</code></td>
+<td>object</td>
+<td>see below</td>
+<td>Retry settings for failed Philter calls</td>
+</tr>
+<tr>
+<td><code>circuitBreaker</code></td>
+<td>object</td>
+<td>see below</td>
+<td>Circuit breaker settings for the Philter connection</td>
+</tr>
+</tbody>
+</table>
+<h4 id="philterretry"><code>philter.retry</code></h4>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>maxAttempts</code></td>
+<td>int</td>
+<td><code>3</code></td>
+<td>Total number of attempts (1 = no retry). Only transient errors (network errors, HTTP 5xx) are retried.</td>
+</tr>
+<tr>
+<td><code>initialBackoffMs</code></td>
+<td>int</td>
+<td><code>100</code></td>
+<td>Initial backoff delay in milliseconds before the first retry</td>
+</tr>
+<tr>
+<td><code>maxBackoffMs</code></td>
+<td>int</td>
+<td><code>2000</code></td>
+<td>Maximum backoff delay in milliseconds (backoff is capped at this value)</td>
+</tr>
+</tbody>
+</table>
+<h4 id="philtercircuitbreaker"><code>philter.circuitBreaker</code></h4>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>enabled</code></td>
+<td>bool</td>
+<td><code>false</code></td>
+<td>Enable the circuit breaker for the Philter connection</td>
+</tr>
+<tr>
+<td><code>threshold</code></td>
+<td>int</td>
+<td><code>5</code></td>
+<td>Number of consecutive failures before the circuit opens</td>
+</tr>
+<tr>
+<td><code>timeoutSeconds</code></td>
+<td>int</td>
+<td><code>30</code></td>
+<td>Seconds the circuit remains open before allowing a probe request (half-open state)</td>
+</tr>
+<tr>
+<td><code>fallback</code></td>
+<td>string</td>
+<td><code>block</code></td>
+<td>Action when the circuit is open: <code>block</code> (return HTTP 503) or <code>passthrough</code> (forward the request unredacted with a warning log)</td>
+</tr>
+</tbody>
+</table>
+<h3 id="providers"><code>providers</code></h3>
+<p>Each of the standard providers (<code>openai</code>, <code>anthropic</code>, <code>gemini</code>, <code>ollama</code>) accepts:</p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>target</code></td>
+<td>string</td>
+<td>(provider default)</td>
+<td>Target URL for the provider</td>
+</tr>
+<tr>
+<td><code>tlsVerify</code></td>
+<td>bool</td>
+<td><code>true</code></td>
+<td>Enable TLS certificate verification for this provider</td>
+</tr>
+<tr>
+<td><code>timeouts</code></td>
+<td>object</td>
+<td>(see <a href="#provider-timeouts">Provider Timeouts</a>)</td>
+<td>Per-provider HTTP timeouts</td>
+</tr>
+</tbody>
+</table>
+<p>Default provider targets:</p>
+<ul>
+<li><code>openai</code>: <code>https://api.openai.com</code></li>
+<li><code>anthropic</code>: <code>https://api.anthropic.com</code></li>
+<li><code>gemini</code>: <code>https://generativelanguage.googleapis.com</code></li>
+<li><code>ollama</code>: <code>http://localhost:11434</code></li>
+</ul>
+<h3 id="providersopenaicompatible"><code>providers.openaiCompatible</code></h3>
+<p>Any number of additional OpenAI-compatible providers (Mistral, Cohere, vLLM, LM Studio, etc.) can be registered under <code>providers.openaiCompatible</code>. Each entry maps a short <strong>name</strong> to a target URL.</p>
+<pre><code class="language-yaml">providers:
+  openaiCompatible:
+    mistral:
+      target: https://api.mistral.ai
+    cohere:
+      target: https://api.cohere.com
+    vllm:
+      target: http://vllm.internal:8000
+</code></pre>
+<p>Clients send requests to <code>/{name}/v1/...</code> - the proxy strips the prefix and forwards the remainder to the configured target using the same OpenAI handler logic. For example, a request to <code>/mistral/v1/chat/completions</code> is forwarded to <code>https://api.mistral.ai/v1/chat/completions</code>. The provider label in the audit log is set to the registered name.</p>
+<p>Each entry accepts:</p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>target</code></td>
+<td>string</td>
+<td>- (required)</td>
+<td>Base URL for this provider</td>
+</tr>
+<tr>
+<td><code>tlsVerify</code></td>
+<td>bool</td>
+<td><code>true</code></td>
+<td>Enable TLS certificate verification for this provider</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Reserved names</strong>: <code>v1</code>, <code>api</code>, <code>model</code>, and <code>health</code> conflict with built-in route prefixes and will be rejected at startup.</p>
+<h3 id="providersbedrock"><code>providers.bedrock</code></h3>
+<p>Amazon Bedrock is an optional provider. It is enabled by setting <code>providers.bedrock.region</code>. When enabled, the proxy accepts requests matching <code>/model/{modelId}/converse</code> and <code>/model/{modelId}/converse-stream</code> and forwards them to <code>https://bedrock-runtime.{region}.amazonaws.com</code> using AWS Signature Version 4 authentication. ConverseStream responses (AWS binary event-stream) are forwarded to the client incrementally without buffering.</p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>region</code></td>
+<td>string</td>
+<td>(none - Bedrock disabled)</td>
+<td>AWS region for the Bedrock runtime endpoint (e.g., <code>us-east-1</code>)</td>
+</tr>
+<tr>
+<td><code>roleArn</code></td>
+<td>string</td>
+<td>(none)</td>
+<td>ARN of an IAM role to assume for Bedrock calls (e.g., <code>arn:aws:iam::123456789012:role/BedrockRole</code>). When set, the proxy calls <code>sts:AssumeRole</code> using the host's base credentials and signs Bedrock requests with the resulting session credentials.</td>
+</tr>
+<tr>
+<td><code>tlsVerify</code></td>
+<td>bool</td>
+<td><code>true</code></td>
+<td>Enable TLS certificate verification for the Bedrock connection</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Authentication</strong>: The proxy uses the standard <a href="https://docs.aws.amazon.com/sdkref/latest/guide/standardized-credentials.html">AWS credential chain</a>. No AWS credentials need to be supplied by the client. The recommended deployment pattern is to attach an IAM role to the compute resource running the proxy (EC2 instance profile, ECS task role, Kubernetes service account with IRSA) and grant that role the <code>bedrock:InvokeModel</code> permission. Environment variable credentials (<code>AWS_ACCESS_KEY_ID</code> / <code>AWS_SECRET_ACCESS_KEY</code>) are also supported for development.</p>
+<p>If the host credentials do not have Bedrock access directly (e.g., in a multi-account setup), set <code>roleArn</code> to an IAM role ARN that the proxy should assume. The proxy will call <code>sts:AssumeRole</code> with the host's base credentials and use the resulting session credentials to sign Bedrock requests. The host role must have <code>sts:AssumeRole</code> permission on the target role.</p>
+<p><strong>Minimum IAM policy</strong>:</p>
+<pre><code class="language-json">{
+  &quot;Version&quot;: &quot;2012-10-17&quot;,
+  &quot;Statement&quot;: [{
+    &quot;Effect&quot;: &quot;Allow&quot;,
+    &quot;Action&quot;: &quot;bedrock:InvokeModel&quot;,
+    &quot;Resource&quot;: &quot;arn:aws:bedrock:us-east-1::foundation-model/*&quot;
+  }]
+}
+</code></pre>
+<p><strong>Supported models</strong>: Any model available through the <a href="https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_Converse.html">Bedrock Converse API</a> in the configured region, including Anthropic Claude, Amazon Titan, Meta Llama, Mistral, and Cohere models.</p>
+<p><strong>Streaming</strong>: The <code>/model/{modelId}/converse-stream</code> endpoint is supported. The inbound request is redacted as usual and the AWS binary event-stream response is forwarded to the client incrementally, without buffering. As with the other providers, streamed responses are not outbound-scanned.</p>
+<h3 id="providersazure"><code>providers.azure</code></h3>
+<p>Azure OpenAI is an optional first-class provider. It is enabled by setting <code>providers.azure.target</code> to your resource endpoint. Azure uses deployment-based routing rather than OpenAI's model-in-body convention: the proxy routes any request whose path begins with <code>/openai/deployments/{deployment}/</code>, preserves the path and the <code>api-version</code> query parameter, and forwards it to the configured Azure endpoint. Request and response bodies are OpenAI-compatible, so <strong>inbound redaction is identical to the OpenAI provider</strong>.</p>
+<p>!!! note "Redaction scope"
+    Inbound redaction covers the text-bearing fields of all JSON endpoints the proxy understands — see the <a href="../api/#redacted-fields">Redacted Fields</a> table for the full per-endpoint list. Multipart/binary uploads (file uploads, audio transcriptions, image edits) are <strong>not supported</strong>: the proxy expects a JSON body and rejects multipart requests with <code>400 invalid_request</code>.</p>
+<pre><code class="language-yaml">providers:
+  azure:
+    target: https://my-resource.openai.azure.com
+    apiVersion: &quot;2024-02-01&quot;   # optional: injected when a request omits api-version
+    entraID: false             # false (default) = pass the client's api-key header through
+    # tlsVerify: true
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>target</code></td>
+<td>string</td>
+<td>(none - Azure disabled)</td>
+<td>Azure OpenAI resource endpoint, e.g. <code>https://my-resource.openai.azure.com</code>.</td>
+</tr>
+<tr>
+<td><code>apiVersion</code></td>
+<td>string</td>
+<td>(none)</td>
+<td>Default <code>api-version</code> injected when a request doesn't supply one. Azure requires this parameter; setting it here lets clients that omit it still work. A client-supplied <code>api-version</code> always takes precedence.</td>
+</tr>
+<tr>
+<td><code>entraID</code></td>
+<td>bool</td>
+<td><code>false</code></td>
+<td>When <code>true</code>, the proxy authenticates to Azure with an Azure AD / Entra ID bearer token instead of passing the client's <code>api-key</code> through.</td>
+</tr>
+<tr>
+<td><code>tlsVerify</code></td>
+<td>bool</td>
+<td><code>true</code></td>
+<td>Enable TLS certificate verification for the Azure connection.</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Authentication — two modes:</strong></p>
+<ul>
+<li><strong><code>api-key</code> pass-through (default).</strong> The client sends its Azure <code>api-key</code> header; the proxy forwards it unchanged (the same way it passes through <code>Authorization</code> for OpenAI). No proxy-side credentials are needed.</li>
+<li><strong>Entra ID (<code>entraID: true</code>).</strong> The proxy acquires a token via the <a href="https://learn.microsoft.com/azure/developer/go/azure-sdk-authentication">default Azure credential chain</a> — managed identity, workload identity, or environment credentials (<code>AZURE_CLIENT_ID</code> / <code>AZURE_TENANT_ID</code> / <code>AZURE_CLIENT_SECRET</code>) — caches it until shortly before expiry, and sets it as the <code>Authorization: Bearer</code> header on outbound requests (scope <code>https://cognitiveservices.azure.com/.default</code>). The recommended production pattern is a workload identity / managed identity assigned the <strong>Cognitive Services OpenAI User</strong> role on the resource, so no secrets are handled by clients. A token-acquisition failure returns <code>502</code> (<code>provider_error</code> / <code>azure_auth_failed</code>).</li>
+</ul>
+<p><strong>Client example</strong> (api-key mode):</p>
+<pre><code class="language-bash">curl -k &quot;https://localhost:8080/openai/deployments/gpt-4o/chat/completions?api-version=2024-06-01&quot; \
+  -H &quot;api-key: $AZURE_OPENAI_KEY&quot; \
+  -H &quot;Content-Type: application/json&quot; \
+  -d '{&quot;messages&quot;:[{&quot;role&quot;:&quot;user&quot;,&quot;content&quot;:&quot;Hello&quot;}]}'
+</code></pre>
+<p>Note Azure encodes the model in the deployment name (URL), so the request body's <code>model</code> field is optional; the audit log records whatever the body supplies. When the proxy is not configured for Azure, <code>/openai/deployments/...</code> requests return <code>404</code> (<code>not_found</code> / <code>azure_disabled</code>).</p>
+<h3 id="providersvertex"><code>providers.vertex</code></h3>
+<p>Vertex AI (Gemini on Google Cloud) is an optional first-class provider. It is enabled by setting <code>providers.vertex.project</code> (and typically <code>providers.vertex.location</code>). Vertex's API surface differs from the public Gemini API:</p>
+<ul>
+<li><strong>Regional endpoint.</strong> Requests go to <code>https://{location}-aiplatform.googleapis.com</code> (e.g. <code>us-central1-aiplatform.googleapis.com</code>), not <code>generativelanguage.googleapis.com</code>. The proxy derives this from <code>location</code>, or you can override it with <code>endpoint</code>.</li>
+<li><strong>Resource-style paths.</strong> <code>/v1/projects/{project}/locations/{location}/publishers/google/models/{model}:generateContent</code> and the streaming variant <code>:streamGenerateContent</code>. The proxy routes any request whose path matches this shape; the path is preserved verbatim when forwarding (so <code>{project}</code> and <code>{location}</code> in the URL need not equal the configured values, useful if the proxy fronts multiple projects whose ADC is permitted).</li>
+<li><strong>OAuth2 / ADC authentication.</strong> No <code>?key=</code> query parameter; the proxy acquires a Google access token via <a href="https://cloud.google.com/docs/authentication/application-default-credentials">Application Default Credentials</a> and sets it as the <code>Authorization: Bearer</code> header on outbound requests. The cached token is refreshed shortly before expiry.</li>
+</ul>
+<p>Request and response bodies are the same Gemini schema as the public provider, so <strong>inbound redaction and outbound scanning are identical to the public Gemini provider</strong>.</p>
+<pre><code class="language-yaml">providers:
+  vertex:
+    project: my-gcp-project
+    location: us-central1
+    # endpoint: https://override.example.com   # optional: override the default regional endpoint
+    # tlsVerify: true
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>project</code></td>
+<td>string</td>
+<td>(none - Vertex disabled)</td>
+<td>GCP project ID. Setting this enables the Vertex provider.</td>
+</tr>
+<tr>
+<td><code>location</code></td>
+<td>string</td>
+<td>(none)</td>
+<td>Region used to build the default endpoint (e.g. <code>us-central1</code>). Required unless <code>endpoint</code> is set.</td>
+</tr>
+<tr>
+<td><code>endpoint</code></td>
+<td>string</td>
+<td>derived from <code>location</code></td>
+<td>Override the target URL. Useful for VPC-SC private endpoints or local-emulator testing.</td>
+</tr>
+<tr>
+<td><code>tlsVerify</code></td>
+<td>bool</td>
+<td><code>true</code></td>
+<td>Enable TLS certificate verification for the Vertex connection.</td>
+</tr>
+<tr>
+<td><code>timeouts</code></td>
+<td>object</td>
+<td>(proxy defaults)</td>
+<td>Per-provider <a href="#provider-timeouts">HTTP timeouts</a>.</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Authentication.</strong> The proxy uses <a href="https://cloud.google.com/docs/authentication/application-default-credentials">Application Default Credentials</a> (workload identity, service-account key, the metadata server on GCE/GKE/Cloud Run, <code>gcloud auth application-default login</code>, etc.). The recommended production pattern is a workload identity bound to a service account with the <strong>Vertex AI User</strong> role on the project. The OAuth2 scope used is <code>https://www.googleapis.com/auth/cloud-platform</code>. A token-acquisition failure returns <code>502</code> (<code>provider_error</code> / <code>vertex_auth_failed</code>).</p>
+<p><strong>Client example.</strong></p>
+<pre><code class="language-bash">curl -k &quot;https://localhost:8080/v1/projects/my-gcp-project/locations/us-central1/publishers/google/models/gemini-1.5-pro:generateContent&quot; \
+  -H &quot;Content-Type: application/json&quot; \
+  -d '{&quot;contents&quot;:[{&quot;parts&quot;:[{&quot;text&quot;:&quot;Hello&quot;}]}]}'
+</code></pre>
+<p>The client does not send any credentials -- the proxy attaches the bearer token.</p>
+<p><strong>Streaming.</strong> Vertex's <code>:streamGenerateContent</code> endpoint returns one of two shapes depending on the request:</p>
+<ul>
+<li>With <code>?alt=sse</code> -- Vertex emits a true SSE stream (<code>Content-Type: text/event-stream</code>). The proxy detects this and passes chunks through to the client as they arrive, without buffering.</li>
+<li>Without <code>?alt=sse</code> (default) -- Vertex returns a single <code>application/json</code> array containing all generation chunks. The proxy treats this as a regular non-streaming response: the body is buffered, redacted (when outbound scanning is on), and forwarded in one shot. This is correct behavior given the shape Vertex returns; it just is not "streaming" end-to-end.</li>
+</ul>
+<p>If you want token-by-token streaming end to end, your client must add <code>?alt=sse</code> to the request URL; the proxy forwards query parameters verbatim.</p>
+<p><strong>Audit log.</strong> The model in a Vertex request is identified by the URL (<code>/models/{model}</code>), not the request body. The proxy extracts the model from the path and records it in the audit entry's <code>model</code> field; <code>provider</code> is <code>vertex</code>. When the proxy is not configured for Vertex, requests to <code>/v1/projects/.../models/...:generateContent</code> return <code>404</code> (<code>not_found</code> / <code>vertex_disabled</code>).</p>
+<h3 id="routes"><code>routes</code></h3>
+<p>Routes control which <strong>Philter redaction policy and context</strong> are applied to each request. They do not control which LLM provider handles the request - provider routing is determined automatically by the URL path (see <a href="../api/">API Reference</a> for path-to-provider mapping).</p>
+<p>This means a single route can apply across all providers. For example, a route matching the header <code>x-philter-policy: hipaa</code> will use the HIPAA policy whether the request is going to OpenAI, Anthropic, Gemini, or Ollama.</p>
+<p>Routes are evaluated in order; the first match wins. If no route matches, the <code>defaults</code> are used.</p>
+<p>Each route has a <code>match</code> block with one or more criteria (all specified criteria must match):</p>
+<table>
+<thead>
+<tr>
+<th>Criterion</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>header</code> + <code>value</code></td>
+<td>Matches when the request contains the specified header with the specified value</td>
+</tr>
+<tr>
+<td><code>path</code></td>
+<td>Matches when the request URL path equals this value</td>
+</tr>
+<tr>
+<td><code>model</code></td>
+<td>Matches when the model name in the request body equals this value</td>
+</tr>
+</tbody>
+</table>
+<p>Each route specifies:</p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Required</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>policy</code></td>
+<td>Yes</td>
+<td>Philter policy name to use for redaction</td>
+</tr>
+<tr>
+<td><code>context</code></td>
+<td>No</td>
+<td>Philter context to use (falls back to <code>defaults.context</code> if not set)</td>
+</tr>
+<tr>
+<td><code>outbound</code></td>
+<td>No</td>
+<td>Outbound response scanning settings for this route (see below)</td>
+</tr>
+</tbody>
+</table>
+<h3 id="defaults"><code>defaults</code></h3>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>policy</code></td>
+<td>string</td>
+<td><code>default</code></td>
+<td>Philter policy used when no route matches</td>
+</tr>
+<tr>
+<td><code>context</code></td>
+<td>string</td>
+<td><code>none</code></td>
+<td>Philter context used when no route matches (or when a matched route has no context)</td>
+</tr>
+<tr>
+<td><code>outbound</code></td>
+<td>object</td>
+<td>(disabled)</td>
+<td>Default outbound scanning settings (see below)</td>
+</tr>
+</tbody>
+</table>
+<h3 id="outbound"><code>outbound</code></h3>
+<p>Outbound response scanning runs the LLM's response through Philter before it is returned to the client. It is <strong>disabled by default</strong> and must be explicitly enabled. When enabled, the same Philter policy, context, and document ID used for inbound redaction are reused, so Philter can correlate the request/response pair.</p>
+<p><strong>Latency note:</strong> outbound scanning buffers the full provider response before returning it, adding the round-trip latency of the Philter call. For latency-sensitive workloads, consider enabling outbound scanning only on routes where compliance requires it.</p>
+<p><strong>Streaming note:</strong> outbound scanning cannot inspect a streaming response (<code>text/event-stream</code>, <code>application/x-ndjson</code>, or Bedrock's <code>application/vnd.amazon.eventstream</code>), because the body is delivered incrementally and a detected span can straddle chunk boundaries. What happens next depends on the action:</p>
+<ul>
+<li><code>action: block</code> <strong>fails closed</strong>: the response is rejected with <code>403</code> (<code>pii_blocked</code> / <code>outbound_stream_unscannable</code>) rather than forwarded unscanned. A client can select the streaming path itself by sending <code>"stream": true</code>, so passing it through would let any caller bypass a configured block. Set <code>allowUnscannedStreams: true</code> to restore pass-through.</li>
+<li><code>action: redact</code> and <code>action: flag</code> pass the stream through unchanged with a warning logged, since neither promises the client never sees undetected PII.</li>
+</ul>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>enabled</code></td>
+<td>bool</td>
+<td><code>false</code></td>
+<td>Enable outbound response scanning</td>
+</tr>
+<tr>
+<td><code>action</code></td>
+<td>string</td>
+<td><code>redact</code></td>
+<td>Action when PII is detected: <code>redact</code>, <code>block</code>, or <code>flag</code></td>
+</tr>
+<tr>
+<td><code>allowUnscannedStreams</code></td>
+<td>bool</td>
+<td><code>false</code></td>
+<td>When <code>action</code> is <code>block</code>, forward streaming responses unscanned instead of rejecting them. Restores the pre-fail-closed behavior; has no effect under <code>redact</code> or <code>flag</code>.</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Actions:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Action</th>
+<th>Behaviour</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>redact</code></td>
+<td>Detected PII is replaced with Philter's configured replacement token before the response is returned (default).</td>
+</tr>
+<tr>
+<td><code>block</code></td>
+<td>If any PII is detected, the response is suppressed and the client receives HTTP <code>403</code> with <code>{"error":{"message":"response blocked: PII detected","type":"pii_blocked"}}</code>.</td>
+</tr>
+<tr>
+<td><code>flag</code></td>
+<td>PII is detected and logged as a warning, but the original unmodified response is returned to the client.</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Example - block responses containing PII for HIPAA routes:</strong></p>
+<pre><code class="language-yaml">routes:
+  - match:
+      header: x-philter-policy
+      value: hipaa
+    policy: hipaa-safe-harbor
+    context: healthcare-chatbot
+    outbound:
+      enabled: true
+      action: block
+
+defaults:
+  policy: default
+  context: none
+  outbound:
+    enabled: false
+</code></pre>
+<h2 id="authentication">Authentication</h2>
+<p>Authentication is <strong>disabled by default</strong>. The proxy accepts requests from any client with no credentials required. This is appropriate for simple deployments where network-level controls (firewall, VPC, service mesh) are sufficient. Enable authentication for environments where multiple teams or services share a proxy instance, or where access needs to be scoped per client.</p>
+<h3 id="api-key-authentication">API Key Authentication</h3>
+<p>Configure a list of API keys in the <code>auth</code> section. Each key can optionally be bound to a specific Philter policy.</p>
+<pre><code class="language-yaml">auth:
+  header: x-philter-proxy-key   # optional - this is the default
+  apiKeys:
+    - key: secret-key-for-team-a
+    - key: secret-key-for-healthcare
+      policy: hipaa-safe-harbor   # this key always uses the HIPAA policy
+</code></pre>
+<p>Clients include the key in the configured request header:</p>
+<pre><code class="language-bash">curl -k https://localhost:8080/v1/chat/completions \
+  -H &quot;x-philter-proxy-key: secret-key-for-team-a&quot; \
+  -H &quot;Authorization: Bearer $OPENAI_API_KEY&quot; \
+  -H &quot;Content-Type: application/json&quot; \
+  -d '{&quot;model&quot;:&quot;gpt-4&quot;,&quot;messages&quot;:[{&quot;role&quot;:&quot;user&quot;,&quot;content&quot;:&quot;Hello&quot;}]}'
+</code></pre>
+<p><strong>Behaviour:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Scenario</th>
+<th>Result</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Valid key, no policy binding</td>
+<td>Request proceeds; policy resolved by route matching as normal</td>
+</tr>
+<tr>
+<td>Valid key with policy binding</td>
+<td>Request proceeds; the key's policy overrides the matched route policy</td>
+</tr>
+<tr>
+<td>Missing header</td>
+<td><code>401 Unauthorized</code> with JSON error body</td>
+</tr>
+<tr>
+<td>Invalid key value</td>
+<td><code>401 Unauthorized</code> with JSON error body</td>
+</tr>
+<tr>
+<td>No keys configured</td>
+<td>All requests pass (auth disabled)</td>
+</tr>
+</tbody>
+</table>
+<p><strong>The proxy's auth header is always stripped before forwarding.</strong> The LLM provider never sees <code>x-philter-proxy-key</code>. The provider's own credentials (<code>Authorization: Bearer ...</code>, <code>x-api-key</code>, etc.) pass through unchanged.</p>
+<h4 id="auth-reference"><code>auth</code> reference</h4>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>header</code></td>
+<td>string</td>
+<td><code>x-philter-proxy-key</code></td>
+<td>Request header the proxy reads the API key from</td>
+</tr>
+<tr>
+<td><code>apiKeys</code></td>
+<td>list</td>
+<td>(none - auth disabled)</td>
+<td>List of valid API keys</td>
+</tr>
+</tbody>
+</table>
+<h4 id="authapikeys-entry"><code>auth.apiKeys[]</code> entry</h4>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Required</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>key</code></td>
+<td>string</td>
+<td>Yes</td>
+<td>The API key value. Accepts plaintext, a pre-hashed value (see <a href="#api-key-hashing">Hashing</a>), or a <code>${ENV_VAR}</code> / <code>file:</code> secret reference (see <a href="#loading-secrets-from-environment-variables-and-files">Loading secrets from environment variables and files</a>).</td>
+</tr>
+<tr>
+<td><code>id</code></td>
+<td>string</td>
+<td>No</td>
+<td><strong>Strongly recommended.</strong> Stable opaque identifier used as the concurrency / audit-log <code>key_id</code>. Falls back to the legacy positional <code>key-N</code> when unset, which is fragile across <code>apiKeys</code> reorders. See <a href="#per-key-stable-identifiers">Per-key Stable Identifiers</a>.</td>
+</tr>
+<tr>
+<td><code>policy</code></td>
+<td>string</td>
+<td>No</td>
+<td>Philter policy to enforce for all requests authenticated with this key. Overrides route and default policy.</td>
+</tr>
+<tr>
+<td><code>scopes</code></td>
+<td>object</td>
+<td>No</td>
+<td>Per-key allow-lists for providers, models, and request paths. Empty / unset means full access (backwards compatible). See <a href="#per-key-authorization-scopes">Per-key Authorization</a>.</td>
+</tr>
+</tbody>
+</table>
+<h4 id="per-key-authorization-scopes">Per-key Authorization (scopes)</h4>
+<p>By default, a configured API key may call <strong>any</strong> provider, model, and request path the proxy supports. Multi-tenant deployments often want to constrain individual keys: a tenant's key should only call the providers / models / endpoints that tenant is paying for, and nothing else.</p>
+<p><code>auth.apiKeys[].scopes</code> declares per-key allow-lists. <strong>Empty or unset is full access</strong> (the existing behavior); a non-empty list on any axis is deny-by-default for that axis.</p>
+<pre><code class="language-yaml">auth:
+  apiKeys:
+    - key: team-a-key
+      scopes:
+        providers: [openai, anthropic]   # team A can use OpenAI and Anthropic
+        models: [&quot;gpt-4*&quot;, &quot;claude-3*&quot;]  # only these model families
+        paths: [&quot;/v1/&quot;]                  # everything under /v1/, nothing else
+    - key: team-b-key
+      scopes:
+        providers: [bedrock]             # team B is Bedrock-only
+        # models / paths empty -&gt; any model / path on bedrock
+    - key: legacy-key
+      # no scopes block at all -&gt; unrestricted (backwards compat)
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Default</th>
+<th>Matching</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>providers</code></td>
+<td>string list</td>
+<td>empty (allow all)</td>
+<td>Exact match against the resolved provider name: <code>openai</code>, <code>anthropic</code>, <code>gemini</code>, <code>ollama</code>, <code>azure</code>, <code>bedrock</code>, <code>vertex</code>, or a configured <code>openaiCompatible[].name</code>. A trailing <code>*</code> on an entry makes it a prefix match.</td>
+</tr>
+<tr>
+<td><code>models</code></td>
+<td>string list</td>
+<td>empty (allow all)</td>
+<td>Exact match against the request's <code>model</code> field, or trailing-<code>*</code> glob (e.g. <code>gpt-4*</code>). When set, requests with no model field are denied.</td>
+</tr>
+<tr>
+<td><code>paths</code></td>
+<td>string list</td>
+<td>empty (allow all)</td>
+<td>Prefix match against the request path <strong>after</strong> any <code>openaiCompatible[]</code> provider prefix has been stripped.</td>
+</tr>
+</tbody>
+</table>
+<p>A request must satisfy <strong>every</strong> non-empty axis (logical AND across axes; logical OR within each axis). Denied requests receive <code>HTTP 403</code> with one of:</p>
+<table>
+<thead>
+<tr>
+<th><code>error.type</code></th>
+<th><code>error.code</code></th>
+<th>When</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>forbidden</code></td>
+<td><code>scope_denied_provider</code></td>
+<td>Resolved provider not in the key's <code>providers</code> allow-list.</td>
+</tr>
+<tr>
+<td><code>forbidden</code></td>
+<td><code>scope_denied_model</code></td>
+<td>Request <code>model</code> not in the key's <code>models</code> allow-list (or no <code>model</code> set when the allow-list is configured).</td>
+</tr>
+<tr>
+<td><code>forbidden</code></td>
+<td><code>scope_denied_path</code></td>
+<td>Request path not in any of the key's <code>paths</code> prefix entries.</td>
+</tr>
+</tbody>
+</table>
+<p>The denial is mirrored in the audit log: the <code>key_id</code>, <code>provider</code>, <code>model</code>, <code>error_type</code>, and <code>error_code</code> fields all appear on the inbound audit entry with <code>http_status: 403</code>, so a denied call is fully traceable by <code>request_id</code> without ever exposing the raw key. See <a href="#error-responses">Error Responses</a> for the full client-error contract.</p>
+<h4 id="api-key-hashing">API Key Hashing</h4>
+<p>API keys are <strong>hashed at load</strong> and never stored in memory as plaintext. The in-memory <code>keyStore</code> holds only hashes; verification uses constant-time comparison. This protects against accidental disclosure via heap dumps, debug prints, or core files.</p>
+<p>Three input formats are accepted in the <code>key:</code> field:</p>
+<table>
+<thead>
+<tr>
+<th>Format</th>
+<th>Example</th>
+<th>When to use</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Plaintext</td>
+<td><code>key: SuperSecretAPIKey123</code></td>
+<td>Quickstart. The proxy hashes the value with SHA256 at load. The plaintext is in your YAML file, so keep the file out of source control.</td>
+</tr>
+<tr>
+<td><code>sha256$&lt;64-hex&gt;</code></td>
+<td><code>key: sha256$e3b0c44...</code></td>
+<td>Production. Pre-hash externally, put the hash in YAML. The plaintext never sits in version control or the running config.</td>
+</tr>
+<tr>
+<td><code>bcrypt$&lt;bcrypt-hash&gt;</code></td>
+<td><code>key: bcrypt$$2a$10$N9qo8...</code></td>
+<td>For users with existing bcrypt-based key management or compliance requirements. Slower (see latency table).</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Why SHA256 by default.</strong> API keys are typically high-entropy random tokens (32+ random bytes). The threat model for hashing-at-rest is "an attacker who reaches a memory dump should not be able to recover live credentials." Brute-forcing 256 bits of entropy is infeasible, so a fast hash with constant-time comparison provides adequate protection. The slow-hash family (bcrypt, argon2id) is designed for low-entropy human passwords; for random API keys it adds latency without commensurate security gain.</p>
+<p><strong>Generating pre-hashed values.</strong> For SHA256:</p>
+<pre><code class="language-bash">printf '%s' 'SuperSecretAPIKey123' | sha256sum | awk '{print &quot;sha256$&quot; $1}'
+# sha256$2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae
+</code></pre>
+<p>For bcrypt (using Python; any bcrypt CLI works):</p>
+<pre><code class="language-bash">python3 -c &quot;import bcrypt; print('bcrypt$' + bcrypt.hashpw(b'SuperSecretAPIKey123', bcrypt.gensalt(10)).decode())&quot;
+# bcrypt$$2b$10$Hkpz7C0vQp...
+</code></pre>
+<p><strong>Per-request latency.</strong> Approximate cost of one auth check on a modern x86 server. The proxy iterates all configured keys and verifies the supplied key against each; total latency scales with the number of configured entries.</p>
+<table>
+<thead>
+<tr>
+<th>Format</th>
+<th style="text-align: right;">Per-entry cost</th>
+<th style="text-align: right;">10 entries</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>sha256</code></td>
+<td style="text-align: right;">~1-2 µs</td>
+<td style="text-align: right;">~20 µs</td>
+<td>Recommended default. Negligible for any realistic QPS.</td>
+</tr>
+<tr>
+<td><code>bcrypt</code> cost=4</td>
+<td style="text-align: right;">~1-2 ms</td>
+<td style="text-align: right;">~10-20 ms</td>
+<td>bcrypt minimum cost; faster than the default but still meaningful.</td>
+</tr>
+<tr>
+<td><code>bcrypt</code> cost=10</td>
+<td style="text-align: right;">~60-100 ms</td>
+<td style="text-align: right;">~600 ms-1 s</td>
+<td>bcrypt default cost. <strong>Avoid at high QPS</strong> - this will dominate your request latency.</td>
+</tr>
+<tr>
+<td><code>bcrypt</code> cost=12</td>
+<td style="text-align: right;">~250-400 ms</td>
+<td style="text-align: right;">several seconds</td>
+<td>bcrypt's "recommended" password cost. Not appropriate for API keys.</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Recommendations:</strong></p>
+<ul>
+<li>Default (SHA256): no tuning needed.</li>
+<li>bcrypt: pick the lowest cost your compliance requirements allow. cost=4 is appropriate for high-throughput API key use.</li>
+</ul>
+<p><strong>Per-key features (audit, policy binding).</strong> The proxy assigns each <code>auth.apiKeys[]</code> entry an opaque stable identifier. The audit-log <code>key_id</code> is keyed by this identifier, so the raw API key never has to reach the log. See <a href="#per-key-stable-identifiers">Per-key Stable Identifiers</a> for the explicit <code>id:</code> field (strongly recommended) and the legacy positional fallback (<code>key-0</code>, <code>key-1</code>, ...).</p>
+<h4 id="per-key-stable-identifiers">Per-key Stable Identifiers</h4>
+<p>Each <code>auth.apiKeys[]</code> entry can declare an explicit <code>id:</code> field, which is used as its stable opaque identifier wherever the proxy needs one (concurrency bucket, audit log <code>key_id</code>):</p>
+<pre><code class="language-yaml">auth:
+  apiKeys:
+    - key: ${TEAM_A_KEY}
+      id: team-a                 # explicit
+    - key: ${TEAM_B_KEY}
+      id: team-b
+</code></pre>
+<p>When <code>id:</code> is omitted the proxy falls back to the legacy positional identifier (<code>key-0</code>, <code>key-1</code>, ... derived from the entry's position in the list). <strong>Setting <code>id:</code> explicitly is strongly recommended</strong> because the positional fallback is fragile: inserting a new entry at the top of the list, removing a middle entry, or even reordering for readability re-shuffles which key owns which identifier, so audit-log history silently follows the wrong key.</p>
+<p>Validation:</p>
+<ul>
+<li>Each explicit <code>id:</code> must be unique across <code>auth.apiKeys</code>.</li>
+<li>Explicit <code>id:</code> values must not start with the reserved prefix <code>key-</code> (which would collide with the legacy positional scheme).</li>
+</ul>
+<p>Migrating from positional IDs: add <code>id:</code> to each entry, choosing a stable label (<code>team-a</code>, <code>team-b</code>, etc.). The transition is opt-in -- entries without <code>id:</code> continue to receive their positional identifier, so audit-log continuity is preserved for keys you have not relabelled yet.</p>
+<h4 id="loading-secrets-from-environment-variables-and-files">Loading secrets from environment variables and files</h4>
+<p>Storing API keys as plaintext in <code>config.yaml</code> means they end up in version control or baked into container images. To keep secrets out of the config file, the <code>key:</code> field accepts two reference syntaxes in addition to literal values:</p>
+<table>
+<thead>
+<tr>
+<th>Syntax</th>
+<th>Example</th>
+<th>Resolves to</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>${ENV_VAR}</code></td>
+<td><code>key: ${TEAM_A_KEY}</code></td>
+<td>The value of the <code>TEAM_A_KEY</code> environment variable</td>
+</tr>
+<tr>
+<td><code>file:&lt;path&gt;</code></td>
+<td><code>key: file:/run/secrets/team-a</code></td>
+<td>The contents of <code>/run/secrets/team-a</code> (trailing whitespace/newline trimmed)</td>
+</tr>
+<tr>
+<td>literal</td>
+<td><code>key: secret-key-for-team-a</code></td>
+<td>Used verbatim (backwards-compatible)</td>
+</tr>
+</tbody>
+</table>
+<pre><code class="language-yaml">auth:
+  apiKeys:
+    - key: ${TEAM_A_KEY}                  # from environment variable
+    - key: file:/run/secrets/healthcare   # from a mounted file
+      policy: hipaa-safe-harbor
+    - key: secret-key-legacy              # plaintext literal still works
+</code></pre>
+<p>References are resolved <strong>once, at config load</strong>, before validation and hashing. The resolved value then flows through the same <a href="#api-key-hashing">hashing</a> path as a literal — so a plaintext secret loaded from a file or env var is still SHA256-hashed in memory and never retained as plaintext beyond load.</p>
+<p>This is the recommended way to integrate with external secret stores:</p>
+<ul>
+<li><strong>Kubernetes / Docker secrets</strong> — mount the secret as a file and reference it with <code>file:/run/secrets/...</code>.</li>
+<li><strong>HashiCorp Vault, AWS Secrets Manager, etc.</strong> — have your init container or entrypoint export the secret into an environment variable (e.g. <code>vault read</code>, <code>aws secretsmanager get-secret-value</code>) and reference it with <code>${VAR}</code>.</li>
+</ul>
+<p><strong>Error handling.</strong> If a referenced environment variable is unset or empty, or a referenced file is missing or empty, the proxy fails to start with a clear error that names the variable or path. <strong>Validation and resolution errors never echo the secret value itself</strong> — only the reference (env var name or file path), which is not sensitive.</p>
+<p>This syntax is implemented by a generic resolver (<code>resolveSecret</code>) and is intended to apply to any future secret-bearing config field (such as provider auth headers), not just <code>auth.apiKeys[].key</code>.</p>
+<h4 id="rotating-api-keys">Rotating API keys</h4>
+<p>Because secrets are resolved at config load, rotation follows the lifecycle of the underlying env var / file plus a config reload:</p>
+<ol>
+<li><strong>Issue the new key</strong> in your secret store (Vault, Secrets Manager, Kubernetes Secret, etc.).</li>
+<li><strong>Add it alongside the old one</strong> as a second <code>auth.apiKeys[]</code> entry so both are valid during the cutover window (zero-downtime). For example, mount the new secret at <code>file:/run/secrets/team-a-next</code> and add a second entry referencing it.</li>
+<li><strong>Reload the proxy</strong> so it re-resolves the references and picks up the new value:<ul>
+<li>The proxy re-reads its config (and therefore re-resolves <code>${ENV_VAR}</code> / <code>file:</code> references) <strong>on process restart</strong>.</li>
+</ul>
+</li>
+<li><strong>Migrate clients</strong> to the new key.</li>
+<li><strong>Remove the old entry</strong> and revoke the old secret in your store, then reload again.</li>
+</ol>
+<p>Because the value lives in the secret store rather than the YAML, rotation does not require editing and re-committing <code>config.yaml</code>.</p>
+<h3 id="mtls-mutual-tls">mTLS (Mutual TLS)</h3>
+<p>For service-to-service authentication in zero-trust environments, the proxy can require clients to present a valid TLS certificate signed by a configured CA. Set <code>listen.clientCA</code> to the path of the PEM-encoded CA certificate:</p>
+<pre><code class="language-yaml">listen:
+  port: 8080
+  cert: /etc/philter-proxy/tls/tls.crt
+  key: /etc/philter-proxy/tls/tls.key
+  clientCA: /etc/ssl/client-ca.pem
+</code></pre>
+<p>When <code>clientCA</code> is set, the proxy configures <code>RequireAndVerifyClientCert</code> on its TLS listener. Any connection without a valid client certificate is rejected at the TLS handshake level, before any HTTP processing occurs.</p>
+<p><strong>mTLS and API key authentication are orthogonal</strong> - either or both can be enabled simultaneously. A typical defence-in-depth configuration uses mTLS to authenticate the connection and API keys to scope policy access per team.</p>
+<p><strong>Generating a test client certificate:</strong></p>
+<pre><code class="language-bash"># CA key and cert (one-time setup)
+openssl req -newkey rsa:4096 -keyout ca.key -x509 -days 3650 -out ca.crt -subj &quot;/CN=My Proxy CA&quot;
+
+# Client key and CSR
+openssl req -newkey rsa:2048 -keyout client.key -out client.csr -subj &quot;/CN=my-service&quot;
+
+# Sign the client cert with the CA
+openssl x509 -req -in client.csr -CA ca.crt -CAkey ca.key -CAcreateserial -out client.crt -days 365
+</code></pre>
+<p>Set <code>listen.clientCA: ca.crt</code> in the proxy config, then pass <code>--cert client.crt --key client.key</code> to curl (or configure the equivalent in your HTTP client).</p>
+<h2 id="audit-logging">Audit Logging</h2>
+<p>Every proxy request produces a structured JSON log entry (JSONL) to stdout. All output from the proxy - audit entries, startup, shutdown, and errors - is structured JSON, making it safe to pipe directly into log aggregators.</p>
+<h3 id="log-schema">Log Schema</h3>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>time</code></td>
+<td>string</td>
+<td>ISO 8601 timestamp</td>
+</tr>
+<tr>
+<td><code>request_id</code></td>
+<td>string</td>
+<td>Unique ID for request correlation</td>
+</tr>
+<tr>
+<td><code>direction</code></td>
+<td>string</td>
+<td>Scan direction: <code>inbound</code> (request) or <code>outbound</code> (response, when outbound scanning is enabled)</td>
+</tr>
+<tr>
+<td><code>provider</code></td>
+<td>string</td>
+<td>LLM provider (<code>openai</code>, <code>anthropic</code>, <code>gemini</code>, <code>ollama</code>, <code>azure</code>, <code>bedrock</code>, <code>vertex</code>, or an <code>openaiCompatible[].name</code>)</td>
+</tr>
+<tr>
+<td><code>model</code></td>
+<td>string</td>
+<td>Model name from the request body</td>
+</tr>
+<tr>
+<td><code>policy_name</code></td>
+<td>string</td>
+<td>Philter policy used for redaction</td>
+</tr>
+<tr>
+<td><code>document_id</code></td>
+<td>string</td>
+<td>Philter document ID (correlates with Philter's own logs)</td>
+</tr>
+<tr>
+<td><code>fields_redacted</code></td>
+<td>int</td>
+<td>Number of text fields sent through Philter</td>
+</tr>
+<tr>
+<td><code>entity_count</code></td>
+<td>int</td>
+<td>Total number of entities detected and redacted</td>
+</tr>
+<tr>
+<td><code>entity_types</code></td>
+<td>string[]</td>
+<td>Distinct entity types detected (e.g., <code>["NER_ENTITY", "SSN"]</code>)</td>
+</tr>
+<tr>
+<td><code>redact_latency_ms</code></td>
+<td>int</td>
+<td>Total time spent on Philter redaction calls (milliseconds)</td>
+</tr>
+<tr>
+<td><code>client_ip</code></td>
+<td>string</td>
+<td>Client IP address (supports <code>X-Forwarded-For</code>)</td>
+</tr>
+<tr>
+<td><code>key_id</code></td>
+<td>string</td>
+<td>Opaque stable identifier (<code>key-N</code>) of the authenticated API key, or empty when no key was authenticated. Never the raw key. Use this to correlate per-key authorization decisions (including <a href="#per-key-authorization-scopes">scope denials</a>) end-to-end.</td>
+</tr>
+<tr>
+<td><code>http_status</code></td>
+<td>int</td>
+<td>HTTP status code of the upstream provider response</td>
+</tr>
+<tr>
+<td><code>error_type</code></td>
+<td>string</td>
+<td>The <code>error.type</code> value the client received. Empty on 2xx responses. See <a href="#error-responses">Error Responses</a>.</td>
+</tr>
+<tr>
+<td><code>error_code</code></td>
+<td>string</td>
+<td>The <code>error.code</code> value the client received. Empty on 2xx responses. See <a href="#error-responses">Error Responses</a>.</td>
+</tr>
+<tr>
+<td><code>trace_id</code></td>
+<td>string</td>
+<td>W3C trace ID, when OpenTelemetry tracing is enabled and the request was sampled. Use it to cross-reference audit log entries with traces in your APM. See <a href="../monitoring/#distributed-tracing">Distributed Tracing</a>.</td>
+</tr>
+</tbody>
+</table>
+<p>This table is the whole entry. No field carries message content, prompt text, or the redacted text Philter returns, and the same holds for the application log and for Prometheus metric labels. See <a href="../faq/#is-any-sensitive-data-logged">Is any sensitive data logged?</a> for how that is enforced. <code>client_ip</code> is present by design and may be considered personal data under GDPR.</p>
+<h3 id="example-log-entries">Example Log Entries</h3>
+<p>When outbound scanning is disabled (default), one entry is emitted per request:</p>
+<pre><code class="language-json">{&quot;time&quot;:&quot;2026-01-15T10:30:00Z&quot;,&quot;level&quot;:&quot;INFO&quot;,&quot;msg&quot;:&quot;request&quot;,&quot;request_id&quot;:&quot;a1b2c3d4&quot;,&quot;direction&quot;:&quot;inbound&quot;,&quot;provider&quot;:&quot;openai&quot;,&quot;model&quot;:&quot;gpt-4&quot;,&quot;policy_name&quot;:&quot;default&quot;,&quot;document_id&quot;:&quot;doc-789&quot;,&quot;fields_redacted&quot;:2,&quot;entity_count&quot;:3,&quot;entity_types&quot;:[&quot;NER_ENTITY&quot;,&quot;SSN&quot;],&quot;redact_latency_ms&quot;:45,&quot;client_ip&quot;:&quot;10.0.0.1&quot;,&quot;http_status&quot;:200}
+</code></pre>
+<p>When outbound scanning is enabled, two entries are emitted per request - one for the inbound scan and one for the outbound scan. Both share the same <code>request_id</code> and <code>document_id</code> for correlation. Token counts appear on the inbound entry only:</p>
+<pre><code class="language-json">{&quot;time&quot;:&quot;2026-01-15T10:30:00Z&quot;,&quot;level&quot;:&quot;INFO&quot;,&quot;msg&quot;:&quot;request&quot;,&quot;request_id&quot;:&quot;a1b2c3d4&quot;,&quot;direction&quot;:&quot;outbound&quot;,&quot;provider&quot;:&quot;openai&quot;,&quot;model&quot;:&quot;gpt-4&quot;,&quot;policy_name&quot;:&quot;default&quot;,&quot;document_id&quot;:&quot;doc-789&quot;,&quot;fields_redacted&quot;:1,&quot;entity_count&quot;:1,&quot;entity_types&quot;:[&quot;NER_ENTITY&quot;],&quot;redact_latency_ms&quot;:12,&quot;client_ip&quot;:&quot;10.0.0.1&quot;,&quot;http_status&quot;:200}
+{&quot;time&quot;:&quot;2026-01-15T10:30:00Z&quot;,&quot;level&quot;:&quot;INFO&quot;,&quot;msg&quot;:&quot;request&quot;,&quot;request_id&quot;:&quot;a1b2c3d4&quot;,&quot;direction&quot;:&quot;inbound&quot;,&quot;provider&quot;:&quot;openai&quot;,&quot;model&quot;:&quot;gpt-4&quot;,&quot;policy_name&quot;:&quot;default&quot;,&quot;document_id&quot;:&quot;doc-789&quot;,&quot;fields_redacted&quot;:2,&quot;entity_count&quot;:3,&quot;entity_types&quot;:[&quot;NER_ENTITY&quot;,&quot;SSN&quot;],&quot;redact_latency_ms&quot;:45,&quot;client_ip&quot;:&quot;10.0.0.1&quot;,&quot;http_status&quot;:200}
+</code></pre>
+<h3 id="siem-integration">SIEM Integration</h3>
+<p>The proxy outputs one JSON object per line (JSONL) to stdout, which is the standard format for container-based log collection. Common integrations:</p>
+<ul>
+<li><strong>Fluentd / Fluent Bit</strong>: Use the <code>tail</code> input plugin pointed at the container's stdout, or the <code>forward</code> input with Docker's fluentd log driver. No parsing configuration is needed since the output is already JSON.</li>
+<li><strong>Promtail / Loki</strong>: Configure a <code>docker</code> or <code>journal</code> source. Use the <code>json</code> pipeline stage to extract fields for label-based querying.</li>
+<li><strong>Splunk</strong>: Use the Splunk Connect for Kubernetes or the HTTP Event Collector (HEC) with <code>sourcetype=_json</code>.</li>
+<li><strong>Elastic (Filebeat)</strong>: Use the <code>container</code> or <code>log</code> input with <code>json.keys_under_root: true</code> and <code>json.add_error_key: true</code>.</li>
+<li><strong>AWS CloudWatch</strong>: Container stdout is captured automatically with ECS or EKS. Use CloudWatch Logs Insights to query JSON fields directly.</li>
+</ul>
+<p>For file-based collection (non-containerized deployments), set <code>logging.file</code> in the config and point your collector at that path.</p>
+<h2 id="streaming">Streaming</h2>
+<p>The proxy supports streaming responses (<code>stream: true</code>) for all four providers:</p>
+<ul>
+<li><strong>OpenAI</strong>: Server-Sent Events (SSE) with <code>data:</code> prefixed chunks</li>
+<li><strong>Anthropic</strong>: SSE with <code>event:</code> / <code>data:</code> chunks</li>
+<li><strong>Gemini</strong>: Chunked JSON via <code>streamGenerateContent</code></li>
+<li><strong>Ollama</strong>: Newline-delimited JSON (streaming is the default)</li>
+</ul>
+<p>Streaming requires no additional configuration. Inbound prompt redaction works identically for streaming and non-streaming requests. Response chunks are forwarded to the client in real time without buffering.</p>
+<h2 id="tls-configuration">TLS Configuration</h2>
+<h3 id="listener-certificate">Listener certificate</h3>
+<p>The proxy always listens over TLS, so it needs a certificate before it will start. Set <code>listen.cert</code> and <code>listen.key</code> to your keypair:</p>
+<pre><code class="language-yaml">listen:
+  cert: /etc/philter-proxy/tls/tls.crt
+  key: /etc/philter-proxy/tls/tls.key
+</code></pre>
+<p>There is no default path. Starting with neither a keypair nor <code>devSelfSignedCert</code> fails immediately with an error naming both fields.</p>
+<h3 id="evaluation-certificates">Evaluation certificates</h3>
+<p><code>listen.devSelfSignedCert: true</code> makes the proxy generate a self-signed certificate at startup so it can run with no setup:</p>
+<pre><code class="language-yaml">listen:
+  devSelfSignedCert: true
+</code></pre>
+<p>The key is generated in memory, is different on every start, and is never written to disk. The container image ships no certificate of its own for the same reason: a keypair baked into an image at build time is the same private key for everyone who pulls it.</p>
+<p>Clients must disable certificate verification to connect, which removes the protection TLS is there to provide, so this is for local evaluation and automated tests only. The proxy logs a warning on every start while it is enabled.</p>
+<p><strong>An operator-supplied keypair always wins.</strong> If <code>cert</code> and <code>key</code> are set, they are used even when <code>devSelfSignedCert</code> is also true, and the proxy warns that the flag is being ignored. A configured keypair that fails to load is a startup failure, never a reason to fall back to a generated certificate.</p>
+<h3 id="outbound-verification">Outbound verification</h3>
+<p>By default, TLS certificate verification is enabled for all outbound connections (both to the Philter backend and to LLM providers). This is the recommended configuration for production deployments.</p>
+<h3 id="philter-backend-with-self-signed-certificate">Philter Backend with Self-Signed Certificate</h3>
+<p>If your Philter instance uses a self-signed certificate or a certificate from an internal CA, provide the CA certificate in the config:</p>
+<pre><code class="language-yaml">philter:
+  endpoint: https://philter.internal:8080
+  caCert: /etc/ssl/internal-ca.pem
+</code></pre>
+<h3 id="disabling-tls-verification-development-only">Disabling TLS Verification (Development Only)</h3>
+<p>To disable TLS verification for the Philter backend:</p>
+<pre><code class="language-yaml">philter:
+  tlsVerify: false
+</code></pre>
+<p>To disable TLS verification for a specific LLM provider:</p>
+<pre><code class="language-yaml">providers:
+  ollama:
+    target: https://ollama.internal:11434
+    tlsVerify: false
+</code></pre>
+<p><strong>Warning:</strong> Disabling TLS verification makes connections vulnerable to man-in-the-middle attacks. Only disable verification in trusted development environments.</p>
+<h2 id="provider-timeouts">Provider Timeouts</h2>
+<p>Every outbound HTTP client the proxy creates (Philter, the four built-in LLM providers, every <code>openaiCompatible</code> entry, and Bedrock) honors a configurable set of transport-level timeouts. They protect the proxy from a hung upstream (stalled LLM, dropped TCP, slow-loris attack) by bounding the network phases of each call without breaking streaming responses.</p>
+<pre><code class="language-yaml">providers:
+  openai:
+    target: https://api.openai.com
+    timeouts:
+      connectMs: 5000          # TCP dial
+      tlsHandshakeMs: 5000     # TLS handshake
+      responseHeaderMs: 30000  # wait for upstream to start responding
+      idleConnMs: 90000        # keep-alive idle eviction
+</code></pre>
+<p>The same <code>timeouts:</code> block is accepted under <code>philter:</code>, <code>providers.bedrock:</code>, and each <code>providers.openaiCompatible.*</code> entry.</p>
+<h3 id="fields-and-defaults">Fields and defaults</h3>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th style="text-align: right;">Default</th>
+<th>What it bounds</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>connectMs</code></td>
+<td style="text-align: right;">5000</td>
+<td>TCP dial (<code>net.Dialer.Timeout</code>)</td>
+</tr>
+<tr>
+<td><code>tlsHandshakeMs</code></td>
+<td style="text-align: right;">5000</td>
+<td>TLS handshake (<code>http.Transport.TLSHandshakeTimeout</code>)</td>
+</tr>
+<tr>
+<td><code>responseHeaderMs</code></td>
+<td style="text-align: right;">30000</td>
+<td>Wait for response headers (<code>http.Transport.ResponseHeaderTimeout</code>). This is the timeout that catches a hung LLM that never starts responding.</td>
+</tr>
+<tr>
+<td><code>idleConnMs</code></td>
+<td style="text-align: right;">90000</td>
+<td>Idle keep-alive eviction (<code>http.Transport.IdleConnTimeout</code>)</td>
+</tr>
+</tbody>
+</table>
+<p>A value of <code>0</code> or an omitted field uses the default. All values are milliseconds.</p>
+<h3 id="streaming-and-timeouts">Streaming and timeouts</h3>
+<p>The proxy deliberately does <strong>not</strong> set an overall request deadline (<code>http.Client.Timeout</code>). All four timeouts above are <em>transport-phase</em> timeouts — once the upstream has sent response headers, the body can stream for as long as the upstream keeps producing data. This means:</p>
+<ul>
+<li>A hung LLM that accepts the connection but never starts streaming is killed by <code>responseHeaderMs</code> (default 30s).</li>
+<li>A long-running streaming completion that takes 5 minutes to finish writing the body is <strong>not</strong> killed by any timeout, and that is the intended behavior.</li>
+</ul>
+<p>If you need a hard ceiling on streaming wall-clock time you must enforce it at the client, with an ingress-level connection timeout, or by adding cancellation logic to your application.</p>
+<h3 id="when-to-tune">When to tune</h3>
+<ul>
+<li><strong>Faster <code>responseHeaderMs</code> for an in-cluster Philter.</strong> The 30s default fits LLM round-trips; a same-cluster Philter typically responds in single-digit milliseconds, and a 1-2s <code>responseHeaderMs</code> will surface backend issues much faster.</li>
+<li><strong>Slower <code>responseHeaderMs</code> for slow models or reasoning APIs.</strong> Some chain-of-thought / o1-style endpoints take 60+ seconds before the first token. Raise the default if you see spurious 502s on otherwise-healthy traffic.</li>
+<li><strong>Tighter <code>connectMs</code> for in-cluster providers.</strong> Local services should connect in milliseconds; a tighter dial timeout helps shed traffic to dead pods faster than the default 5s.</li>
+</ul>
+<h2 id="concurrency-limits">Concurrency Limits</h2>
+<p>The proxy can cap the number of requests it processes at any one time. When the cap is reached the proxy returns <code>503 Service Unavailable</code> with <code>Retry-After: 1</code> instead of queuing the request or running out of resources. Concurrency limits are <strong>disabled by default</strong> for backwards compatibility.</p>
+<pre><code class="language-yaml">listen:
+  maxConcurrentRequests: 200   # global in-flight cap; 0 (default) = unlimited
+</code></pre>
+<p>This is a proxy-wide ceiling protecting the proxy and the Philter instance behind it from unbounded in-flight work. Per-client concurrency policy is deliberately not handled here: use your AI gateway's per-key parallelism control. See <a href="../ai-gateway/">Using with an AI Gateway</a>.</p>
+<p>!!! warning "Pair the concurrency cap with <code>listen.readTimeoutMs</code> for hostile clients"
+    The proxy acquires its concurrency slot <em>before</em> reading the request body, so a slow-body uploader holds the slot for the duration of its upload. With <code>listen.readTimeoutMs</code> disabled (the documented default for large/slow legitimate uploads), a hostile client can dribble bodies indefinitely and occupy slots. When you configure <code>maxConcurrentRequests</code> to defend against this class of abuse, also set <code>listen.readTimeoutMs</code> to a value that bounds reasonable upload time (e.g. 60000 for 60s). See <a href="#request-hardening">Request Hardening</a>.</p>
+<h3 id="behaviour-when-the-limit-is-exceeded">Behaviour when the limit is exceeded</h3>
+<p>When the cap is reached, the proxy returns:</p>
+<ul>
+<li>HTTP status <code>503 Service Unavailable</code></li>
+<li>Headers: <code>Retry-After: 1</code>, <code>Content-Type: application/json</code></li>
+<li>JSON body: <code>{"error":{"message":"concurrency limit exceeded","type":"capacity"}}</code></li>
+</ul>
+<p>The <code>Retry-After</code> value is fixed at 1 second because there is no deterministic time at which a concurrency slot will free up.</p>
+<p>A structured warning is logged with the scope and the client identifier:</p>
+<pre><code class="language-json">{&quot;time&quot;:&quot;...&quot;,&quot;level&quot;:&quot;WARN&quot;,&quot;msg&quot;:&quot;Concurrency limit exceeded&quot;,&quot;scope&quot;:&quot;global&quot;,&quot;client&quot;:&quot;team-a&quot;}
+</code></pre>
+<h3 id="choosing-a-value">Choosing a value</h3>
+<p>A defensible starting point:</p>
+<pre><code>maxConcurrentRequests = 2 × (target_rps × p95_provider_response_seconds)
+</code></pre>
+<p>The <code>2×</code> is headroom for tail latency and short bursts. Cross-check against:</p>
+<ul>
+<li><strong>Your LLM provider's concurrent-request quota.</strong> Set the proxy cap no higher than what your account can actually serve - otherwise you push work into the provider's queue and lose the back-pressure signal here.</li>
+<li><strong>File descriptors.</strong> Each in-flight request needs ~3 sockets (client + Philter + provider). Default <code>ulimit -n</code> of 1024 is exhausted around ~330 concurrent. Raise it before raising the cap.</li>
+<li><strong>Memory.</strong> Each in-flight request holds one goroutine plus buffered request/response bodies (rough estimate: 50–200 KB per request). 1,000 concurrent ≈ 50–200 MB of proxy state.</li>
+</ul>
+<p>See the <a href="../monitoring/#concurrency">Monitoring</a> page for the metrics to watch and a PromQL recipe for computing utilization.</p>
+<h2 id="request-hardening">Request Hardening</h2>
+<p>The proxy is network-facing, so it bounds the <strong>size and duration of inbound client requests</strong> in addition to the <a href="#concurrency-limits">concurrency</a> (count) and <a href="#provider-timeouts">provider timeout</a> (outbound) limits. These are configured under <code>listen</code> and applied with secure defaults when unset:</p>
+<pre><code class="language-yaml">listen:
+  maxRequestBodyBytes: 10485760   # 10 MiB; larger bodies → HTTP 413
+  maxHeaderBytes: 1048576         # 1 MiB
+  readHeaderTimeoutMs: 10000      # 10s to send headers (slowloris mitigation)
+  readTimeoutMs: 0                # 0 = disabled; whole-request (incl. body) read bound
+  tlsHandshakeTimeoutMs: 10000    # 10s to complete the TLS handshake
+  maxConcurrentTLSHandshakes: 16384  # ceiling on simultaneous in-flight handshakes
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Protection</th>
+<th>Field</th>
+<th>Default</th>
+<th>Behaviour</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Body size</strong></td>
+<td><code>maxRequestBodyBytes</code></td>
+<td>10 MiB</td>
+<td>The body is wrapped in a hard limit; exceeding it returns <code>413 Too Large</code> (<code>payload_too_large</code> / <code>request_body_too_large</code>) and the connection is closed. Raise it if you send large multimodal (base64 image) requests.</td>
+</tr>
+<tr>
+<td><strong>Header size</strong></td>
+<td><code>maxHeaderBytes</code></td>
+<td>1 MiB</td>
+<td>Caps total request header bytes (matches net/http's default).</td>
+</tr>
+<tr>
+<td><strong>Slowloris (headers)</strong></td>
+<td><code>readHeaderTimeoutMs</code></td>
+<td>10s</td>
+<td>Bounds how long a client may take to send the request headers; a client that dribbles headers to hold the connection open is dropped.</td>
+</tr>
+<tr>
+<td><strong>Slow body</strong></td>
+<td><code>readTimeoutMs</code></td>
+<td>disabled</td>
+<td>Bounds reading the whole request (headers + body). Opt-in, because a too-low value would truncate large or slow legitimate uploads. It affects only request reads.</td>
+</tr>
+<tr>
+<td><strong>Slowloris (handshake)</strong></td>
+<td><code>tlsHandshakeTimeoutMs</code></td>
+<td>10s</td>
+<td>Bounds how long a client may take to complete the TLS handshake. <code>readHeaderTimeoutMs</code> only starts ticking <strong>after</strong> the handshake completes, so a client that opens a TLS connection and then dribbles the handshake (or never finishes it) would otherwise tie up the connection indefinitely. Each accepted connection is gated by this deadline on its own goroutine, so one slow client cannot stall accepts of other clients. Once the handshake succeeds the deadline is cleared, so post-handshake reads and response streaming are unaffected.</td>
+</tr>
+<tr>
+<td><strong>Handshake flood</strong></td>
+<td><code>maxConcurrentTLSHandshakes</code></td>
+<td>16384</td>
+<td>Ceiling on the number of TLS handshakes in flight at once. <code>tlsHandshakeTimeoutMs</code> bounds the <em>duration</em> of each handshake but not how <em>many</em> run concurrently: under a TCP+ClientHello flood, every accepted connection would otherwise spawn a goroutine pinned for the full handshake timeout. When the ceiling is reached, new connections are dropped immediately (not queued) and counted by <code>philter_proxy_tls_handshakes_shed_total</code>. The slot is released the instant a handshake resolves — before the connection is handed to net/http — so this gates only the handshake phase and never throttles established connections. The default is far above any real workload; lower it only if you want a tighter bound on peak handshake memory.</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Streaming is unaffected.</strong> The proxy deliberately does <strong>not</strong> set a write timeout, so streamed responses can run arbitrarily long. <code>readTimeoutMs</code> bounds only the inbound request, never the response. The same header limits and timeouts are applied to the metrics server; the handshake timeout applies only to the TLS-terminating listener.</p>
+<h3 id="trusted-proxies-x-forwarded-for">Trusted Proxies / X-Forwarded-For</h3>
+<p>The proxy uses the apparent client IP for the <strong>audit log's <code>client_ip</code> field</strong> and for operator-facing log lines.</p>
+<p>By default, <code>r.RemoteAddr</code> -- the immediate TCP peer -- is used, and <code>X-Forwarded-For</code> is ignored. This is the safe behavior when the proxy is exposed directly to clients: any attacker could otherwise set XFF to a value of their choosing, corrupting audit-log IPs.</p>
+<p>When the proxy runs behind a trusted upstream (ALB, NLB, Nginx, Cloudflare, an Istio sidecar, etc.), <code>listen.trustedProxies</code> must list the CIDR ranges those upstreams connect from, so the proxy can recognize them and honor the XFF they set:</p>
+<pre><code class="language-yaml">listen:
+  trustedProxies:
+    - 10.0.0.0/8         # internal LB subnet
+    - 172.16.0.0/12      # peered VPC
+    - 192.168.1.0/24
+</code></pre>
+<p>Behavior:</p>
+<ul>
+<li>If <code>r.RemoteAddr</code>'s IP falls inside any configured CIDR, the <strong>left-most</strong> non-empty <code>X-Forwarded-For</code> entry is taken as the client IP.</li>
+<li>If the peer is not in any CIDR (or no CIDRs are configured at all), XFF is silently ignored and <code>r.RemoteAddr</code> is used.</li>
+<li>Each CIDR is validated at startup; a malformed entry fails the config.</li>
+</ul>
+<p>This is a <strong>behavioral change vs earlier releases</strong>, which trusted XFF unconditionally. Deployments that legitimately relied on XFF (those running behind a real LB) need to add the LB's source CIDR(s) to restore the previous behavior.</p>
+<p>These limits apply per request and are independent of the concurrency guard: concurrency bounds <em>how many</em> requests run at once, while these bound <em>how big</em> and <em>how slow</em> any single request may be.</p>
+<h2 id="error-responses">Error Responses</h2>
+<p>Every error the proxy generates uses the same structured JSON shape and the same set of stable codes. Clients can parse these reliably to drive retry, alerting, and routing.</p>
+<h3 id="response-shape">Response shape</h3>
+<pre><code class="language-json">{
+  &quot;error&quot;: {
+    &quot;message&quot;: &quot;human-readable description&quot;,
+    &quot;type&quot;: &quot;broad-category enum&quot;,
+    &quot;code&quot;: &quot;specific-reason enum&quot;,
+    &quot;request_id&quot;: &quot;uuid-or-X-Request-Id-from-caller&quot;
+  }
+}
+</code></pre>
+<ul>
+<li><code>Content-Type: application/json</code> is set on every error.</li>
+<li><code>X-Request-Id</code> is set on every response (success and error) with the same value as <code>error.request_id</code>.</li>
+<li>An inbound <code>X-Request-Id</code> request header is honored when present; otherwise a UUID is generated.</li>
+</ul>
+<h3 id="stable-enum">Stable enum</h3>
+<p>The <code>(type, code)</code> set below is part of the proxy's public API. New codes may be added in any release. <strong>Existing codes will not be removed or repurposed across minor versions.</strong></p>
+<table>
+<thead>
+<tr>
+<th>Status</th>
+<th><code>type</code></th>
+<th><code>code</code></th>
+<th>Trigger</th>
+<th><code>Retry-After</code></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>400</td>
+<td><code>invalid_request</code></td>
+<td><code>bad_json</code></td>
+<td>Request body is not valid JSON for the matched provider</td>
+<td>-</td>
+</tr>
+<tr>
+<td>400</td>
+<td><code>invalid_request</code></td>
+<td><code>unsupported_content_type</code></td>
+<td>Request body is <code>multipart/form-data</code>. The proxy redacts JSON bodies; multipart endpoints (file uploads, audio, image edits) are not proxied</td>
+<td>-</td>
+</tr>
+<tr>
+<td>400</td>
+<td><code>invalid_request</code></td>
+<td><code>body_read</code></td>
+<td>Request body could not be read from the client connection</td>
+<td>-</td>
+</tr>
+<tr>
+<td>400</td>
+<td><code>invalid_request</code></td>
+<td><code>path_not_canonical</code></td>
+<td>Request path contained <code>.</code> / <code>..</code> segments, redundant slashes, or a trailing slash. Real LLM clients construct canonical paths; the proxy refuses non-canonical paths up front to close a class of path-traversal-based scope bypass.</td>
+<td>-</td>
+</tr>
+<tr>
+<td>413</td>
+<td><code>payload_too_large</code></td>
+<td><code>request_body_too_large</code></td>
+<td>Request body exceeded <code>listen.maxRequestBodyBytes</code></td>
+<td>-</td>
+</tr>
+<tr>
+<td>401</td>
+<td><code>unauthorized</code></td>
+<td><code>missing_api_key</code></td>
+<td>Auth enabled and no key in the configured header</td>
+<td>-</td>
+</tr>
+<tr>
+<td>401</td>
+<td><code>unauthorized</code></td>
+<td><code>invalid_api_key</code></td>
+<td>Auth enabled and the supplied key was not recognised</td>
+<td>-</td>
+</tr>
+<tr>
+<td>403</td>
+<td><code>pii_blocked</code></td>
+<td><code>outbound_blocked</code></td>
+<td>Outbound scanning is on with <code>action: block</code> and PII was found in the provider response</td>
+<td>-</td>
+</tr>
+<tr>
+<td>403</td>
+<td><code>pii_blocked</code></td>
+<td><code>outbound_stream_unscannable</code></td>
+<td>Outbound scanning is on with <code>action: block</code> and the provider returned a streaming response, which cannot be scanned. Set <code>outbound.allowUnscannedStreams: true</code> to forward these unscanned instead</td>
+<td>-</td>
+</tr>
+<tr>
+<td>403</td>
+<td><code>forbidden</code></td>
+<td><code>scope_denied_provider</code></td>
+<td>Resolved provider is not in the authenticated key's <code>auth.apiKeys[].scopes.providers</code> allow-list</td>
+<td>-</td>
+</tr>
+<tr>
+<td>403</td>
+<td><code>forbidden</code></td>
+<td><code>scope_denied_model</code></td>
+<td>Request <code>model</code> is not in the key's <code>scopes.models</code> allow-list (or no <code>model</code> set when the allow-list is configured)</td>
+<td>-</td>
+</tr>
+<tr>
+<td>403</td>
+<td><code>forbidden</code></td>
+<td><code>scope_denied_path</code></td>
+<td>Request path is not in any of the key's <code>scopes.paths</code> prefix entries</td>
+<td>-</td>
+</tr>
+<tr>
+<td>404</td>
+<td><code>not_found</code></td>
+<td><code>bedrock_disabled</code></td>
+<td>A Bedrock path was requested but <code>providers.bedrock.region</code> is unset</td>
+<td>-</td>
+</tr>
+<tr>
+<td>404</td>
+<td><code>not_found</code></td>
+<td><code>azure_disabled</code></td>
+<td>An Azure path (<code>/openai/deployments/...</code>) was requested but <code>providers.azure.target</code> is unset</td>
+<td>-</td>
+</tr>
+<tr>
+<td>404</td>
+<td><code>not_found</code></td>
+<td><code>vertex_disabled</code></td>
+<td>A Vertex path (<code>/v1/projects/.../models/...:generateContent</code>) was requested but <code>providers.vertex.project</code> is unset</td>
+<td>-</td>
+</tr>
+<tr>
+<td>502</td>
+<td><code>provider_error</code></td>
+<td><code>vertex_auth_failed</code></td>
+<td>The proxy could not acquire a Google ADC bearer token for Vertex</td>
+<td>-</td>
+</tr>
+<tr>
+<td>500</td>
+<td><code>internal_error</code></td>
+<td><code>marshal_failed</code></td>
+<td>Re-serialising the redacted request body failed (should not occur in normal operation)</td>
+<td>-</td>
+</tr>
+<tr>
+<td>500</td>
+<td><code>internal_error</code></td>
+<td><code>request_creation_failed</code></td>
+<td><code>http.NewRequest</code> failed when building the upstream call (typically an invalid target URL)</td>
+<td>-</td>
+</tr>
+<tr>
+<td>500</td>
+<td><code>internal_error</code></td>
+<td><code>bedrock_sign_failed</code></td>
+<td>AWS SigV4 signing failed (credentials cannot be retrieved)</td>
+<td>-</td>
+</tr>
+<tr>
+<td>502</td>
+<td><code>provider_error</code></td>
+<td><code>unreachable</code></td>
+<td>Upstream LLM provider connection failed (DNS, dial, TLS)</td>
+<td>-</td>
+</tr>
+<tr>
+<td>502</td>
+<td><code>provider_error</code></td>
+<td><code>azure_auth_failed</code></td>
+<td>Entra ID token acquisition failed for an Azure request (<code>providers.azure.entraID: true</code>)</td>
+<td>-</td>
+</tr>
+<tr>
+<td>502</td>
+<td><code>provider_error</code></td>
+<td><code>response_read_failed</code></td>
+<td>Connected to the provider but failed to read the response body</td>
+<td>-</td>
+</tr>
+<tr>
+<td>502</td>
+<td><code>philter_error</code></td>
+<td><code>request_failed</code></td>
+<td>Philter call failed (network or non-2xx response) and retries were exhausted</td>
+<td>-</td>
+</tr>
+<tr>
+<td>503</td>
+<td><code>capacity</code></td>
+<td><code>concurrency_exceeded</code></td>
+<td><code>listen.maxConcurrentRequests</code> or a per-key cap was hit</td>
+<td><code>1</code></td>
+</tr>
+<tr>
+<td>503</td>
+<td><code>circuit_open</code></td>
+<td><code>philter_unavailable</code></td>
+<td>Philter circuit breaker is open with <code>fallback: block</code></td>
+<td>-</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Errors forwarded from upstream LLM providers</strong> are passed through unchanged and follow the provider's own error format, not the schema above. The codes here apply only to errors the proxy itself generates.</p>
+<h3 id="audit-correlation">Audit correlation</h3>
+<p>Every error response is mirrored in the audit log: the same <code>request_id</code>, <code>error_type</code>, and <code>error_code</code> fields appear on the inbound audit entry. To trace a single failed request end-to-end:</p>
+<ol>
+<li>Grab the <code>X-Request-Id</code> header from the client's response.</li>
+<li>Search audit logs for <code>request_id=&lt;that value&gt;</code>.</li>
+<li>The matching entry's <code>error_type</code> and <code>error_code</code> will equal what the client saw.</li>
+</ol>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Copyright 2023-2026 Philterd, LLC
+    </div>
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": [], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+    
+  </body>
+</html>
