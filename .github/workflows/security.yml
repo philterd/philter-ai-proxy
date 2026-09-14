@@ -18,7 +18,7 @@ jobs:
   # GATES the build. Reports only vulnerabilities in code paths the binary
   # actually reaches, so a finding here is real.
   #
-  # The action resolves the latest 1.25 patch deliberately: most findings are in
+  # The action resolves the latest 1.27 patch deliberately: most findings are in
   # the standard library and are fixed by building with a newer patch release.
   #
   # govulncheck has no ignore file. If upstream has no patch, set
@@ -32,7 +32,7 @@ jobs:
     - name: Run govulncheck
       uses: golang/govulncheck-action@v1.1.0
       with:
-        go-version-input: '1.25'
+        go-version-input: '1.27'
         go-package: ./...
 
   # GATES the build, and mirrors the scan in push-image.sh so a failure
