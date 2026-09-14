@@ -24,6 +24,9 @@ on:
     # Sunday 06:00 UTC
     - cron: '0 6 * * 0'
 
+permissions:
+  contents: read
+
 jobs:
   load:
     runs-on: ubuntu-latest

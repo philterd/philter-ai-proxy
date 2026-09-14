@@ -1,0 +1,81 @@
+name: CodeQL
+
+# Advanced setup (a workflow) rather than default setup (an org setting).
+# The org security configuration `philterd-org-config-1` sets code scanning
+# default setup to disabled and enforces it, so the repository-level toggle
+# silently does nothing. A workflow is the only way to scan this repo, and it
+# is the better fit anyway: the analysis is reviewable in the diff alongside
+# the rest of CI instead of living in org settings.
+#
+# This costs nothing. Code scanning requires no license on a public repository
+# and standard runners consume no billable Actions minutes on one.
+#
+# Do NOT enable code scanning through `philterd-org-config-1` instead. That
+# config covers 44 private repos, where code scanning draws GitHub Code
+# Security licenses at $30 per active committer per month. A $0 budget on
+# `ghas_code_security_licenses` now blocks that, so the attempt would fail
+# rather than bill, but the workflow here is the intended route.
+#
+# JavaScript is deliberately not analyzed. The only JS in the tree is the k6
+# load-test scenarios under test/load/, which are test harness rather than
+# shipped code, and the previous default setup reported nothing for them.
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  schedule:
+    # Weekly, offset an hour from security.yml so the two do not start
+    # together. A query-pack update can surface a finding in code that has
+    # not changed, which a push-only trigger would never see.
+    - cron: '0 8 * * 1'
+
+permissions:
+  contents: read
+
+jobs:
+
+  analyze:
+    name: Analyze ${{ matrix.language }}
+    runs-on: ubuntu-latest
+    permissions:
+      # Required to upload results to the code scanning API. This is the one
+      # workflow in the repo that needs more than `contents: read`.
+      security-events: write
+      contents: read
+      actions: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - language: go
+            build-mode: autobuild
+          # Covers the workflow-hardening queries that flagged the missing
+          # `permissions` blocks in go.yml, fuzz.yml and load-test.yml.
+          - language: actions
+            build-mode: none
+
+    steps:
+    - uses: actions/checkout@v7
+
+    # Pinned to match go.yml and the Dockerfile so autobuild compiles against
+    # the same toolchain that ships. Standard library findings are reported
+    # relative to the Go version in use, so a mismatch here would report on a
+    # binary nobody runs.
+    - name: Set up Go
+      if: matrix.language == 'go'
+      uses: actions/setup-go@v7
+      with:
+        go-version: '1.27'
+
+    - name: Initialize CodeQL
+      uses: github/codeql-action/init@v4
+      with:
+        languages: ${{ matrix.language }}
+        build-mode: ${{ matrix.build-mode }}
+
+    - name: Analyze
+      uses: github/codeql-action/analyze@v4
+      with:
+        category: /language:${{ matrix.language }}
