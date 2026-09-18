@@ -61,6 +61,11 @@ require (
 	golang.org/x/text v0.42.0 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20260917231906-eeb232e0883d // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260917231906-eeb232e0883d // indirect
-	google.golang.org/grpc v1.84.0 // indirect
+	google.golang.org/grpc v1.83.2 // indirect
 	google.golang.org/protobuf v1.36.12 // indirect
 )
+
+// v1.84.0 was branched before the fix for GHSA-2v4p-qf9q-27wj (CVE-2026-84445)
+// landed, so it reintroduces the vulnerability patched in v1.82.2 and v1.83.2.
+// Drop this exclude once a stable release >= v1.85.0 is available.
+exclude google.golang.org/grpc v1.84.0
