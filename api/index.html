@@ -1,0 +1,1467 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="User guide for Philter AI Proxy, a PII/PHI redaction proxy for OpenAI, Claude, and Gemini.">
+      
+      
+        <meta name="author" content="philterd">
+      
+      
+        <link rel="canonical" href="https://philterd.github.io/philter-ai-proxy/api/">
+      
+      
+        <link rel="prev" href="../usage/">
+      
+      
+        <link rel="next" href="../configuration/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>API Reference - Philter AI Proxy</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="red" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#api-reference" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href=".." title="Philter AI Proxy" class="md-header__button md-logo" aria-label="Philter AI Proxy" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Philter AI Proxy
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              API Reference
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+    
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/philterd/philter-ai-proxy" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="Philter AI Proxy" class="md-nav__button md-logo" aria-label="Philter AI Proxy" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    Philter AI Proxy
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/philterd/philter-ai-proxy" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../installation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Installation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../kubernetes/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Kubernetes Quickstart
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../usage/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Usage
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#redacted-fields" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Redacted Fields
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#supported-request-types" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Supported request types
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#response-scanning-outbound" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Response Scanning (Outbound)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Response Scanning (Outbound)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#response-fields-scanned-per-provider" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Response fields scanned per provider
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#actions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Actions
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#streaming-responses" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Streaming responses
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#latency" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Latency
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#route-detection" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Route Detection
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#endpoints" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Endpoints
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Endpoints">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#openai-chat-completions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        OpenAI Chat Completions
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#anthropic-messages" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Anthropic Messages
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#gemini-generate-content" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Gemini Generate Content
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#ollama-generate" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Ollama Generate
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#ollama-chat" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Ollama Chat
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#amazon-bedrock-converse" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Amazon Bedrock Converse
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#openai-compatible-providers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        OpenAI-Compatible Providers
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#health-check" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Health Check
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../configuration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../ai-gateway/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Using with an AI Gateway
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../monitoring/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Monitoring
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../load-tests/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Load tests
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../faq/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    FAQ
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#redacted-fields" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Redacted Fields
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#supported-request-types" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Supported request types
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#response-scanning-outbound" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Response Scanning (Outbound)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Response Scanning (Outbound)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#response-fields-scanned-per-provider" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Response fields scanned per provider
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#actions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Actions
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#streaming-responses" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Streaming responses
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#latency" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Latency
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#route-detection" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Route Detection
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#endpoints" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Endpoints
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Endpoints">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#openai-chat-completions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        OpenAI Chat Completions
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#anthropic-messages" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Anthropic Messages
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#gemini-generate-content" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Gemini Generate Content
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#ollama-generate" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Ollama Generate
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#ollama-chat" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Ollama Chat
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#amazon-bedrock-converse" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Amazon Bedrock Converse
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#openai-compatible-providers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        OpenAI-Compatible Providers
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#health-check" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Health Check
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="api-reference">API Reference</h1>
+<p>The Philter AI Proxy provides several endpoints to redact sensitive information before sending requests to AI providers. All endpoints support both streaming and non-streaming requests.</p>
+<h2 id="redacted-fields">Redacted Fields</h2>
+<p>The proxy inspects and redacts all text-bearing fields in the request body before forwarding. The table below lists exactly which fields are redacted per provider.</p>
+<table>
+<thead>
+<tr>
+<th>Provider</th>
+<th>Message type</th>
+<th>Fields redacted</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>OpenAI / OpenAI-compatible / Azure OpenAI</td>
+<td><code>role: user</code></td>
+<td><code>content</code> (string)</td>
+</tr>
+<tr>
+<td>OpenAI / OpenAI-compatible / Azure OpenAI</td>
+<td><code>role: system</code></td>
+<td><code>content</code> (string)</td>
+</tr>
+<tr>
+<td>OpenAI / OpenAI-compatible / Azure OpenAI</td>
+<td><code>role: tool</code></td>
+<td><code>content</code> (string)</td>
+</tr>
+<tr>
+<td>OpenAI / OpenAI-compatible / Azure OpenAI</td>
+<td><code>role: assistant</code> with tool calls</td>
+<td><code>tool_calls[].function.arguments</code> - parsed as JSON, string values redacted, re-serialized</td>
+</tr>
+<tr>
+<td>OpenAI family — <code>/embeddings</code></td>
+<td><code>input</code> (string or array of strings; integer token-ID inputs are passed through unchanged)</td>
+<td></td>
+</tr>
+<tr>
+<td>OpenAI family — <code>/responses</code> (Responses API)</td>
+<td><code>input</code> (string, or message items incl. nested <code>content[].text</code>) and <code>instructions</code></td>
+<td></td>
+</tr>
+<tr>
+<td>OpenAI family — <code>/moderations</code></td>
+<td><code>input</code> (string or array of strings)</td>
+<td></td>
+</tr>
+<tr>
+<td>OpenAI family — <code>/images/generations</code></td>
+<td><code>prompt</code></td>
+<td></td>
+</tr>
+<tr>
+<td>OpenAI family — <code>/audio/speech</code> (TTS)</td>
+<td><code>input</code></td>
+<td></td>
+</tr>
+<tr>
+<td>OpenAI family — <code>/completions</code> (legacy)</td>
+<td><code>prompt</code> (string or array)</td>
+<td></td>
+</tr>
+<tr>
+<td>Anthropic</td>
+<td>Top-level</td>
+<td><code>system</code> (string)</td>
+</tr>
+<tr>
+<td>Anthropic</td>
+<td><code>text</code> content block</td>
+<td><code>text</code></td>
+</tr>
+<tr>
+<td>Anthropic</td>
+<td><code>tool_result</code> content block</td>
+<td><code>content</code> (string or nested <code>text</code> blocks)</td>
+</tr>
+<tr>
+<td>Gemini</td>
+<td><code>text</code> part</td>
+<td><code>text</code></td>
+</tr>
+<tr>
+<td>Gemini</td>
+<td><code>functionResponse</code> part</td>
+<td><code>response</code> object - all string values redacted recursively</td>
+</tr>
+<tr>
+<td>Ollama generate</td>
+<td>-</td>
+<td><code>prompt</code>, <code>system</code></td>
+</tr>
+<tr>
+<td>Ollama chat</td>
+<td><code>role: *</code></td>
+<td><code>content</code></td>
+</tr>
+<tr>
+<td>Bedrock Converse</td>
+<td>Top-level</td>
+<td><code>system[].text</code></td>
+</tr>
+<tr>
+<td>Bedrock Converse</td>
+<td><code>messages[].content[]</code></td>
+<td><code>text</code></td>
+</tr>
+</tbody>
+</table>
+<p>Fields not in the table (e.g., model names, IDs, non-string values) are forwarded unchanged. The OpenAI-family endpoint rows apply equally to the OpenAI, Azure OpenAI, and openai-compatible providers, since they share one request handler.</p>
+<p>Fields not in the table above (model names, IDs, non-string values) are forwarded unchanged.</p>
+<h2 id="supported-request-types">Supported request types</h2>
+<p>The proxy accepts a JSON request body. <strong>It does not parse <code>multipart/form-data</code>.</strong> That single rule decides every endpoint below, and predicts the answer for any endpoint not listed.</p>
+<table>
+<thead>
+<tr>
+<th>Request type</th>
+<th>Behavior</th>
+<th>Error</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Chat, Responses, embeddings, moderations, completions, image generations, audio speech</td>
+<td>Redacted per the table above, then forwarded</td>
+<td>-</td>
+</tr>
+<tr>
+<td><code>/v1/batches</code></td>
+<td>Forwarded unchanged. A batch references an uploaded file by ID, so there is no inline text to redact</td>
+<td>-</td>
+</tr>
+<tr>
+<td>Any endpoint the proxy does not recognise, with a JSON body</td>
+<td>Forwarded unchanged, no redaction</td>
+<td>-</td>
+</tr>
+<tr>
+<td><code>/v1/images/edits</code>, <code>/v1/images/variations</code></td>
+<td><strong>Rejected.</strong> Not supported, and not planned</td>
+<td><code>400</code> <code>invalid_request</code> / <code>unsupported_content_type</code></td>
+</tr>
+<tr>
+<td><code>/v1/files</code> (uploads)</td>
+<td><strong>Rejected.</strong> Not supported, and not planned</td>
+<td><code>400</code> <code>invalid_request</code> / <code>unsupported_content_type</code></td>
+</tr>
+<tr>
+<td><code>/v1/audio/transcriptions</code>, <code>/v1/audio/translations</code></td>
+<td><strong>Rejected</strong> today. Support is tracked in <a href="https://github.com/philterd/philter-ai-proxy/issues/40">#40</a></td>
+<td><code>400</code> <code>invalid_request</code> / <code>unsupported_content_type</code></td>
+</tr>
+</tbody>
+</table>
+<p>Route rejected calls directly to the provider.</p>
+<p><strong>Why image edits are not planned.</strong> Redacting the <code>prompt</code> form field would mean parsing a multipart body, rewriting one field, and re-encoding the rest, which is the thing the proxy deliberately does not do.</p>
+<p><strong>Why file uploads are not planned.</strong> A batch file is many embedded requests, so redacting one upload would mean one Philter call per record inside a single synchronous request. Redact the file contents with Philter before uploading.</p>
+<p><strong>Why audio can be supported.</strong> Audio needs no multipart parsing: the body is binary with no inbound text to redact, so it can be forwarded untouched and the transcript scanned on the way back. It is an outbound-scanning feature, not an inbound-redaction one, which is why it does not break the rule above.</p>
+<h2 id="response-scanning-outbound">Response Scanning (Outbound)</h2>
+<p>By default, provider responses are forwarded to the client without modification. When outbound scanning is enabled for a route, the proxy buffers the provider's response and passes each text field through Philter before returning it to the client.</p>
+<h3 id="response-fields-scanned-per-provider">Response fields scanned per provider</h3>
+<table>
+<thead>
+<tr>
+<th>Provider</th>
+<th>Response fields scanned</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>OpenAI / OpenAI-compatible</td>
+<td><code>choices[].message.content</code></td>
+</tr>
+<tr>
+<td>Anthropic</td>
+<td><code>content[].text</code> (where <code>type == "text"</code>)</td>
+</tr>
+<tr>
+<td>Gemini</td>
+<td><code>candidates[].content.parts[].text</code></td>
+</tr>
+<tr>
+<td>Ollama generate</td>
+<td><code>response</code></td>
+</tr>
+<tr>
+<td>Ollama chat</td>
+<td><code>message.content</code></td>
+</tr>
+<tr>
+<td>Bedrock Converse</td>
+<td><code>output.message.content[].text</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="actions">Actions</h3>
+<p>The <code>outbound.action</code> setting controls what happens when PII is detected in a response:</p>
+<table>
+<thead>
+<tr>
+<th>Action</th>
+<th>HTTP status</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>redact</code> (default)</td>
+<td><code>200</code></td>
+<td>Detected PII is replaced with Philter's configured token before the response is returned</td>
+</tr>
+<tr>
+<td><code>block</code></td>
+<td><code>403</code></td>
+<td>The response is suppressed entirely; the error body below is returned</td>
+</tr>
+<tr>
+<td><code>flag</code></td>
+<td><code>200</code></td>
+<td>The original unmodified response is returned; a warning is written to the proxy log</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Block error response</strong> (<code>403 Forbidden</code>):</p>
+<pre><code class="language-json">{&quot;error&quot;:{&quot;message&quot;:&quot;response blocked: PII detected&quot;,&quot;type&quot;:&quot;pii_blocked&quot;}}
+</code></pre>
+<h3 id="streaming-responses">Streaming responses</h3>
+<p>Outbound scanning can only inspect non-streaming responses. When the provider returns a streaming response (<code>Content-Type: text/event-stream</code>, <code>application/x-ndjson</code>, or <code>application/vnd.amazon.eventstream</code>), the behavior depends on the configured action: <code>block</code> rejects the response with <code>403</code> (<code>pii_blocked</code> / <code>outbound_stream_unscannable</code>) rather than forwarding it unscanned, while <code>redact</code> and <code>flag</code> log a warning and forward the stream unchanged. Inbound prompt redaction is unaffected in every case.</p>
+<h3 id="latency">Latency</h3>
+<p>Outbound scanning adds a full Philter round-trip after the provider responds. For latency-sensitive workloads, enable it only on routes where compliance requires it. See <a href="../configuration/#outbound">Configuration</a> for configuration details.</p>
+<h2 id="route-detection">Route Detection</h2>
+<p>The proxy routes requests based on the URL path:</p>
+<table>
+<thead>
+<tr>
+<th>Path pattern</th>
+<th>Provider</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>/v1/messages</code></td>
+<td>Anthropic</td>
+</tr>
+<tr>
+<td>Path containing <code>generateContent</code> (case-insensitive)</td>
+<td>Gemini</td>
+</tr>
+<tr>
+<td><code>/api/generate</code></td>
+<td>Ollama</td>
+</tr>
+<tr>
+<td><code>/api/chat</code></td>
+<td>Ollama</td>
+</tr>
+<tr>
+<td><code>/model/{modelId}/converse</code></td>
+<td>Amazon Bedrock</td>
+</tr>
+<tr>
+<td><code>/model/{modelId}/converse-stream</code></td>
+<td>Amazon Bedrock (streaming)</td>
+</tr>
+<tr>
+<td><code>/openai/deployments/{deployment}/...</code></td>
+<td>Azure OpenAI (configured via <code>providers.azure</code>)</td>
+</tr>
+<tr>
+<td><code>/{name}/v1/...</code></td>
+<td>OpenAI-compatible (configured via <code>providers.openaiCompatible</code>)</td>
+</tr>
+<tr>
+<td><code>/health</code></td>
+<td>Health check (no proxying)</td>
+</tr>
+<tr>
+<td><code>/livez</code></td>
+<td>Liveness probe (no proxying)</td>
+</tr>
+<tr>
+<td><code>/readyz</code></td>
+<td>Readiness probe (no proxying)</td>
+</tr>
+<tr>
+<td>All other paths</td>
+<td>OpenAI</td>
+</tr>
+</tbody>
+</table>
+<h2 id="endpoints">Endpoints</h2>
+<h3 id="openai-chat-completions">OpenAI Chat Completions</h3>
+<ul>
+<li><strong>URL</strong>: <code>/v1/chat/completions</code></li>
+<li><strong>Method</strong>: <code>POST</code></li>
+<li><strong>Streaming</strong>: Set <code>"stream": true</code> in the request body. Response is SSE (<code>text/event-stream</code>).</li>
+<li><strong>Example</strong>:
+  <code>bash
+  curl -k https://localhost:8080/v1/chat/completions \
+    -H "Content-Type: application/json" \
+    -H "Authorization: Bearer $OPENAI_API_KEY" \
+    -d '{
+      "model": "gpt-4",
+      "messages": [{"role": "user", "content": "Whose social security number is 123-45-6789"}]
+    }'</code></li>
+</ul>
+<h3 id="anthropic-messages">Anthropic Messages</h3>
+<ul>
+<li><strong>URL</strong>: <code>/v1/messages</code></li>
+<li><strong>Method</strong>: <code>POST</code></li>
+<li><strong>Streaming</strong>: Set <code>"stream": true</code> in the request body. Response is SSE (<code>text/event-stream</code>).</li>
+<li><strong>Example</strong>:
+  <code>bash
+  curl -k https://localhost:8080/v1/messages \
+    -H "Content-Type: application/json" \
+    -H "x-api-key: $ANTHROPIC_API_KEY" \
+    -H "anthropic-version: 2023-06-01" \
+    -d '{
+      "model": "claude-sonnet-4-20250514",
+      "max_tokens": 1024,
+      "messages": [{"role": "user", "content": "Whose social security number is 123-45-6789"}]
+    }'</code></li>
+</ul>
+<h3 id="gemini-generate-content">Gemini Generate Content</h3>
+<ul>
+<li><strong>URL</strong>: <code>/v1beta/models/{model}:generateContent</code></li>
+<li><strong>Method</strong>: <code>POST</code></li>
+<li><strong>Streaming</strong>: Use <code>:streamGenerateContent</code> instead of <code>:generateContent</code>. Response is chunked JSON.</li>
+<li><strong>Note</strong>: The Gemini API passes the API key as a URL query parameter (<code>?key=...</code>) rather than a header. The proxy forwards the query string to the provider but never logs API keys - sensitive query parameters are redacted from all log and error output.</li>
+<li><strong>Example</strong>:
+  <code>bash
+  curl -k "https://localhost:8080/v1beta/models/gemini-2.0-flash:generateContent?key=$GEMINI_API_KEY" \
+      -H 'Content-Type: application/json' \
+      -X POST \
+      -d '{
+        "contents": [{
+          "parts":[{"text": "Whose social security number is 123-45-6789"}]
+        }]
+      }'</code></li>
+</ul>
+<h3 id="ollama-generate">Ollama Generate</h3>
+<ul>
+<li><strong>URL</strong>: <code>/api/generate</code></li>
+<li><strong>Method</strong>: <code>POST</code></li>
+<li><strong>Streaming</strong>: Ollama streams by default (NDJSON). Set <code>"stream": false</code> to receive a single response.</li>
+<li><strong>Example</strong>:
+  <code>bash
+  curl -k https://localhost:8080/api/generate \
+    -H "Content-Type: application/json" \
+    -d '{
+      "model": "llama3",
+      "prompt": "Whose social security number is 123-45-6789",
+      "stream": false
+    }'</code></li>
+</ul>
+<h3 id="ollama-chat">Ollama Chat</h3>
+<ul>
+<li><strong>URL</strong>: <code>/api/chat</code></li>
+<li><strong>Method</strong>: <code>POST</code></li>
+<li><strong>Streaming</strong>: Ollama streams by default (NDJSON). Set <code>"stream": false</code> to receive a single response.</li>
+<li><strong>Example</strong>:
+  <code>bash
+  curl -k https://localhost:8080/api/chat \
+    -H "Content-Type: application/json" \
+    -d '{
+      "model": "llama3",
+      "messages": [{"role": "user", "content": "Whose social security number is 123-45-6789"}],
+      "stream": false
+    }'</code></li>
+</ul>
+<h3 id="amazon-bedrock-converse">Amazon Bedrock Converse</h3>
+<ul>
+<li><strong>URL</strong>: <code>/model/{modelId}/converse</code></li>
+<li><strong>Method</strong>: <code>POST</code></li>
+<li><strong>Authentication</strong>: The proxy signs requests to Bedrock using AWS Signature Version 4 with credentials from the standard AWS credential chain (environment variables, <code>~/.aws/credentials</code>, EC2/ECS instance profile, IRSA). The client does <strong>not</strong> need to supply AWS credentials.</li>
+<li><strong>Streaming</strong>: Not supported in the current release (<code>converseStream</code> is deferred).</li>
+<li><strong>Required configuration</strong>: <code>providers.bedrock.region</code> must be set. See <a href="../configuration/#providersbedrock">Configuration</a> for details.</li>
+<li><strong>Example</strong>:
+  <code>bash
+  curl -k https://localhost:8080/model/amazon.titan-text-express-v1/converse \
+    -H "Content-Type: application/json" \
+    -d '{
+      "messages": [{"role": "user", "content": [{"text": "Whose SSN is 123-45-6789?"}]}],
+      "inferenceConfig": {"maxTokens": 512}
+    }'</code></li>
+</ul>
+<h3 id="openai-compatible-providers">OpenAI-Compatible Providers</h3>
+<ul>
+<li><strong>URL</strong>: <code>/{name}/v1/chat/completions</code> (or any <code>/{name}/v1/...</code> path)</li>
+<li><strong>Method</strong>: <code>POST</code></li>
+<li><strong>Streaming</strong>: Supported. Behaviour is identical to the OpenAI endpoint.</li>
+<li><strong>Required configuration</strong>: The provider must be registered under <code>providers.openaiCompatible</code> in the config. See <a href="../configuration/#providersopenaicompatible">Configuration</a> for details.</li>
+<li><strong>Example</strong> (Mistral):
+  <code>bash
+  curl -k https://localhost:8080/mistral/v1/chat/completions \
+    -H "Content-Type: application/json" \
+    -H "Authorization: Bearer $MISTRAL_API_KEY" \
+    -d '{
+      "model": "mistral-small-latest",
+      "messages": [{"role": "user", "content": "Whose SSN is 123-45-6789?"}]
+    }'</code></li>
+</ul>
+<p>The proxy strips the <code>/{name}</code> prefix before forwarding, so the provider receives a standard OpenAI-format request. All PII redaction and audit logging applies normally; the <code>provider</code> field in the audit log is set to the registered name (e.g., <code>mistral</code>).</p>
+<h3 id="health-check">Health Check</h3>
+<ul>
+<li><strong>URL</strong>: <code>/health</code></li>
+<li><strong>Method</strong>: <code>GET</code></li>
+<li><strong>Authentication</strong>: None. The endpoint is reachable without an API key even when <code>auth.apiKeys</code> is configured.</li>
+<li><strong>Description</strong>: Returns the health status of the proxy in the standard Philterd health shape. Actively probes Philter (2-second timeout).</li>
+<li><strong>Response</strong>: <code>200 OK</code> with <code>{"status":"UP","applicationVersion":"&lt;version&gt;","philter":"ok"}</code> when healthy; <code>503 Service Unavailable</code> with <code>{"status":"DOWN","applicationVersion":"&lt;version&gt;","philter":"unreachable"}</code> when Philter cannot be reached.</li>
+<li><strong>Example</strong>:
+  <code>bash
+  curl -k https://localhost:8080/health</code></li>
+</ul>
+<p>For Kubernetes probes use <code>/livez</code> (liveness) and <code>/readyz</code> (readiness) instead. See <a href="../monitoring/#health-endpoints">Monitoring -&gt; Health Endpoints</a>.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Copyright 2023-2026 Philterd, LLC
+    </div>
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": [], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+    
+  </body>
+</html>
