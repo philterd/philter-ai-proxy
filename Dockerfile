@@ -19,8 +19,9 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
 FROM alpine:3.21
 # No keypair is baked in: it would be the same private key for everyone who
 # pulls the image. Set listen.cert/listen.key, or listen.devSelfSignedCert.
-# ca-certificates is for outbound TLS to Philter and the providers.
-RUN apk add --no-cache ca-certificates
+# ca-certificates is for outbound TLS to Philter and the providers. The upgrade
+# picks up package fixes published since the base image was last rebuilt.
+RUN apk upgrade --no-cache && apk add --no-cache ca-certificates
 
 EXPOSE 8080
 WORKDIR /app
