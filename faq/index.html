@@ -1,0 +1,1376 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="User guide for Philter AI Proxy, a PII/PHI redaction proxy for OpenAI, Claude, and Gemini.">
+      
+      
+        <meta name="author" content="philterd">
+      
+      
+        <link rel="canonical" href="https://philterd.github.io/philter-ai-proxy/faq/">
+      
+      
+        <link rel="prev" href="../load-tests/">
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>FAQ - Philter AI Proxy</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="red" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#faq" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href=".." title="Philter AI Proxy" class="md-header__button md-logo" aria-label="Philter AI Proxy" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Philter AI Proxy
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              FAQ
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+    
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/philterd/philter-ai-proxy" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="Philter AI Proxy" class="md-nav__button md-logo" aria-label="Philter AI Proxy" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    Philter AI Proxy
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/philterd/philter-ai-proxy" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../installation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Installation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../kubernetes/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Kubernetes Quickstart
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../usage/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Usage
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../configuration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../ai-gateway/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Using with an AI Gateway
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../monitoring/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Monitoring
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../load-tests/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Load tests
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    FAQ
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    FAQ
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#what-is-the-philter-ai-proxy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What is the Philter AI Proxy?
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#why-should-i-use-it" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Why should I use it?
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#which-ai-providers-are-supported" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Which AI providers are supported?
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#does-it-support-streaming" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Does it support streaming?
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#can-it-redact-file-uploads-audio-or-images" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Can it redact file uploads, audio, or images?
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#is-any-sensitive-data-logged" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Is any sensitive data logged?
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#do-i-need-a-philter-instance" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Do I need a Philter instance?
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#can-the-proxy-scan-llm-responses-for-pii-not-just-requests" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Can the proxy scan LLM responses for PII, not just requests?
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#does-outbound-scanning-add-latency" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Does outbound scanning add latency?
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#how-do-i-configure-the-proxy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How do I configure the proxy?
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#can-i-deploy-the-proxy-to-kubernetes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Can I deploy the proxy to Kubernetes?
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#is-the-proxy-open-source" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Is the proxy open source?
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#does-the-proxy-support-authentication" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Does the proxy support authentication?
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#where-can-i-see-throughput-and-latency-numbers-for-the-proxy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Where can I see throughput and latency numbers for the proxy?
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#does-the-proxy-support-opentelemetry-tracing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Does the proxy support OpenTelemetry tracing?
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-endpoints-should-i-use-for-kubernetes-probes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What endpoints should I use for Kubernetes probes?
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#are-api-keys-hashed-at-rest" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Are API keys hashed at rest?
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#can-i-cap-token-spend-or-get-per-customer-usage-for-billing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Can I cap token spend or get per-customer usage for billing?
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#can-i-cache-responses-to-repeated-prompts" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Can I cache responses to repeated prompts?
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#do-the-proxys-replicas-need-shared-state" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Do the proxy's replicas need shared state?
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#does-the-proxy-rate-limit-requests" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Does the proxy rate limit requests?
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#can-i-use-the-proxy-with-mistral-cohere-vllm-or-other-openai-compatible-providers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Can I use the proxy with Mistral, Cohere, vLLM, or other OpenAI-compatible providers?
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#how-does-bedrock-authentication-work" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How does Bedrock authentication work?
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#does-the-proxy-support-streaming-with-amazon-bedrock" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Does the proxy support streaming with Amazon Bedrock?
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-happens-if-philter-is-temporarily-unavailable" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What happens if Philter is temporarily unavailable?
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#can-i-bound-how-many-concurrent-requests-the-proxy-will-handle" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Can I bound how many concurrent requests the proxy will handle?
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-format-are-the-proxys-error-responses-in" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What format are the proxy's error responses in?
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#does-the-proxy-track-token-usage" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Does the proxy track token usage?
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#is-commercial-support-available" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Is commercial support available?
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#what-is-the-philter-ai-proxy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What is the Philter AI Proxy?
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#why-should-i-use-it" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Why should I use it?
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#which-ai-providers-are-supported" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Which AI providers are supported?
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#does-it-support-streaming" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Does it support streaming?
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#can-it-redact-file-uploads-audio-or-images" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Can it redact file uploads, audio, or images?
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#is-any-sensitive-data-logged" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Is any sensitive data logged?
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#do-i-need-a-philter-instance" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Do I need a Philter instance?
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#can-the-proxy-scan-llm-responses-for-pii-not-just-requests" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Can the proxy scan LLM responses for PII, not just requests?
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#does-outbound-scanning-add-latency" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Does outbound scanning add latency?
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#how-do-i-configure-the-proxy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How do I configure the proxy?
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#can-i-deploy-the-proxy-to-kubernetes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Can I deploy the proxy to Kubernetes?
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#is-the-proxy-open-source" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Is the proxy open source?
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#does-the-proxy-support-authentication" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Does the proxy support authentication?
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#where-can-i-see-throughput-and-latency-numbers-for-the-proxy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Where can I see throughput and latency numbers for the proxy?
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#does-the-proxy-support-opentelemetry-tracing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Does the proxy support OpenTelemetry tracing?
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-endpoints-should-i-use-for-kubernetes-probes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What endpoints should I use for Kubernetes probes?
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#are-api-keys-hashed-at-rest" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Are API keys hashed at rest?
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#can-i-cap-token-spend-or-get-per-customer-usage-for-billing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Can I cap token spend or get per-customer usage for billing?
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#can-i-cache-responses-to-repeated-prompts" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Can I cache responses to repeated prompts?
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#do-the-proxys-replicas-need-shared-state" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Do the proxy's replicas need shared state?
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#does-the-proxy-rate-limit-requests" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Does the proxy rate limit requests?
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#can-i-use-the-proxy-with-mistral-cohere-vllm-or-other-openai-compatible-providers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Can I use the proxy with Mistral, Cohere, vLLM, or other OpenAI-compatible providers?
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#how-does-bedrock-authentication-work" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How does Bedrock authentication work?
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#does-the-proxy-support-streaming-with-amazon-bedrock" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Does the proxy support streaming with Amazon Bedrock?
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-happens-if-philter-is-temporarily-unavailable" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What happens if Philter is temporarily unavailable?
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#can-i-bound-how-many-concurrent-requests-the-proxy-will-handle" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Can I bound how many concurrent requests the proxy will handle?
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-format-are-the-proxys-error-responses-in" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What format are the proxy's error responses in?
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#does-the-proxy-track-token-usage" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Does the proxy track token usage?
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#is-commercial-support-available" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Is commercial support available?
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="faq">FAQ</h1>
+<h3 id="what-is-the-philter-ai-proxy">What is the Philter AI Proxy?</h3>
+<p>The Philter AI Proxy is a proxy for OpenAI, Azure OpenAI, Anthropic (Claude), Google Gemini (public API and Vertex AI), Ollama, and Amazon Bedrock that uses <a href="https://philterd.ai/philter/">Philter</a> to remove PII, PHI, and other sensitive information from LLM requests before they are sent to the provider.</p>
+<h3 id="why-should-i-use-it">Why should I use it?</h3>
+<p>By using the proxy, you ensure that sensitive information never leaves your environment and is not sent to the AI providers, helping you maintain compliance and protect privacy. Every request produces a structured audit log for compliance reporting.</p>
+<h3 id="which-ai-providers-are-supported">Which AI providers are supported?</h3>
+<p>The proxy supports:</p>
+<ul>
+<li>OpenAI</li>
+<li>Azure OpenAI</li>
+<li>Anthropic (Claude)</li>
+<li>Google Gemini</li>
+<li>Google Vertex AI</li>
+<li>Ollama</li>
+<li>Amazon Bedrock (Converse and ConverseStream APIs)</li>
+<li>Any OpenAI-compatible provider (Mistral, Cohere, vLLM, LM Studio, etc.) via <code>providers.openaiCompatible</code></li>
+</ul>
+<p>Both streaming and non-streaming requests are supported for all providers.</p>
+<h3 id="does-it-support-streaming">Does it support streaming?</h3>
+<p>Yes. Streaming responses (SSE for OpenAI/Anthropic, chunked JSON for Gemini, NDJSON for Ollama) are forwarded to the client in real time without buffering. Inbound prompt redaction works identically for streaming and non-streaming requests.</p>
+<p>Outbound response scanning can only inspect non-streaming responses. Under <code>action: redact</code> or <code>flag</code> the stream is forwarded unchanged and a warning is logged. Under <code>action: block</code> the proxy rejects the response with <code>403</code> instead of forwarding an unscanned body, so a client cannot bypass a configured block by requesting a stream.</p>
+<h3 id="can-it-redact-file-uploads-audio-or-images">Can it redact file uploads, audio, or images?</h3>
+<p>No. The proxy handles text conversations only. It expects a JSON request body and rejects <code>multipart/form-data</code> with <code>400 invalid_request</code> / <code>unsupported_content_type</code>, so file uploads (<code>/v1/files</code>), audio transcriptions (<code>/v1/audio/transcriptions</code>), and image edits and variations are not proxied. Route those calls directly to the provider.</p>
+<p>The proxy does not parse multipart bodies, so image edits and file uploads will not be supported. Audio is the exception and is tracked in <a href="https://github.com/philterd/philter-ai-proxy/issues/40">#40</a>: its body is binary with no inbound text, so it can be forwarded untouched and the transcript scanned on the way back. See <a href="../api/#supported-request-types">Supported request types</a>.</p>
+<h3 id="is-any-sensitive-data-logged">Is any sensitive data logged?</h3>
+<p>No. The audit log contains only metadata (provider, model, entity types, counts, latency, etc.). No message content or filtered text is ever logged. Client IP addresses are included, which may be considered personal data under GDPR.</p>
+<p>The same holds for the application log and for Prometheus metric labels, which are exported to anyone who can scrape <code>/metrics</code>. A regression test drives distinctively marked content through inbound redaction, all three outbound actions, a streaming response, and the error paths, then asserts the markers appear in none of the three. Adding a field to the audit entry fails that test until the field is declared as metadata, so the guarantee is enforced rather than maintained by convention.</p>
+<h3 id="do-i-need-a-philter-instance">Do I need a Philter instance?</h3>
+<p>Yes, the proxy requires a running instance of Philter to perform the redaction. You can launch one in your cloud or on-premise. Visit <a href="https://philterd.ai/philter/">philterd.ai</a> for more information.</p>
+<h3 id="can-the-proxy-scan-llm-responses-for-pii-not-just-requests">Can the proxy scan LLM responses for PII, not just requests?</h3>
+<p>Yes. Outbound response scanning is supported on an opt-in basis. When enabled, the proxy buffers the LLM's response, passes it through Philter, and returns the result to the client. The behavior when PII is detected is configurable: <code>redact</code> (replace PII tokens), <code>block</code> (return HTTP 403), or <code>flag</code> (pass through with a warning log).</p>
+<p>Outbound scanning is disabled by default because it adds a Philter round-trip after the provider responds. Enable it only on routes where compliance requires it. See <a href="../configuration/#outbound">Configuration</a> for details.</p>
+<h3 id="does-outbound-scanning-add-latency">Does outbound scanning add latency?</h3>
+<p>Yes. When outbound scanning is enabled, the proxy must buffer the full provider response and make an additional request to Philter before returning the response to the client. The added latency equals roughly one Philter round-trip (typically low-double-digit milliseconds on local deployments).</p>
+<p>Streaming responses cannot be scanned. Under <code>redact</code> and <code>flag</code> they are forwarded immediately, so those requests carry no outbound latency overhead; under <code>block</code> they are rejected rather than forwarded.</p>
+<h3 id="how-do-i-configure-the-proxy">How do I configure the proxy?</h3>
+<p>The proxy is configured via a YAML configuration file. Please refer to the <a href="../configuration/">Configuration</a> page for all available settings.</p>
+<h3 id="can-i-deploy-the-proxy-to-kubernetes">Can I deploy the proxy to Kubernetes?</h3>
+<p>Yes. A production-ready Helm chart lives at <code>deploy/helm/philter-ai-proxy/</code> in the repo, and plain manifests for non-Helm users at <code>deploy/k8s/</code>. The chart supports replicas, autoscaling, Pod Disruption Budgets, optional Ingress, Prometheus Operator <code>ServiceMonitor</code>, mTLS, and TLS issuance via either an existing Secret or cert-manager. A starter Grafana dashboard at <code>deploy/grafana/philter-ai-proxy.json</code> covers every emitted metric. See the <a href="../kubernetes/">Kubernetes Quickstart</a> for the full walkthrough.</p>
+<h3 id="is-the-proxy-open-source">Is the proxy open source?</h3>
+<p>Yes, the Philter AI Proxy is licensed under the Apache License, version 2.</p>
+<h3 id="does-the-proxy-support-authentication">Does the proxy support authentication?</h3>
+<p>Yes. API key authentication and mTLS are both supported, and both are disabled by default.</p>
+<p>For API key authentication, configure one or more keys under <code>auth.apiKeys</code> in the config. Clients send the key in the <code>x-philter-proxy-key</code> header (configurable). Requests without a valid key receive HTTP <code>401</code>. Each key can optionally be bound to a specific Philter policy, which lets an admin issue a key to the healthcare team that always uses the HIPAA policy regardless of what the client requests. The proxy's auth header is always stripped before forwarding, so LLM providers never see it.</p>
+<p>For zero-trust service-to-service authentication, set <code>listen.clientCA</code> to a CA certificate. The proxy will require and verify a client TLS certificate on every connection. API key auth and mTLS can be used simultaneously. See <a href="../configuration/#authentication">Configuration</a> for details and examples.</p>
+<h3 id="where-can-i-see-throughput-and-latency-numbers-for-the-proxy">Where can I see throughput and latency numbers for the proxy?</h3>
+<p>A k6 load-test harness lives at <a href="https://github.com/philterd/philter-ai-proxy/tree/main/test/load"><code>test/load/</code></a> in the repo, with a self-contained docker-compose stack (Philter + a stub LLM provider + the proxy) and five scenarios covering inbound redaction, outbound response scanning, streaming, and a no-proxy baseline for comparison. A reference baseline measured on a single-host Intel i5-11400 - including the OpenAI proxy path at ~2,900 req/s p95=8.8ms, and outbound-scan at ~1,400 req/s p95=32ms - is published at <a href="../load-tests/">Load tests</a>. A scheduled GitHub Actions workflow re-runs the harness weekly and uploads summary JSONs as artifacts.</p>
+<h3 id="does-the-proxy-support-opentelemetry-tracing">Does the proxy support OpenTelemetry tracing?</h3>
+<p>Yes. With <code>tracing.enabled: true</code> in the config, the proxy emits OTLP spans: one root span per inbound request, child spans for each Philter call and each upstream LLM provider call. Trace context is propagated to the upstream via the W3C <code>traceparent</code> header, so end-to-end traces work across the proxy in any APM (Jaeger, Honeycomb, Datadog, Grafana Tempo, etc.). Exporter destination, protocol, headers, and sampler are configured via the standard OTel env vars (<code>OTEL_EXPORTER_OTLP_ENDPOINT</code>, <code>OTEL_TRACES_SAMPLER</code>, etc.).</p>
+<p>Tracing is off by default. Even with <code>tracing.enabled: true</code> the default sampler is <code>always_off</code>, so spans only flow when an operator explicitly sets <code>OTEL_TRACES_SAMPLER</code>. The <code>trace_id</code> appears in audit log entries when a request is sampled so APM traces and audit lines can be cross-referenced by ID. See <a href="../monitoring/#distributed-tracing">Distributed Tracing</a> for the full reference.</p>
+<h3 id="what-endpoints-should-i-use-for-kubernetes-probes">What endpoints should I use for Kubernetes probes?</h3>
+<p>Point liveness at <code>/livez</code> and readiness at <code>/readyz</code>. <code>/livez</code> always returns 200 as long as the process is running, so transient Philter outages don't restart healthy pods. <code>/readyz</code> returns 503 only when the Philter circuit breaker is open with <code>fallback: block</code> - the proxy can't serve any traffic in that state. In every other state (no breaker, breaker closed, half-open, or open with <code>fallback: passthrough</code>) <code>/readyz</code> returns 200. The first-party Helm chart and plain manifests already use these endpoints. Do not point a Kubernetes probe at <code>/health</code>: it actively probes Philter, and treating Philter unreachability as a liveness failure is the exact failure mode the split fixes. <code>/health</code> serves the standard Philterd health contract (<code>{"status":"UP","applicationVersion":"..."}</code>) for load balancers and appliance-wide health rollups that do want the dependency reflected. See <a href="../monitoring/#health-endpoints">Monitoring -&gt; Health Endpoints</a>.</p>
+<h3 id="are-api-keys-hashed-at-rest">Are API keys hashed at rest?</h3>
+<p>Yes. Keys are hashed when the config is loaded and never held in memory as plaintext. The <code>auth.apiKeys[].key</code> field accepts plaintext (auto-hashed with SHA256 at load), <code>sha256$&lt;64-hex&gt;</code> for a pre-hashed value, or <code>bcrypt$&lt;bcrypt-hash&gt;</code> for users with existing bcrypt key-management workflows. Verification uses constant-time comparison. For production, pre-hash externally so the plaintext never appears in your YAML, source control, or container images. See <a href="../configuration/#api-key-hashing">API Key Hashing</a> for format details, latency per algorithm, and CLI recipes for generating pre-hashed values.</p>
+<p>To keep the secret out of the config file entirely, the <code>key:</code> field also accepts <code>${ENV_VAR}</code> (read from an environment variable) and <code>file:/path/to/secret</code> (read from a mounted file) references, resolved at load and then hashed like any other value. This is the recommended way to integrate with environment-injected secrets, Kubernetes/Docker secrets, Vault, or AWS Secrets Manager. See <a href="../configuration/#loading-secrets-from-environment-variables-and-files">Loading secrets from environment variables and files</a> and the <a href="../configuration/#rotating-api-keys">key-rotation procedure</a>.</p>
+<h3 id="can-i-cap-token-spend-or-get-per-customer-usage-for-billing">Can I cap token spend or get per-customer usage for billing?</h3>
+<p>Not in the proxy. Token quotas, usage export, and per-tenant billing are the job of an AI gateway, and the proxy is designed to run alongside one rather than duplicate it. See <a href="../ai-gateway/">Using with an AI Gateway</a>.</p>
+<h3 id="can-i-cache-responses-to-repeated-prompts">Can I cache responses to repeated prompts?</h3>
+<p>Not in the proxy. Response caching is traffic management, which belongs to the AI gateway the proxy runs alongside. Caching in the proxy would also mean storing provider responses keyed by tenant, which adds a cross-tenant exposure risk to a component whose job is to reduce that risk. See <a href="../ai-gateway/">Using with an AI Gateway</a>.</p>
+<h3 id="do-the-proxys-replicas-need-shared-state">Do the proxy's replicas need shared state?</h3>
+<p>No. The proxy keeps no state that has to be shared between replicas, so you can scale it horizontally without a database, cache, or coordination service.</p>
+<h3 id="does-the-proxy-rate-limit-requests">Does the proxy rate limit requests?</h3>
+<p>No. Rate limiting, routing, failover, and spend controls belong to an AI gateway running alongside the proxy. See <a href="../ai-gateway/">Using with an AI Gateway</a>.</p>
+<h3 id="can-i-use-the-proxy-with-mistral-cohere-vllm-or-other-openai-compatible-providers">Can I use the proxy with Mistral, Cohere, vLLM, or other OpenAI-compatible providers?</h3>
+<p>Yes. Register any OpenAI-compatible provider under <code>providers.openaiCompatible</code> in the config, giving it a short name and a target URL. Clients send requests to <code>/{name}/v1/...</code> (e.g., <code>/mistral/v1/chat/completions</code>); the proxy strips the prefix and forwards the standard OpenAI-format request to the configured target after running PII redaction. No changes are needed to route configuration - routes work the same way across all OpenAI-compatible providers. See <a href="../configuration/#providersopenaicompatible">Configuration</a> for details.</p>
+<h3 id="how-does-bedrock-authentication-work">How does Bedrock authentication work?</h3>
+<p>The proxy handles AWS Signature Version 4 signing internally. The client sends a plain JSON request (no AWS credentials needed). The proxy signs the modified request using credentials from the standard AWS credential chain - environment variables, EC2 instance profile, ECS task role, or IRSA - before forwarding it to Bedrock. This means you never expose AWS credentials to API clients, and access control is enforced at the IAM level on the proxy's role.</p>
+<h3 id="does-the-proxy-support-streaming-with-amazon-bedrock">Does the proxy support streaming with Amazon Bedrock?</h3>
+<p>Yes. The <code>/model/{modelId}/converse-stream</code> endpoint is supported: the inbound request is redacted as usual and the AWS binary event-stream response is forwarded to the client incrementally (no buffering). As with the other providers, the streamed response body is passed through without outbound scanning. Non-streaming requests via the Converse API are also fully supported.</p>
+<h3 id="what-happens-if-philter-is-temporarily-unavailable">What happens if Philter is temporarily unavailable?</h3>
+<p>By default, the proxy retries failed Philter calls up to 3 times with exponential backoff before returning an error to the client. Only transient errors (network timeouts, HTTP 5xx responses) are retried; 4xx errors are not.</p>
+<p>For sustained Philter unavailability, enable the circuit breaker (<code>philter.circuitBreaker.enabled: true</code>). Once the configured failure threshold is reached, the circuit opens and subsequent requests either receive HTTP 503 immediately (<code>fallback: block</code>, the default) or are forwarded unredacted with a warning log (<code>fallback: passthrough</code>). After the configured timeout, the circuit allows a probe request through; if it succeeds, the circuit closes.</p>
+<p>See <a href="../configuration/#philterretry">Configuration</a> for retry and circuit breaker settings.</p>
+<h3 id="can-i-bound-how-many-concurrent-requests-the-proxy-will-handle">Can I bound how many concurrent requests the proxy will handle?</h3>
+<p>Yes. Set <code>listen.maxConcurrentRequests</code> to cap the total number of in-flight requests across the whole proxy. It is off by default. When the cap is reached, the proxy returns HTTP <code>503</code> with <code>Retry-After: 1</code> and the JSON body <code>{"error":{"message":"concurrency limit exceeded","type":"capacity"}}</code> instead of queuing the request. Per-client concurrency policy belongs to your AI gateway; the proxy's cap exists to protect itself and Philter from overload. The two metrics to watch are <code>philter_proxy_active_requests</code> (current utilization) and <code>philter_proxy_concurrency_shed_total{scope}</code> (rejections by scope). See <a href="../configuration/#concurrency-limits">Configuration</a> for sizing guidance and <a href="../monitoring/#concurrency">Monitoring</a> for the PromQL utilization recipe.</p>
+<h3 id="what-format-are-the-proxys-error-responses-in">What format are the proxy's error responses in?</h3>
+<p>All errors the proxy generates itself are structured JSON with the shape:</p>
+<pre><code class="language-json">{&quot;error&quot;:{&quot;message&quot;:&quot;...&quot;,&quot;type&quot;:&quot;...&quot;,&quot;code&quot;:&quot;...&quot;,&quot;request_id&quot;:&quot;...&quot;}}
+</code></pre>
+<p><code>Content-Type: application/json</code> and an <code>X-Request-Id</code> header carrying the same <code>request_id</code> are always set. The <code>(type, code)</code> pair is a stable enum - codes will not be removed or repurposed across minor versions. The full table lives at <a href="../configuration/#error-responses">Configuration → Error Responses</a>.</p>
+<p>To trace a failed request: grab the <code>X-Request-Id</code> header from the response, then search audit logs for <code>request_id=&lt;that value&gt;</code>. The audit entry's <code>error_type</code> and <code>error_code</code> will match what the client received.</p>
+<p>Errors that originate from the upstream LLM provider are forwarded through unchanged and follow the provider's own format, not the schema above.</p>
+<h3 id="does-the-proxy-track-token-usage">Does the proxy track token usage?</h3>
+<p>No. Token counts appear in neither the audit log nor the metrics. They say nothing about redaction, which is what this proxy exists to do and what its audit trail is evidence of. Tracking them would mean carrying usage-parsing for every provider and streaming format the proxy supports, to produce a partial copy of data the provider already reports accurately.</p>
+<p>Use your AI gateway's accounting, or the provider's own usage dashboard. See <a href="../ai-gateway/">Using with an AI Gateway</a>.</p>
+<h3 id="is-commercial-support-available">Is commercial support available?</h3>
+<p>Yes, commercial support for the Philter AI Proxy and Philter is available from <a href="https://www.philterd.ai">Philterd</a>. Please <a href="https://www.philterd.ai/contact/">contact us</a> for more information.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Copyright 2023-2026 Philterd, LLC
+    </div>
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": [], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+    
+  </body>
+</html>
