@@ -8,6 +8,8 @@ Outbound response scanning is also supported on an opt-in basis: LLM responses c
 
 View the [documentation](http://philterd.github.io/philter-ai-proxy).
 
+Questions, feedback, or want to contribute? [Join the Philterd Slack workspace](https://philterd.ai/slack/) to connect with other users and developers.
+
 ## Scope
 
 The proxy does redaction and the audit trail that goes with it. Two boundaries are deliberate:
@@ -208,6 +210,10 @@ The `2×` is headroom for tail latency and short bursts. Cross-check against:
 | `philter_proxy_active_requests` | gauge | Current in-flight requests holding a concurrency slot. |
 | `philter_proxy_concurrency_limit{scope="global"}` | gauge | Configured global ceiling (0 = unlimited). |
 | `philter_proxy_concurrency_shed_total{scope="global"}` | counter | Requests rejected with 503 because the global ceiling was reached. |
+
+## Community
+
+Users and developers are welcome in the [Philterd Slack workspace](https://philterd.ai/slack/). It's the place to ask questions, share feedback, and discuss contributions.
 
 ## License
 
