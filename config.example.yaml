@@ -36,6 +36,9 @@ metrics:
 
 philter:
   endpoint: https://philter.internal:8080
+  # Philter 4 requires an API key, sent as a bearer token. ${ENV_VAR} and
+  # file:/path references keep it out of this file.
+  apiKey: ${PHILTER_API_KEY}
   tlsVerify: true
   # caCert: /etc/ssl/internal-ca.pem
   retry:
@@ -116,7 +119,7 @@ routes:
 
 defaults:
   policy: default
-  context: none
+  # context: my-context  # omit for none; Philter refuses a context that does not exist
   # outbound:
   #   enabled: false
   #   action: redact  # redact (default), block, or flag

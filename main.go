@@ -488,8 +488,8 @@ func (p *Proxy) handleReadyz(w http.ResponseWriter, r *http.Request) {
 type healthResponse struct {
 	Status             string `json:"status"`
 	ApplicationVersion string `json:"applicationVersion"`
-	// Philter reports reachability of the redaction service ("ok" or
-	// "unreachable"). It is an extension beyond the shared contract, kept
+	// Philter reports the redaction service's health ("ok", "unhealthy"
+	// when its /api/health does not answer 200, or "unreachable"). It is an extension beyond the shared contract, kept
 	// from the endpoint's earlier shape so existing operator scripts that
 	// grep for it keep working.
 	Philter string `json:"philter,omitempty"`
@@ -535,7 +535,7 @@ func (p *Proxy) handleHealth(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
 	defer cancel()
 
-	req, err := http.NewRequestWithContext(ctx, "GET", p.config.Philter.Endpoint, nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", p.config.Philter.Endpoint+"/api/health", nil)
 	if err != nil {
 		// Startup validation parses the endpoint, so this is unreachable in a
 		// running proxy. Report DOWN rather than handing a nil request to
@@ -546,14 +546,18 @@ func (p *Proxy) handleHealth(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp, err := p.philter.httpClient.Do(req)
-	if err == nil {
-		resp.Body.Close()
-		writeHealth(w, http.StatusOK, healthResponse{Status: "UP", ApplicationVersion: version, Philter: "ok"})
+	if err != nil {
+		slog.Warn("Philter health check failed", "error", err)
+		writeHealth(w, http.StatusServiceUnavailable, healthResponse{Status: "DOWN", ApplicationVersion: version, Philter: "unreachable"})
 		return
 	}
-
-	slog.Warn("Philter health check failed", "error", err)
-	writeHealth(w, http.StatusServiceUnavailable, healthResponse{Status: "DOWN", ApplicationVersion: version, Philter: "unreachable"})
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		slog.Warn("Philter health check failed", "status", resp.StatusCode)
+		writeHealth(w, http.StatusServiceUnavailable, healthResponse{Status: "DOWN", ApplicationVersion: version, Philter: "unhealthy"})
+		return
+	}
+	writeHealth(w, http.StatusOK, healthResponse{Status: "UP", ApplicationVersion: version, Philter: "ok"})
 }
 
 func (p *Proxy) forwardToProvider(w http.ResponseWriter, origReq *http.Request, target *url.URL, client *http.Client, body []byte, provider string, audit *AuditEntry) {
@@ -733,7 +737,9 @@ func buildTLSConfig(skipVerify bool, caCertPath string) (*tls.Config, error) {
 }
 
 func (a *AuditEntry) recordFilterResult(fr FilterResponse) {
-	a.DocumentID = fr.DocumentId
+	if fr.DocumentId != "" {
+		a.DocumentID = fr.DocumentId
+	}
 	a.FieldsRedacted++
 	a.EntityCount += fr.EntityCount
 	a.RedactLatency += fr.Latency
@@ -2571,9 +2577,11 @@ func main() {
 		os.Exit(1)
 	}
 
-	philterHTTPClient := disableRedirects(&http.Client{
-		Transport: newProviderTransport(philterTLSConfig, cfg.Philter.Timeouts),
-	})
+	var philterTransport http.RoundTripper = newProviderTransport(philterTLSConfig, cfg.Philter.Timeouts)
+	if cfg.Philter.APIKey != "" {
+		philterTransport = &bearerTransport{apiKey: cfg.Philter.APIKey, next: philterTransport}
+	}
+	philterHTTPClient := disableRedirects(&http.Client{Transport: philterTransport})
 	philterHTTPClient = instrumentTransport(philterHTTPClient, tracingActive, "philter.filter")
 	philterClient := newPhilterClient(philterHTTPClient, cfg.Philter.Endpoint, cfg.Philter.Retry, cfg.Philter.CircuitBreaker)
 

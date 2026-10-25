@@ -20,11 +20,14 @@ openssl req -x509 -newkey rsa:4096 -keyout tls.key -out tls.crt -days 365 -nodes
 # 2. Create the TLS Secret. Update the namespace if not "default".
 kubectl create secret tls philter-ai-proxy-tls --cert=tls.crt --key=tls.key
 
-# 3. Edit configmap.yaml - point `philter.endpoint` at your Philter service.
-# 4. Apply.
+# 3. Create the Secret holding your Philter API key.
+kubectl create secret generic philter-api-key --from-literal=api-key=<philter-api-key>
+
+# 4. Edit 01-config.yaml - point `philter.endpoint` at your Philter service.
+# 5. Apply.
 kubectl apply -f deploy/k8s/
 
-# 5. Check.
+# 6. Check.
 kubectl get pods -l app=philter-ai-proxy
 kubectl port-forward svc/philter-ai-proxy 8443:8080 &
 curl -k https://localhost:8443/livez

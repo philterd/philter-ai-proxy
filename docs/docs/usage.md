@@ -238,4 +238,4 @@ When the proxy and Philter are both healthy this returns HTTP 200 with:
 {"status":"UP","applicationVersion":"1.0.0","philter":"ok"}
 ```
 
-If Philter cannot be reached the proxy returns HTTP 503 with `"status":"DOWN"` and `"philter":"unreachable"`. The endpoint needs no API key. For Kubernetes probes, point liveness at `/livez` and readiness at `/readyz` instead - see [Monitoring -> Health Endpoints](monitoring.md#health-endpoints).
+The proxy checks Philter's `/api/health`. If Philter cannot be reached the proxy returns HTTP 503 with `"status":"DOWN"` and `"philter":"unreachable"`; if Philter answers with anything other than `200`, `"philter"` is `"unhealthy"`. The endpoint needs no API key. For Kubernetes probes, point liveness at `/livez` and readiness at `/readyz` instead - see [Monitoring -> Health Endpoints](monitoring.md#health-endpoints).

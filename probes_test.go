@@ -326,3 +326,26 @@ func TestProbes_SkipAuditLog(t *testing.T) {
 		})
 	}
 }
+
+func TestHealth_DownWhenPhilterHealthNot200(t *testing.T) {
+	// Any HTTP answer used to count as healthy, so a Philter that answered
+	// 404 or 401 was reported "ok". Only a 200 from /api/health is.
+	var gotPath string
+	philterSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer philterSrv.Close()
+	p := probeProxy(philterSrv.URL, CircuitBreakerConfig{Enabled: false})
+
+	w, body := getHealth(t, p)
+	if gotPath != "/api/health" {
+		t.Errorf("health probe path: want /api/health, got %q", gotPath)
+	}
+	if w.Code != http.StatusServiceUnavailable {
+		t.Errorf("/health status: want 503, got %d", w.Code)
+	}
+	if body.Status != "DOWN" || body.Philter != "unhealthy" {
+		t.Errorf("/health body: want DOWN/unhealthy, got %q/%q", body.Status, body.Philter)
+	}
+}

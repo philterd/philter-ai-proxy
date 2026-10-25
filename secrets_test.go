@@ -143,3 +143,14 @@ func TestLoadConfig_ResolvesSecrets(t *testing.T) {
 		}
 	}
 }
+
+func TestResolveSecrets_PhilterAPIKey(t *testing.T) {
+	t.Setenv("PHILTER_TEST_API_KEY", "sk_from_env")
+	cfg := &Config{Philter: PhilterConfig{APIKey: "${PHILTER_TEST_API_KEY}"}}
+	if err := resolveSecrets(cfg); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Philter.APIKey != "sk_from_env" {
+		t.Errorf("expected sk_from_env, got %q", cfg.Philter.APIKey)
+	}
+}

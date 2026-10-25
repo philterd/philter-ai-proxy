@@ -238,7 +238,7 @@ The proxy strips the `/{name}` prefix before forwarding, so the provider receive
 - **Method**: `GET`
 - **Authentication**: None. The endpoint is reachable without an API key even when `auth.apiKeys` is configured.
 - **Description**: Returns the health status of the proxy in the standard Philterd health shape. Actively probes Philter (2-second timeout).
-- **Response**: `200 OK` with `{"status":"UP","applicationVersion":"<version>","philter":"ok"}` when healthy; `503 Service Unavailable` with `{"status":"DOWN","applicationVersion":"<version>","philter":"unreachable"}` when Philter cannot be reached.
+- **Response**: `200 OK` with `{"status":"UP","applicationVersion":"<version>","philter":"ok"}` when healthy; `503 Service Unavailable` with `{"status":"DOWN","applicationVersion":"<version>","philter":"unreachable"}` when Philter cannot be reached, or `"philter":"unhealthy"` when Philter's `/api/health` answers with anything other than `200`.
 - **Example**:
   ```bash
   curl -k https://localhost:8080/health

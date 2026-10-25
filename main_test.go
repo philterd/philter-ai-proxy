@@ -228,6 +228,58 @@ func TestFilter(t *testing.T) {
 	}
 }
 
+func TestFilter_Philter4Response(t *testing.T) {
+	// Philter 4 refuses a context that does not exist, returns the document
+	// ID in X-Document-Id rather than the body, and explains errors with a
+	// reason.
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if _, ok := r.URL.Query()["c"]; ok {
+			t.Errorf("an empty context must be omitted, got query %q", r.URL.RawQuery)
+		}
+		w.Header().Set("X-Document-Id", "header-doc-id")
+		w.Write(explainJSON("filtered", "", nil))
+	}))
+	defer server.Close()
+
+	resp, err := Filter(http.DefaultClient, server.URL, "text", "", "docid", "policy")
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if resp.DocumentId != "header-doc-id" {
+		t.Errorf("Expected document ID from X-Document-Id, got %q", resp.DocumentId)
+	}
+}
+
+func TestFilter_ErrorIncludesPhilterReason(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		w.Write([]byte(`{"message":"Invalid or missing credentials.","reason":"invalid_credentials"}`))
+	}))
+	defer server.Close()
+
+	_, err := Filter(http.DefaultClient, server.URL, "text", "", "docid", "policy")
+	if err == nil || !strings.Contains(err.Error(), "401 (invalid_credentials)") {
+		t.Errorf("Expected the error to carry Philter's reason, got %v", err)
+	}
+}
+
+func TestBearerTransport(t *testing.T) {
+	var gotAuth string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		w.Write(explainJSON("filtered", "doc", nil))
+	}))
+	defer server.Close()
+
+	client := &http.Client{Transport: &bearerTransport{apiKey: "sk_test", next: http.DefaultTransport}}
+	if _, err := Filter(client, server.URL, "text", "", "docid", "policy"); err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if gotAuth != "Bearer sk_test" {
+		t.Errorf("Expected Authorization 'Bearer sk_test', got %q", gotAuth)
+	}
+}
+
 func TestFilter_Error(t *testing.T) {
 	_, err := Filter(http.DefaultClient, "http://127.0.0.1:1", "text", "ctx", "doc", "policy")
 	if err == nil {
@@ -3212,6 +3264,29 @@ func TestPhilterClient_CircuitBreakerPassthrough(t *testing.T) {
 	}
 	if fr.FilteredText != "original text" {
 		t.Errorf("Expected original text returned unchanged, got %s", fr.FilteredText)
+	}
+}
+
+func TestPhilterClient_CircuitBreakerIgnores4xx(t *testing.T) {
+	// A rejected API key must never open a passthrough breaker: that would
+	// turn a misconfiguration into forwarding unredacted text.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer srv.Close()
+
+	pc := newPhilterClient(http.DefaultClient, srv.URL,
+		RetryConfig{MaxAttempts: 1},
+		CircuitBreakerConfig{Enabled: true, Threshold: 1, TimeoutSeconds: 30, Fallback: "passthrough"},
+	)
+
+	for i := 0; i < 3; i++ {
+		if _, err := pc.Filter(context.Background(), "original text", "", "doc", "pol"); err == nil {
+			t.Fatalf("call %d: expected an error, got passthrough", i)
+		}
+	}
+	if pc.cb.State() != "closed" {
+		t.Errorf("Expected breaker closed after 4xx responses, got %s", pc.cb.State())
 	}
 }
 

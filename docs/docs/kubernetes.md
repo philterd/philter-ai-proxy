@@ -26,6 +26,10 @@ openssl req -x509 -newkey rsa:4096 -keyout tls.key -out tls.crt -days 365 -nodes
   -subj "/CN=philter-ai-proxy.example.com"
 
 kubectl create secret tls philter-ai-proxy-tls --cert=tls.crt --key=tls.key
+
+# Philter 4 requires an API key; the proxy reads it from this Secret.
+kubectl create secret generic philter-api-key --namespace philter-system \
+  --from-literal=api-key=<philter-api-key>
 ```
 
 If you have [cert-manager](https://cert-manager.io/) installed, skip this step and use the cert-manager values block in step 2 instead.
@@ -39,7 +43,8 @@ cd philter-ai-proxy
 helm install proxy ./deploy/helm/philter-ai-proxy \
   --namespace philter-system --create-namespace \
   --set tls.existingSecret.name=philter-ai-proxy-tls \
-  --set config.philter.endpoint=http://philter.philter-system.svc.cluster.local:8080
+  --set config.philter.endpoint=https://philter.philter-system.svc.cluster.local:8080 \
+  --set philterAPIKey.existingSecretName=philter-api-key
 ```
 
 To issue the TLS cert via cert-manager instead (a renewed certificate is picked up on pod restart, so run more than one replica if renewal must be gap-free):
@@ -50,7 +55,8 @@ helm install proxy ./deploy/helm/philter-ai-proxy \
   --set tls.source=certManager \
   --set tls.certManager.issuerRef.name=letsencrypt-prod \
   --set tls.certManager.dnsNames[0]=philter-ai-proxy.example.com \
-  --set config.philter.endpoint=http://philter.philter-system.svc.cluster.local:8080
+  --set config.philter.endpoint=https://philter.philter-system.svc.cluster.local:8080 \
+  --set philterAPIKey.existingSecretName=philter-api-key
 ```
 
 ### 3. Verify
@@ -115,11 +121,14 @@ openssl req -x509 -newkey rsa:4096 -keyout tls.key -out tls.crt -days 365 -nodes
 
 kubectl create secret tls philter-ai-proxy-tls --cert=tls.crt --key=tls.key
 
-# 2. Edit deploy/k8s/01-config.yaml - point philter.endpoint at your Philter.
-# 3. Apply.
+# 2. Create the Secret holding your Philter API key.
+kubectl create secret generic philter-api-key --from-literal=api-key=<philter-api-key>
+
+# 3. Edit deploy/k8s/01-config.yaml - point philter.endpoint at your Philter.
+# 4. Apply.
 kubectl apply -f deploy/k8s/
 
-# 4. Verify
+# 5. Verify
 kubectl get pods -l app=philter-ai-proxy
 kubectl port-forward svc/philter-ai-proxy 8443:8080 &
 curl -k https://localhost:8443/livez

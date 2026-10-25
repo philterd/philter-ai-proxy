@@ -72,5 +72,11 @@ func resolveSecrets(cfg *Config) error {
 		cfg.Auth.APIKeys[i].Key = resolved
 	}
 
+	resolved, err := resolveSecret("philter.apiKey", cfg.Philter.APIKey)
+	if err != nil {
+		return err
+	}
+	cfg.Philter.APIKey = resolved
+
 	return nil
 }

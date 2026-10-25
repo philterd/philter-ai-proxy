@@ -82,7 +82,7 @@ Implements the health contract shared across Philterd products, so one probe wor
 ```
 
 - **Healthy**: `200 OK` with `"status":"UP"` and `"philter":"ok"`.
-- **Degraded**: `503 Service Unavailable` with `"status":"DOWN"` and `"philter":"unreachable"` when Philter cannot be reached.
+- **Degraded**: `503 Service Unavailable` with `"status":"DOWN"` and `"philter":"unreachable"` when Philter cannot be reached, or `"philter":"unhealthy"` when Philter's `/api/health` answers with anything other than `200`.
 
 `applicationVersion` is the bare build version stamped into the binary at release time (`-X main.version=...`), reported as `dev` for an unstamped local build. It is the version part of what `--version` prints; unlike `--version` it carries no commit revision or Go toolchain suffix. `philter` is a proxy-specific extension beyond the shared contract, reporting reachability of the redaction service.
 

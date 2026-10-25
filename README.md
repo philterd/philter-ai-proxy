@@ -47,7 +47,8 @@ A production-ready Helm chart lives at `deploy/helm/philter-ai-proxy/` and plain
 kubectl create secret tls philter-ai-proxy-tls --cert=tls.crt --key=tls.key
 helm install proxy ./deploy/helm/philter-ai-proxy \
   --set tls.existingSecret.name=philter-ai-proxy-tls \
-  --set config.philter.endpoint=http://philter.philter-system.svc.cluster.local:8080
+  --set config.philter.endpoint=https://philter.philter-system.svc.cluster.local:8080 \
+  --set philterAPIKey.existingSecretName=philter-api-key
 ```
 
 The chart supports replicas, autoscaling (HPA), Pod Disruption Budgets, Ingress, Prometheus Operator `ServiceMonitor`, mTLS, and cert-manager-issued TLS. See [the Kubernetes Quickstart](https://philterd.github.io/philter-ai-proxy/kubernetes/) for the full walkthrough.

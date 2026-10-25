@@ -3,7 +3,7 @@
 ## Prerequisites
 
 - Go 1.25 or later
-- [Philter](https://philterd.ai/philter/) instance running and accessible
+- [Philter](https://philterd.ai/philter/) 4.0 or later, running and accessible, and a Philter API key for the proxy (see [`philter.apiKey`](configuration.md#philter))
 
 ## Building from Source
 

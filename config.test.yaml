@@ -22,4 +22,3 @@ providers:
 
 defaults:
   policy: default
-  context: none

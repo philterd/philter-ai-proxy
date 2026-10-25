@@ -34,6 +34,12 @@ spec:
           args:
             - --config
             - /etc/philter-proxy/config/config.yaml
+          env:
+            - name: PHILTER_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: philter-api-key
+                  key: api-key
           ports:
             - name: proxy
               containerPort: 8080

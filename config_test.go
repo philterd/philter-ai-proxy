@@ -20,8 +20,8 @@ func TestDefaultConfig(t *testing.T) {
 	if cfg.Defaults.Policy != "default" {
 		t.Errorf("Expected default policy, got %s", cfg.Defaults.Policy)
 	}
-	if cfg.Defaults.Context != "none" {
-		t.Errorf("Expected default context 'none', got %s", cfg.Defaults.Context)
+	if cfg.Defaults.Context != "" {
+		t.Errorf("Expected no default context, got %s", cfg.Defaults.Context)
 	}
 	if cfg.Providers.OpenAI.Target != "https://api.openai.com" {
 		t.Errorf("Expected default OpenAI target, got %s", cfg.Providers.OpenAI.Target)
@@ -219,8 +219,8 @@ func TestMatchRoute_PathMatch(t *testing.T) {
 	if result.Policy != "anthropic-policy" {
 		t.Errorf("Expected anthropic-policy, got %s", result.Policy)
 	}
-	if result.Context != "none" {
-		t.Errorf("Expected default context 'none', got %s", result.Context)
+	if result.Context != "" {
+		t.Errorf("Expected no default context, got %s", result.Context)
 	}
 }
 

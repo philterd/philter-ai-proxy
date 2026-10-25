@@ -143,6 +143,18 @@ func (cb *circuitBreaker) blocking() bool {
 
 // --- PhilterClient -----------------------------------------------------------
 
+// bearerTransport adds Philter's API key to every request made through it.
+type bearerTransport struct {
+	apiKey string
+	next   http.RoundTripper
+}
+
+func (t *bearerTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	req = req.Clone(req.Context())
+	req.Header.Set("Authorization", "Bearer "+t.apiKey)
+	return t.next.RoundTrip(req)
+}
+
 // filterFunc is a Philter call abstraction used by redactAny and redactJSONArguments.
 // The first parameter is the Go context for the outbound call; the third is
 // the Philter "context" name passed as a URL parameter.
@@ -224,6 +236,7 @@ func (pc *PhilterClient) Filter(reqCtx context.Context, input, philterCtx, docID
 	}
 
 	var lastErr error
+	var lastStatus int
 	delay := pc.initialDelay
 
 	for attempt := 0; attempt < pc.maxAttempts; attempt++ {
@@ -247,13 +260,17 @@ func (pc *PhilterClient) Filter(reqCtx context.Context, input, philterCtx, docID
 			return fr, nil
 		}
 		lastErr = err
+		lastStatus = statusCode
 
 		if !isTransientError(statusCode, err) {
 			break
 		}
 	}
 
-	if pc.cb != nil {
+	// A 4xx (a bad API key, an unknown context or policy) means Philter is
+	// up and refusing the request. Counting it would let a misconfiguration
+	// open the breaker and, under fallback=passthrough, forward unredacted.
+	if pc.cb != nil && (lastStatus < 400 || lastStatus >= 500) {
 		pc.cb.recordFailure()
 	}
 	return FilterResponse{}, lastErr
@@ -268,7 +285,11 @@ func filterHTTP(reqCtx context.Context, client *http.Client, endpoint, input, ph
 	}
 
 	params := url.Values{}
-	params.Add("c", philterCtx)
+	// Philter 4 refuses a context that does not exist, so an empty one is
+	// omitted rather than sent as a name.
+	if philterCtx != "" {
+		params.Add("c", philterCtx)
+	}
 	params.Add("d", docID)
 	params.Add("p", policy)
 	base.RawQuery = params.Encode()
@@ -288,6 +309,14 @@ func filterHTTP(reqCtx context.Context, client *http.Client, endpoint, input, ph
 	defer response.Body.Close()
 
 	if response.StatusCode != http.StatusOK {
+		// Philter's error body is {"message","reason"}; the reason (such as
+		// invalid_credentials) is what tells an operator what to fix.
+		var philterErr struct {
+			Reason string `json:"reason"`
+		}
+		if json.NewDecoder(io.LimitReader(response.Body, 4096)).Decode(&philterErr) == nil && philterErr.Reason != "" {
+			return FilterResponse{}, response.StatusCode, fmt.Errorf("Philter returned HTTP %d (%s)", response.StatusCode, philterErr.Reason)
+		}
 		return FilterResponse{}, response.StatusCode, fmt.Errorf("Philter returned HTTP %d", response.StatusCode)
 	}
 
@@ -307,6 +336,12 @@ func filterHTTP(reqCtx context.Context, client *http.Client, endpoint, input, ph
 		typesSet[span.FilterType] = struct{}{}
 		typeCounts[span.FilterType]++
 	}
+	// Philter 4 assigns the document ID itself and returns it in a header.
+	documentID := response.Header.Get("X-Document-Id")
+	if documentID == "" {
+		documentID = explainResp.DocumentId
+	}
+
 	entityTypes := make([]string, 0, len(typesSet))
 	for t := range typesSet {
 		entityTypes = append(entityTypes, t)
@@ -315,7 +350,7 @@ func filterHTTP(reqCtx context.Context, client *http.Client, endpoint, input, ph
 	return FilterResponse{
 		FilteredText:     explainResp.FilteredText,
 		Context:          explainResp.Context,
-		DocumentId:       explainResp.DocumentId,
+		DocumentId:       documentID,
 		EntityCount:      len(explainResp.Explanation.AppliedSpans),
 		EntityTypes:      entityTypes,
 		EntityTypeCounts: typeCounts,

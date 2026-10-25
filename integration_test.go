@@ -4,6 +4,7 @@ package main
 
 import (
 	"bytes"
+	"crypto/tls"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -27,24 +28,31 @@ func philterIntegrationURL() string {
 	return "http://localhost:8081"
 }
 
-// waitForPhilter polls the Philter endpoint until it responds or the deadline
-// elapses. The reference image returns 404 at "/", but a successful TCP+HTTP
-// roundtrip is enough to know the service is up.
+// philterIntegrationClient talks to the Philter under test. A real Philter 4
+// serves HTTPS with a self-signed certificate and requires an API key, given
+// in PHILTER_TEST_API_KEY; the reference image needs neither.
+func philterIntegrationClient() *http.Client {
+	var transport http.RoundTripper = &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}
+	if key := os.Getenv("PHILTER_TEST_API_KEY"); key != "" {
+		transport = &bearerTransport{apiKey: key, next: transport}
+	}
+	return &http.Client{Transport: transport}
+}
+
+// waitForPhilter polls Philter's /api/health until it answers 200 or the
+// deadline elapses.
 func waitForPhilter(t *testing.T, endpoint string, timeout time.Duration) {
 	t.Helper()
 	deadline := time.Now().Add(timeout)
-	client := &http.Client{Timeout: 2 * time.Second}
+	client := philterIntegrationClient()
+	client.Timeout = 2 * time.Second
 	for time.Now().Before(deadline) {
-		resp, err := client.Get(endpoint + "/api/status")
+		resp, err := client.Get(endpoint + "/api/health")
 		if err == nil {
 			resp.Body.Close()
-			return
-		}
-		// Fall back to the bare endpoint — older images may not expose /api/status.
-		resp, err = client.Get(endpoint)
-		if err == nil {
-			resp.Body.Close()
-			return
+			if resp.StatusCode == http.StatusOK {
+				return
+			}
 		}
 		time.Sleep(500 * time.Millisecond)
 	}
@@ -58,13 +66,12 @@ func newIntegrationProxy(t *testing.T, philterURL string, openaiURL *url.URL, au
 	cfg.Philter.Retry = RetryConfig{MaxAttempts: 1}
 	cfg.Philter.CircuitBreaker = CircuitBreakerConfig{Enabled: false}
 	cfg.Defaults.Policy = "default"
-	cfg.Defaults.Context = "none"
 
 	p := &Proxy{
 		config:       cfg,
 		openaiTarget: openaiURL,
 		openaiClient: http.DefaultClient,
-		philter: newPhilterClient(http.DefaultClient, philterURL,
+		philter: newPhilterClient(philterIntegrationClient(), philterURL,
 			RetryConfig{MaxAttempts: 1},
 			CircuitBreakerConfig{Enabled: false}),
 	}

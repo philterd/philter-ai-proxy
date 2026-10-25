@@ -139,7 +139,10 @@ type CircuitBreakerConfig struct {
 }
 
 type PhilterConfig struct {
-	Endpoint       string               `yaml:"endpoint"`
+	Endpoint string `yaml:"endpoint"`
+	// APIKey is sent to Philter as a bearer token. Philter 4 requires one.
+	// Accepts ${ENV_VAR} and file: references.
+	APIKey         string               `yaml:"apiKey"`
 	TLSVerify      *bool                `yaml:"tlsVerify"`
 	CACert         string               `yaml:"caCert"`
 	Retry          RetryConfig          `yaml:"retry"`
@@ -366,8 +369,7 @@ func defaultConfig() *Config {
 			Ollama:    ProviderConfig{Target: "http://localhost:11434"},
 		},
 		Defaults: DefaultsConfig{
-			Policy:  "default",
-			Context: "none",
+			Policy: "default",
 		},
 	}
 }

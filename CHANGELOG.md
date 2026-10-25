@@ -9,6 +9,7 @@ Nothing has been released yet. This is what the first release will contain.
 - OpenAI, Azure OpenAI, Anthropic, Google Gemini, Google Vertex AI, Amazon Bedrock, and Ollama, plus any OpenAI-compatible backend, all with streaming support.
 - Inbound redaction across chat, embeddings, Responses, moderations, image, audio, and completions endpoints, including tool calls. Optional outbound response scanning with `redact`, `block`, or `flag`. Per-route policies.
 - API-key auth (hashed at rest) and mTLS, per-key scopes and policy binding, `${ENV_VAR}` and `file:` secret references, and inbound request hardening: body and header caps, slowloris and handshake timeouts, a TLS 1.2 floor, a bounded handshake ceiling, and a global concurrency cap.
+- Requires Philter 4.0 or later. The proxy sends Philter's API key (`philter.apiKey`) as a bearer token, sends no context unless one is configured (Philter refuses a context that does not exist), and checks Philter's `/api/health` from its own `/health`.
 - Philter retry and circuit breaker, per-provider transport timeouts.
 - Structured JSON audit log carrying metadata only, Prometheus metrics, OpenTelemetry tracing, `/livez` and `/readyz` probes, an unauthenticated `/health` endpoint serving the standard Philterd health contract (`{"status":"UP","applicationVersion":"..."}`), `--validate-config`, and `--version`.
 - A Helm chart, plain Kubernetes manifests, a starter Grafana dashboard, and a k6 load-test harness.

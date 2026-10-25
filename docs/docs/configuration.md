@@ -23,6 +23,7 @@ logging:
 
 philter:
   endpoint: https://philter.internal:8080
+  apiKey: ${PHILTER_API_KEY}
   tlsVerify: true
   # caCert: /etc/ssl/internal-ca.pem
   retry:
@@ -68,7 +69,6 @@ routes:
 
 defaults:
   policy: default
-  context: none
 ```
 
 ## Configuration Compatibility
@@ -150,7 +150,8 @@ OTLP exporter destination, protocol, headers, sampler, and other tuning are all 
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `endpoint` | string | `https://localhost:8080` | URL of the Philter instance |
+| `endpoint` | string | `https://localhost:8080` | URL of the Philter instance. Philter 4 serves HTTPS by default. |
+| `apiKey` | string | (none) | Philter API key, sent as `Authorization: Bearer <apiKey>`. Philter 4 requires one. Accepts `${ENV_VAR}` and `file:/path` references. |
 | `tlsVerify` | bool | `true` | Enable TLS certificate verification for the Philter connection |
 | `caCert` | string | (none) | Path to a custom CA certificate (PEM) for the Philter connection |
 | `retry` | object | see below | Retry settings for failed Philter calls |
@@ -169,7 +170,7 @@ OTLP exporter destination, protocol, headers, sampler, and other tuning are all 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `enabled` | bool | `false` | Enable the circuit breaker for the Philter connection |
-| `threshold` | int | `5` | Number of consecutive failures before the circuit opens |
+| `threshold` | int | `5` | Number of consecutive failures before the circuit opens. Network errors and `5xx` responses count; a `4xx` (such as a rejected API key or an unknown context) does not, so a misconfiguration fails requests rather than opening the circuit. |
 | `timeoutSeconds` | int | `30` | Seconds the circuit remains open before allowing a probe request (half-open state) |
 | `fallback` | string | `block` | Action when the circuit is open: `block` (return HTTP 503) or `passthrough` (forward the request unredacted with a warning log) |
 
@@ -353,7 +354,7 @@ Each route specifies:
 | Field | Required | Description |
 |-------|----------|-------------|
 | `policy` | Yes | Philter policy name to use for redaction |
-| `context` | No | Philter context to use (falls back to `defaults.context` if not set) |
+| `context` | No | Philter context to use (falls back to `defaults.context` if not set). The context must exist in Philter: Philter refuses an unknown context with `400`. |
 | `outbound` | No | Outbound response scanning settings for this route (see below) |
 
 ### `defaults`
@@ -361,7 +362,7 @@ Each route specifies:
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `policy` | string | `default` | Philter policy used when no route matches |
-| `context` | string | `none` | Philter context used when no route matches (or when a matched route has no context) |
+| `context` | string | (none) | Philter context used when no route matches (or when a matched route has no context). When empty, no context is sent. |
 | `outbound` | object | (disabled) | Default outbound scanning settings (see below) |
 
 ### `outbound`
@@ -404,7 +405,6 @@ routes:
 
 defaults:
   policy: default
-  context: none
   outbound:
     enabled: false
 ```
