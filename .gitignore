@@ -1,17 +1,17 @@
-*.exe
-*.exe~
-*.dll
-*.so
-*.dylib
-*.test
-*.out
+# Maven build output.
+target/
+
+# Editor / IDE
 .idea
-philter-ai-proxy
-test.sh
-cert.pem
-key.pem
+.vscode
+*.swp
+*.swo
+
+# OS junk
+.DS_Store
+
+# Local secrets for docker compose.
+.env
 
 # Load-test k6 summaries are per-run artifacts.
 test/load/results/*.summary.json
-# Test coverage profile (make cover)
-coverage.out

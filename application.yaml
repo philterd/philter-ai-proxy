@@ -1,0 +1,8 @@
+# Settings for the proxy, loaded after the image's defaults. Every setting is described in
+# docs/docs/configuration.md.
+proxy:
+  defaults:
+    policy: default
+    outbound:
+      enabled: false
+      action: redact

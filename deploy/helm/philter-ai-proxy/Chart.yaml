@@ -1,0 +1,30 @@
+apiVersion: v2
+name: philter-ai-proxy
+description: A self-hosted proxy that redacts PII and PHI from LLM requests and responses for OpenAI, Anthropic, Gemini, Vertex AI, Ollama, Amazon Bedrock, and OpenAI-compatible providers.
+type: application
+
+# Chart version follows semver. Bump independently of the application version.
+version: 2.0.0
+
+# The application release this chart deploys by default. Override image.tag to deploy another.
+appVersion: "2.0.0"
+
+home: https://philterd.ai/philter-ai-proxy/
+sources:
+  - https://github.com/philterd/philter-ai-proxy
+
+maintainers:
+  - name: Philterd
+    url: https://philterd.ai
+
+keywords:
+  - pii
+  - phi
+  - redaction
+  - llm
+  - openai
+  - anthropic
+  - gemini
+  - bedrock
+  - proxy
+  - privacy

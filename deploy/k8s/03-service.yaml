@@ -1,32 +1,38 @@
+# Generated from the Helm chart's defaults by deploy/k8s/generate.sh. Do not edit by hand: change the chart
+# and regenerate.
 apiVersion: v1
 kind: Service
 metadata:
   name: philter-ai-proxy
   labels:
-    app: philter-ai-proxy
+    app.kubernetes.io/name: philter-ai-proxy
+    app.kubernetes.io/instance: philter-ai-proxy
 spec:
   type: ClusterIP
-  selector:
-    app: philter-ai-proxy
   ports:
-    - name: proxy
-      port: 8080
-      targetPort: proxy
-      protocol: TCP
+  - name: proxy
+    port: 8080
+    targetPort: proxy
+    protocol: TCP
+  selector:
+    app.kubernetes.io/name: philter-ai-proxy
+    app.kubernetes.io/instance: philter-ai-proxy
 ---
 apiVersion: v1
 kind: Service
 metadata:
   name: philter-ai-proxy-metrics
   labels:
-    app: philter-ai-proxy
-    component: metrics
+    app.kubernetes.io/name: philter-ai-proxy
+    app.kubernetes.io/instance: philter-ai-proxy
+    app.kubernetes.io/component: metrics
 spec:
   type: ClusterIP
-  selector:
-    app: philter-ai-proxy
   ports:
-    - name: metrics
-      port: 9090
-      targetPort: metrics
-      protocol: TCP
+  - name: metrics
+    port: 9090
+    targetPort: metrics
+    protocol: TCP
+  selector:
+    app.kubernetes.io/name: philter-ai-proxy
+    app.kubernetes.io/instance: philter-ai-proxy

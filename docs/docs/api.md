@@ -1,247 +1,193 @@
 # API Reference
 
-The Philter AI Proxy provides several endpoints to redact sensitive information before sending requests to AI providers. All endpoints support both streaming and non-streaming requests.
+The proxy serves two APIs on port 8080: provider traffic, which it redacts and forwards, and the admin API under `/admin`, for policies and API keys. See [Usage](usage.md) for which path goes to which provider.
 
 ## Redacted Fields
 
-The proxy inspects and redacts all text-bearing fields in the request body before forwarding. The table below lists exactly which fields are redacted per provider.
+The proxy redacts the text-bearing fields of each request before forwarding it. Every other field, such as model names, sampling parameters, tool definitions, and IDs, is forwarded unchanged.
 
-| Provider | Message type | Fields redacted |
-|----------|-------------|-----------------|
-| OpenAI / OpenAI-compatible / Azure OpenAI | `role: user` | `content` (string) |
-| OpenAI / OpenAI-compatible / Azure OpenAI | `role: system` | `content` (string) |
-| OpenAI / OpenAI-compatible / Azure OpenAI | `role: tool` | `content` (string) |
-| OpenAI / OpenAI-compatible / Azure OpenAI | `role: assistant` with tool calls | `tool_calls[].function.arguments` - parsed as JSON, string values redacted, re-serialized |
-| OpenAI family — `/embeddings` | `input` (string or array of strings; integer token-ID inputs are passed through unchanged) |
-| OpenAI family — `/responses` (Responses API) | `input` (string, or message items incl. nested `content[].text`) and `instructions` |
-| OpenAI family — `/moderations` | `input` (string or array of strings) |
-| OpenAI family — `/images/generations` | `prompt` |
-| OpenAI family — `/audio/speech` (TTS) | `input` |
-| OpenAI family — `/completions` (legacy) | `prompt` (string or array) |
-| Anthropic | Top-level | `system` (string) |
-| Anthropic | `text` content block | `text` |
-| Anthropic | `tool_result` content block | `content` (string or nested `text` blocks) |
-| Gemini | `text` part | `text` |
-| Gemini | `functionResponse` part | `response` object - all string values redacted recursively |
-| Ollama generate | - | `prompt`, `system` |
-| Ollama chat | `role: *` | `content` |
-| Bedrock Converse | Top-level | `system[].text` |
-| Bedrock Converse | `messages[].content[]` | `text` |
+| Provider | Request | Fields redacted |
+|---|---|---|
+| OpenAI family | Chat completions | Each message's `content` (a string, or the `text` of each content part), `refusal`, `tool_calls[].function.arguments`, and `function_call.arguments` |
+| OpenAI family | Responses (`/responses`) | `instructions`; `input` as a string, or each item: message content (a string or `input_text` and `output_text` parts), `function_call.arguments`, `function_call_output.output`, and reasoning summaries |
+| OpenAI family | Embeddings, moderations, speech (`/audio/speech`) | `input` (a string or an array of strings; token-ID arrays are left alone) |
+| OpenAI family | Image generation, legacy completions | `prompt` (a string or an array of strings) |
+| Anthropic | Messages | `system` (a string or text blocks); each message's content (a string, or `text` blocks, `tool_use` input, and `tool_result` content as a string or text blocks) |
+| Gemini, Vertex AI | `generateContent`, `streamGenerateContent` | Each part's `text`, `functionCall.args`, and `functionResponse.response`, in `contents` and `systemInstruction` |
+| Ollama | `/api/generate` | `prompt`, `system` |
+| Ollama | `/api/chat` | Each message's `content`, `thinking`, and `tool_calls[].function.arguments` |
+| Bedrock | Converse | `system[].text`; each message's `text` blocks, `toolUse.input`, and `toolResult.content` (text and JSON) |
 
-Fields not in the table (e.g., model names, IDs, non-string values) are forwarded unchanged. The OpenAI-family endpoint rows apply equally to the OpenAI, Azure OpenAI, and openai-compatible providers, since they share one request handler.
+The OpenAI family is OpenAI, Azure OpenAI, and the OpenAI-compatible providers. Arguments and other JSON held in a string are parsed, each string in them redacted, and the JSON written back; when they are not JSON, the whole string is redacted as text.
 
-Fields not in the table above (model names, IDs, non-string values) are forwarded unchanged.
+Not redacted: Anthropic thinking blocks and Bedrock reasoning blocks sent back in a conversation, since the providers verify their signatures and a changed block is refused.
+
+All the fields of one request are redacted together, against one policy. Without a configured context, a value is replaced the same way in every field of the request and in its response, when the policy's strategy uses `"replacementScope": "CONTEXT"`. See [Contexts](policies.md#contexts).
+
+### Images, audio, and files are not redacted
+
+Only text is redacted. Images, audio, and files embedded in a JSON request are forwarded to the provider unchanged and are not inspected, including any text, faces, or spoken words they contain. That covers, for example:
+
+| Provider | Not redacted |
+|----------|--------------|
+| OpenAI / OpenAI-compatible / Azure OpenAI | `image_url`, `input_audio`, and `file` content parts; Responses API `input_image` and `input_file` items |
+| Anthropic | `image` and `document` content blocks |
+| Gemini / Vertex AI | `inlineData` and `fileData` parts |
+| Bedrock Converse | `image`, `document`, and `video` content blocks |
+| Ollama | `images` |
+
+The same holds for responses: response scanning reads response text only, so generated images and audio, and the transcript that accompanies audio output, are returned unscanned.
+
+If images, audio, or files sent to a provider can contain sensitive data, remove or redact them before the request reaches the proxy, or route those requests elsewhere. Multipart uploads (files, audio transcription, image edits) are refused rather than forwarded; see [Supported request types](#supported-request-types).
 
 ## Supported request types
 
-The proxy accepts a JSON request body. **It does not parse `multipart/form-data`.** That single rule decides every endpoint below, and predicts the answer for any endpoint not listed.
+The proxy accepts a JSON request body. **It does not parse `multipart/form-data`.**
 
 | Request type | Behavior | Error |
 |---|---|---|
-| Chat, Responses, embeddings, moderations, completions, image generations, audio speech | Redacted per the table above, then forwarded | - |
-| `/v1/batches` | Forwarded unchanged. A batch references an uploaded file by ID, so there is no inline text to redact | - |
-| Any endpoint the proxy does not recognise, with a JSON body | Forwarded unchanged, no redaction | - |
-| `/v1/images/edits`, `/v1/images/variations` | **Rejected.** Not supported, and not planned | `400` `invalid_request` / `unsupported_content_type` |
-| `/v1/files` (uploads) | **Rejected.** Not supported, and not planned | `400` `invalid_request` / `unsupported_content_type` |
-| `/v1/audio/transcriptions`, `/v1/audio/translations` | **Rejected** today. Support is tracked in [#40](https://github.com/philterd/philter-ai-proxy/issues/40) | `400` `invalid_request` / `unsupported_content_type` |
+| The requests in the table above | Redacted, then forwarded | - |
+| A request without a body, such as `GET /v1/models` | Forwarded unchanged | - |
+| Any other request with a JSON body, such as `/v1/batches` | Forwarded unchanged, no redaction | - |
+| `/v1/images/edits`, `/v1/images/variations` | **Refused.** Not supported, and not planned | `400` `invalid_request` / `unsupported_content_type` |
+| `/v1/files` (uploads) | **Refused.** Not supported, and not planned | `400` `invalid_request` / `unsupported_content_type` |
+| `/v1/audio/transcriptions`, `/v1/audio/translations` | **Refused** today. Support is tracked in [#40](https://github.com/philterd/philter-ai-proxy/issues/40) | `400` `invalid_request` / `unsupported_content_type` |
+| A body that is not a JSON object | Refused | `400` `invalid_request` / `bad_json` |
 
-Route rejected calls directly to the provider.
+Route refused calls directly to the provider.
 
-**Why image edits are not planned.** Redacting the `prompt` form field would mean parsing a multipart body, rewriting one field, and re-encoding the rest, which is the thing the proxy deliberately does not do.
+**Why image edits are not planned.** Redacting the `prompt` form field would mean parsing a multipart body, rewriting one field, and re-encoding the rest, which the proxy deliberately does not do.
 
-**Why file uploads are not planned.** A batch file is many embedded requests, so redacting one upload would mean one Philter call per record inside a single synchronous request. Redact the file contents with Philter before uploading.
+**Why file uploads are not planned.** A batch file is many embedded requests, so redacting one upload would mean redacting every record inside a single synchronous request. Redact the file contents before uploading.
 
-**Why audio can be supported.** Audio needs no multipart parsing: the body is binary with no inbound text to redact, so it can be forwarded untouched and the transcript scanned on the way back. It is an outbound-scanning feature, not an inbound-redaction one, which is why it does not break the rule above.
+**Why audio can be supported.** Audio needs no multipart parsing: the body is binary with no inbound text to redact, so it can be forwarded untouched and the transcript scanned on the way back.
 
 ## Response Scanning (Outbound)
 
-By default, provider responses are forwarded to the client without modification. When outbound scanning is enabled for a route, the proxy buffers the provider's response and passes each text field through Philter before returning it to the client.
-
-### Response fields scanned per provider
+By default, provider responses are returned unchanged. When a route turns on outbound scanning ([Configuration](configuration.md#routes)), the proxy scans the response with the route's policy before returning it.
 
 | Provider | Response fields scanned |
 |----------|------------------------|
-| OpenAI / OpenAI-compatible | `choices[].message.content` |
-| Anthropic | `content[].text` (where `type == "text"`) |
-| Gemini | `candidates[].content.parts[].text` |
-| Ollama generate | `response` |
-| Ollama chat | `message.content` |
-| Bedrock Converse | `output.message.content[].text` |
+| OpenAI family, chat | Each choice's message content (a string or text parts), `refusal`, and tool-call and function-call arguments |
+| OpenAI family, Responses | Each output item: message text and refusals, function-call arguments, and reasoning summaries |
+| OpenAI family, legacy completions | Each choice's `text` |
+| OpenAI family, image generation | Each image's `revised_prompt` |
+| Anthropic | `text` blocks, `tool_use` input, and `thinking` text |
+| Gemini, Vertex AI | Each candidate's text parts (including thought summaries) and function-call arguments |
+| Ollama | `response` and `thinking`, or the message's `content`, `thinking`, and tool-call arguments |
+| Bedrock | `output.message.content`: text, `toolUse.input`, and reasoning text |
+
+Redacting an Anthropic thinking block invalidates its signature, so a client that sends the redacted block back in a later request is refused by Anthropic. Bedrock reasoning blocks behave the same way.
+
+Responses from other OpenAI endpoints, such as embeddings and moderations, carry no generated text and are returned unchanged. Audio, image, and video bodies are returned unchanged.
 
 ### Actions
 
-The `outbound.action` setting controls what happens when PII is detected in a response:
+| Action | Normal response | Streamed response |
+|--------|----------------|-------------------|
+| `redact` (default) | Values found are replaced, and the response returned | Values found are replaced as the text is released |
+| `block` | `403` `pii_blocked` / `outbound_blocked` instead of the response | The stream ends with an error event before the text containing the value is sent |
+| `flag` | Returned unchanged; the values found are counted in the audit log and logged as a warning | Released unchanged; the values found are counted in the audit log |
 
-| Action | HTTP status | Description |
-|--------|------------|-------------|
-| `redact` (default) | `200` | Detected PII is replaced with Philter's configured token before the response is returned |
-| `block` | `403` | The response is suppressed entirely; the error body below is returned |
-| `flag` | `200` | The original unmodified response is returned; a warning is written to the proxy log |
+Under `redact` and `block`, `logprobs` are removed from the response (set to `null`, or an empty array in the Responses API): their tokens spell out the original text, and they cannot be redacted to match.
 
-**Block error response** (`403 Forbidden`):
+A response that cannot be scanned is refused rather than returned unscanned: one that arrives compressed (the proxy asks for an uncompressed response), one that is not JSON, and a stream from an endpoint the proxy cannot scan (for example `/v1/batches`) get `502` `provider_error` / `response_unscannable`. A provider's error responses (status 400 and above) are returned unchanged and unscanned.
+
+### Streamed responses
+
+The proxy scans a stream as it arrives instead of forwarding each fragment at once:
+
+- Text is held back. Once twice the holdback has accumulated (`proxy.streaming.holdback-characters`, default 256), the held text is scanned and all but the last holdback characters are released, cut at whitespace and never inside a detected value. A value split across fragments is scanned whole as long as it is shorter than the holdback.
+- What is left is released when its part of the response finishes (a choice, a content block, a candidate) and when the stream ends.
+- Tool-call arguments are held whole until their part finishes, then scanned and sent in one fragment. The fragment that opens a tool call (its ID and name) is sent at once.
+- Keep-alive comments and pings are forwarded at once.
+- Released text is sent in events shaped like the provider's own. In the Responses API, a released delta repeats the `sequence_number` of the delta it was copied from.
+- Under `block`, the stream has already started with `200`, so a detection ends it with an error event in the stream's own format, such as `data: {"error": {"type": "pii_blocked", "code": "outbound_blocked", ...}}`. A stream holding data that is not a valid event is ended the same way, with `response_unscannable`, except under `flag`.
+
+Holding text back delays each fragment by up to two holdbacks of text. A smaller holdback releases text sooner and catches only shorter values split across fragments.
+
+## Errors
+
+The proxy's own errors on provider traffic use the shape OpenAI-compatible clients parse. `type` and `code` are stable; `message` may change.
+
 ```json
-{"error":{"message":"response blocked: PII detected","type":"pii_blocked"}}
+{"error": {"message": "missing API key", "type": "unauthorized", "code": "missing_api_key", "request_id": "6f1c..."}}
 ```
 
-### Streaming responses
+Every response carries an `X-Request-Id` header, which the audit log records. An inbound `X-Request-Id` of at most 128 printable ASCII characters is kept; any other is replaced with a new ID.
 
-Outbound scanning can only inspect non-streaming responses. When the provider returns a streaming response (`Content-Type: text/event-stream`, `application/x-ndjson`, or `application/vnd.amazon.eventstream`), the behavior depends on the configured action: `block` rejects the response with `403` (`pii_blocked` / `outbound_stream_unscannable`) rather than forwarding it unscanned, while `redact` and `flag` log a warning and forward the stream unchanged. Inbound prompt redaction is unaffected in every case.
+| Status | `type` | `code` | Meaning |
+|---|---|---|---|
+| 400 | `invalid_request` | `path_not_canonical` | The path is not in canonical form (`..`, empty segments, encoded dots or slashes) |
+| 400 | `invalid_request` | `unsupported_content_type` | The body is `multipart/form-data` |
+| 400 | `invalid_request` | `bad_json` | The body is not a JSON object |
+| 401 | `unauthorized` | `missing_api_key`, `invalid_api_key` | No proxy key, or an unknown one |
+| 403 | `forbidden` | `scope_denied_role` | The key lacks the `proxy` role |
+| 403 | `forbidden` | `scope_denied_provider`, `scope_denied_model`, `scope_denied_path` | The request is outside the key's scopes |
+| 403 | `pii_blocked` | `outbound_blocked` | Response scanning under `block` found a value |
+| 404 | `not_found` | `azure_disabled`, `vertex_disabled`, `bedrock_disabled`, ... | The path's provider is not configured |
+| 413 | `payload_too_large` | `request_body_too_large` | The body is larger than `proxy.limits.max-request-body-bytes` |
+| 500 | `configuration_error` | `policy_not_found`, `policy_invalid` | The route's policy does not exist, or cannot be used (for example, it names a model that is not installed) |
+| 500 | `redaction_error` | `redaction_failed` | Redaction failed; the request was not forwarded |
+| 502 | `provider_error` | `unreachable` | The provider could not be reached |
+| 502 | `provider_error` | `<provider>_auth_failed` | The proxy could not get its own credentials for Bedrock, Vertex AI, or Azure (Entra ID) |
+| 502 | `provider_error` | `response_unscannable` | Response scanning could not read the response |
+| 503 | `capacity` | `concurrency_exceeded` | `proxy.limits.max-concurrent-requests` was reached; retry after `Retry-After` |
 
-### Latency
+When redaction fails, the request is not forwarded.
 
-Outbound scanning adds a full Philter round-trip after the provider responds. For latency-sensitive workloads, enable it only on routes where compliance requires it. See [Configuration](configuration.md#outbound) for configuration details.
+## Admin API
 
-## Route Detection
+The admin API manages policies and API keys. Every call needs a key with the `admin` role as `Authorization: Bearer <key>`; the bootstrap key has it. Errors use the shape of Philter's API:
 
-The proxy routes requests based on the URL path:
+```json
+{"message": "The policy changed since it was read. Read it again and retry.", "reason": "policy_changed"}
+```
 
-| Path pattern | Provider |
+`reason` is stable; `field` names the invalid parameter or field when there is one. Reasons: `invalid_request` (400), `invalid_credentials` (401), `missing_scope` (403, the key lacks the `admin` role), `not_found` (404), `policy_exists`, `policy_changed`, `policy_default`, and `self_action_refused` (409), and `internal_error` (500). Every response carries an `X-Request-Id` header, recorded with the audit events the call causes.
+
+### Policies
+
+The policy endpoints have the paths and bodies of [Philter's policy API](https://philterd.github.io/philter/api_and_sdks/api/policies_api/), under `/admin`. A client that takes a Philter base URL, such as `philter-sdk-java`, can use `https://<proxy>/admin`. Bodies are native Phileas policy JSON; see [Policies](policies.md).
+
+| Method and path | Does |
 |---|---|
-| `/v1/messages` | Anthropic |
-| Path containing `generateContent` (case-insensitive) | Gemini |
-| `/api/generate` | Ollama |
-| `/api/chat` | Ollama |
-| `/model/{modelId}/converse` | Amazon Bedrock |
-| `/model/{modelId}/converse-stream` | Amazon Bedrock (streaming) |
-| `/openai/deployments/{deployment}/...` | Azure OpenAI (configured via `providers.azure`) |
-| `/{name}/v1/...` | OpenAI-compatible (configured via `providers.openaiCompatible`) |
-| `/health` | Health check (no proxying) |
-| `/livez` | Liveness probe (no proxying) |
-| `/readyz` | Readiness probe (no proxying) |
-| All other paths | OpenAI |
+| `GET /admin/api/policies?offset=0&limit=25` | Lists policies by name: `{"policies": [{"name", "revision", "description", "createdAt", "updatedAt"}], "total"}`. `limit` is 1 to 500. |
+| `POST /admin/api/policies?name=<name>` | Creates a policy. `201`, with an `ETag`. `409` `policy_exists` when the name is taken. |
+| `GET /admin/api/policies/<name>` | The policy JSON, with an `ETag`. |
+| `PUT /admin/api/policies/<name>` | Replaces the policy and increments its revision. With `If-Match: <ETag>`, the write happens only if the policy has not changed since that read, else `409` `policy_changed`. |
+| `DELETE /admin/api/policies/<name>` | Deletes the policy. `204`. The `default` policy cannot be deleted (`409` `policy_default`). |
 
-## Endpoints
+A policy is checked when it is saved and again before it is used, and refused with `400` and the reason when it is not valid or names something the deployment does not allow. A name cannot contain `/`, `\`, `;`, `%`, or control characters, cannot be `.` or `..`, and is at most 256 characters.
 
-### OpenAI Chat Completions
+### API keys
 
-- **URL**: `/v1/chat/completions`
-- **Method**: `POST`
-- **Streaming**: Set `"stream": true` in the request body. Response is SSE (`text/event-stream`).
-- **Example**:
-  ```bash
-  curl -k https://localhost:8080/v1/chat/completions \
-    -H "Content-Type: application/json" \
-    -H "Authorization: Bearer $OPENAI_API_KEY" \
-    -d '{
-      "model": "gpt-4",
-      "messages": [{"role": "user", "content": "Whose social security number is 123-45-6789"}]
-    }'
-  ```
+| Method and path | Does |
+|---|---|
+| `POST /admin/api/keys` | Creates a key. `201`, with the key in `key`, shown only this once. |
+| `GET /admin/api/keys` | Lists keys, without their secrets: `{"keys": [...], "total"}`. |
+| `DELETE /admin/api/keys/<id>` | Deletes a key. `204`. A key cannot delete itself (`409` `self_action_refused`). |
 
-### Anthropic Messages
+The create body:
 
-- **URL**: `/v1/messages`
-- **Method**: `POST`
-- **Streaming**: Set `"stream": true` in the request body. Response is SSE (`text/event-stream`).
-- **Example**:
-  ```bash
-  curl -k https://localhost:8080/v1/messages \
-    -H "Content-Type: application/json" \
-    -H "x-api-key: $ANTHROPIC_API_KEY" \
-    -H "anthropic-version: 2023-06-01" \
-    -d '{
-      "model": "claude-sonnet-4-20250514",
-      "max_tokens": 1024,
-      "messages": [{"role": "user", "content": "Whose social security number is 123-45-6789"}]
-    }'
-  ```
+```json
+{
+  "name": "support-bot",
+  "roles": ["proxy"],
+  "providers": ["openai", "anthropic"],
+  "models": ["gpt-4o*", "claude-*"],
+  "paths": ["/v1/chat/completions", "/v1/messages"],
+  "policy": "support"
+}
+```
 
-### Gemini Generate Content
+| Field | Meaning |
+|---|---|
+| `name` | A label for the key, at most 256 characters. Required. |
+| `roles` | `admin` (the admin API), `proxy` (provider traffic), or both. Required. |
+| `providers` | Providers the key may reach. Empty: any. An entry ending in `*` matches by prefix. |
+| `models` | Models the key may request. Empty: any. An entry ending in `*` matches by prefix. A request that names no model is refused when this is set. |
+| `paths` | Path prefixes the key may use. Empty: any. |
+| `policy` | A policy applied to every request with this key, whatever the route says. It must exist. |
 
-- **URL**: `/v1beta/models/{model}:generateContent`
-- **Method**: `POST`
-- **Streaming**: Use `:streamGenerateContent` instead of `:generateContent`. Response is chunked JSON.
-- **Note**: The Gemini API passes the API key as a URL query parameter (`?key=...`) rather than a header. The proxy forwards the query string to the provider but never logs API keys - sensitive query parameters are redacted from all log and error output.
-- **Example**:
-  ```bash
-  curl -k "https://localhost:8080/v1beta/models/gemini-2.0-flash:generateContent?key=$GEMINI_API_KEY" \
-      -H 'Content-Type: application/json' \
-      -X POST \
-      -d '{
-        "contents": [{
-          "parts":[{"text": "Whose social security number is 123-45-6789"}]
-        }]
-      }'
-  ```
-
-### Ollama Generate
-
-- **URL**: `/api/generate`
-- **Method**: `POST`
-- **Streaming**: Ollama streams by default (NDJSON). Set `"stream": false` to receive a single response.
-- **Example**:
-  ```bash
-  curl -k https://localhost:8080/api/generate \
-    -H "Content-Type: application/json" \
-    -d '{
-      "model": "llama3",
-      "prompt": "Whose social security number is 123-45-6789",
-      "stream": false
-    }'
-  ```
-
-### Ollama Chat
-
-- **URL**: `/api/chat`
-- **Method**: `POST`
-- **Streaming**: Ollama streams by default (NDJSON). Set `"stream": false` to receive a single response.
-- **Example**:
-  ```bash
-  curl -k https://localhost:8080/api/chat \
-    -H "Content-Type: application/json" \
-    -d '{
-      "model": "llama3",
-      "messages": [{"role": "user", "content": "Whose social security number is 123-45-6789"}],
-      "stream": false
-    }'
-  ```
-
-### Amazon Bedrock Converse
-
-- **URL**: `/model/{modelId}/converse`
-- **Method**: `POST`
-- **Authentication**: The proxy signs requests to Bedrock using AWS Signature Version 4 with credentials from the standard AWS credential chain (environment variables, `~/.aws/credentials`, EC2/ECS instance profile, IRSA). The client does **not** need to supply AWS credentials.
-- **Streaming**: Not supported in the current release (`converseStream` is deferred).
-- **Required configuration**: `providers.bedrock.region` must be set. See [Configuration](configuration.md#providersbedrock) for details.
-- **Example**:
-  ```bash
-  curl -k https://localhost:8080/model/amazon.titan-text-express-v1/converse \
-    -H "Content-Type: application/json" \
-    -d '{
-      "messages": [{"role": "user", "content": [{"text": "Whose SSN is 123-45-6789?"}]}],
-      "inferenceConfig": {"maxTokens": 512}
-    }'
-  ```
-
-### OpenAI-Compatible Providers
-
-- **URL**: `/{name}/v1/chat/completions` (or any `/{name}/v1/...` path)
-- **Method**: `POST`
-- **Streaming**: Supported. Behaviour is identical to the OpenAI endpoint.
-- **Required configuration**: The provider must be registered under `providers.openaiCompatible` in the config. See [Configuration](configuration.md#providersopenaicompatible) for details.
-- **Example** (Mistral):
-  ```bash
-  curl -k https://localhost:8080/mistral/v1/chat/completions \
-    -H "Content-Type: application/json" \
-    -H "Authorization: Bearer $MISTRAL_API_KEY" \
-    -d '{
-      "model": "mistral-small-latest",
-      "messages": [{"role": "user", "content": "Whose SSN is 123-45-6789?"}]
-    }'
-  ```
-
-The proxy strips the `/{name}` prefix before forwarding, so the provider receives a standard OpenAI-format request. All PII redaction and audit logging applies normally; the `provider` field in the audit log is set to the registered name (e.g., `mistral`).
-
-### Health Check
-
-- **URL**: `/health`
-- **Method**: `GET`
-- **Authentication**: None. The endpoint is reachable without an API key even when `auth.apiKeys` is configured.
-- **Description**: Returns the health status of the proxy in the standard Philterd health shape. Actively probes Philter (2-second timeout).
-- **Response**: `200 OK` with `{"status":"UP","applicationVersion":"<version>","philter":"ok"}` when healthy; `503 Service Unavailable` with `{"status":"DOWN","applicationVersion":"<version>","philter":"unreachable"}` when Philter cannot be reached, or `"philter":"unhealthy"` when Philter's `/api/health` answers with anything other than `200`.
-- **Example**:
-  ```bash
-  curl -k https://localhost:8080/health
-  ```
-
-For Kubernetes probes use `/livez` (liveness) and `/readyz` (readiness) instead. See [Monitoring -> Health Endpoints](monitoring.md#health-endpoints).
+Keys are 32 random bytes, prefixed `pap_` so secret scanners can recognize them, and stored as SHA-256 hashes. A deleted key stops working on the instance at once.

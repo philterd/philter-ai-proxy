@@ -1,36 +1,33 @@
 # Philter AI Proxy
 
-This project is a proxy for OpenAI, Azure OpenAI, Anthropic (Claude), Google Gemini (public API and Vertex AI), Ollama, and Amazon Bedrock that uses [Philter](https://philterd.ai/philter/) to remove PII, PHI, and other sensitive information from LLM requests before sending them to the provider. Both streaming and non-streaming requests are supported.
+Philter AI Proxy is a self-hosted proxy for OpenAI, Azure OpenAI, Anthropic (Claude), Google Gemini (public API and Vertex AI), Ollama, Amazon Bedrock, and OpenAI-compatible providers. It removes PII, PHI, and other sensitive information from LLM requests before they leave your network, and can scan the responses on the way back. Streaming and non-streaming requests are supported.
+
+Redaction runs inside the proxy with [Phileas](https://github.com/philterd/phileas), the library under [Philter](https://philterd.ai/philter/). Policies are standard Phileas policies, so a policy works the same in the proxy and in Philter. The proxy needs no other service: person names are detected with a PhEye model that ships in the Docker image and runs in-process.
 
 ## How it Works
 
-The proxy intercepts requests destined for an LLM provider and sends all text-bearing fields to Philter, where sensitive information is redacted per Philter's policy configuration. The redacted request is then forwarded to the provider. Streaming responses (SSE, chunked JSON, NDJSON) are passed through to the client in real time without buffering.
+The proxy receives the request an application would send to the provider, redacts the text in it according to a policy, and forwards the redacted request with the application's own provider credentials. For example, the request text `How old is George Washington?` reaches the provider as `How old is {{{REDACTED-name}}}?`.
 
-For example, if you send the text `How old is John Smith?`, the proxy will remove `John Smith` before forwarding. The request sent to the provider becomes `How old is {{{REDACTED-entity}}}?`
+- **Inbound redaction** covers the text of every message, including system prompts, content parts, refusals, and tool-call arguments and results. See [Redacted Fields](api.md#redacted-fields).
+- **Outbound scanning**, turned on per route, scans the provider's response before it reaches the application: redact what it finds, block the response, or pass it through and record what was found. Streamed responses are scanned as they arrive. See [Response Scanning](api.md#response-scanning-outbound).
+- **Policies** are managed through an admin API with the same paths as Philter's policy API. See [Policies](policies.md).
+- **Consistent replacement**: a context keeps the replacement chosen for a value, so the same value is replaced the same way across requests. See [Contexts](policies.md#contexts).
+- **An audit log** records each request's metadata (provider, model, policy, how many values of each type were found), never the text of a prompt or response. See [Monitoring](monitoring.md#audit-log).
 
-Inbound redaction covers all message types, including agentic and tool-use workflows:
-
-| Provider | Fields redacted |
-|----------|-----------------|
-| OpenAI | `messages[].content` (all roles: `user`, `system`, `tool`), `tool_calls[].function.arguments` (parsed as JSON, string values redacted, re-serialized) |
-| Anthropic | `system`, `messages[].content` (`text` and `tool_result` blocks) |
-| Gemini | `contents[].parts[].text`, `contents[].parts[].functionResponse.response` (recursive) |
-| Ollama | `messages[].content`, `prompt`, `system` |
-
-**Outbound response scanning** is also supported on an opt-in basis. When enabled, the LLM's response is scanned through Philter before it reaches the client, guarding against hallucinated or training-data PII in responses. The behaviour when PII is found is configurable: redact it, block the response entirely, or pass it through with a warning log. See [Configuration](configuration.md#outbound) for details.
-
-Every request produces a structured JSON audit log entry with the provider, model, entity types detected, entity count, and other metadata for compliance and debugging. See [Configuration](configuration.md) for details.
+Detection is probabilistic: the proxy reduces how much sensitive data reaches a provider, and it does not catch every instance. Validate its output against your own data and policies.
 
 ## Deployment options
 
-The proxy ships as a single Go binary. From there:
+- **Docker**: the `philterd/philter-ai-proxy` image, with the person-name model included. See [Installation](installation.md).
+- **Kubernetes**: a Helm chart and plain manifests under `deploy/`, plus a Grafana dashboard. See [Kubernetes](kubernetes.md).
+- **From source**: build with Maven and run the jar on Java 25. See [Installation](installation.md#building-from-source).
 
-- **Local / VM** - run the binary directly with `--config config.yaml`. See [Installation](installation.md).
-- **Docker** - a multi-arch image at `philterd/philter-ai-proxy`. See [Installation → Docker](installation.md#docker).
-- **Kubernetes** - first-party Helm chart and plain manifests under `deploy/`, plus a starter Grafana dashboard. See [Kubernetes Quickstart](kubernetes.md).
+The proxy keeps its policies, API keys, contexts, and audit log in a SQLite file, so one instance serves each database file. See [FAQ](faq.md#can-i-run-more-than-one-instance).
 
 ## Scope
 
 The proxy does redaction and the audit trail that goes with it. It deliberately does not do routing, failover, token quotas, or per-tenant billing; those belong to an AI gateway, and the proxy is designed to run alongside one. See [Using with an AI Gateway](ai-gateway.md).
 
 It also handles **text conversations only**. The proxy accepts JSON request bodies and does not parse `multipart/form-data`, so file uploads, audio, and image edits are rejected with `400 invalid_request` / `unsupported_content_type`. Audio support is tracked in [#40](https://github.com/philterd/philter-ai-proxy/issues/40); image edits and file uploads are not planned. See [Supported request types](api.md#supported-request-types).
+
+Only text is redacted. Images, audio, and files embedded in a JSON request or response (such as image and audio content parts) are forwarded unchanged and are not inspected. See [Images, audio, and files are not redacted](api.md#images-audio-and-files-are-not-redacted).

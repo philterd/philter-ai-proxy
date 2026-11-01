@@ -1,46 +1,28 @@
+# Generated from the Helm chart's defaults by deploy/k8s/generate.sh. Do not edit by hand: change the chart
+# and regenerate.
 apiVersion: v1
-kind: Secret
+kind: ConfigMap
 metadata:
   name: philter-ai-proxy-config
   labels:
-    app: philter-ai-proxy
-type: Opaque
-stringData:
-  config.yaml: |
-    listen:
-      port: 8080
-      cert: /etc/philter-proxy/tls/tls.crt
-      key: /etc/philter-proxy/tls/tls.key
-      shutdownTimeout: 30
-
-    logging:
-      enabled: true
-
-    metrics:
-      enabled: true
-      port: 9090
-
-    philter:
-      # Update this to point at your Philter service. Philter 4 serves HTTPS
-      # with a self-signed certificate by default; set caCert to verify it.
-      endpoint: https://philter.philter-system.svc.cluster.local:8080
-      # Philter 4 requires an API key. Set PHILTER_API_KEY in the Deployment.
-      apiKey: ${PHILTER_API_KEY}
-      tlsVerify: false
-      retry:
-        maxAttempts: 3
-        initialBackoffMs: 100
-        maxBackoffMs: 2000
-
-    providers:
-      openai:
-        target: https://api.openai.com
-      anthropic:
-        target: https://api.anthropic.com
-      gemini:
-        target: https://generativelanguage.googleapis.com
-      ollama:
-        target: http://localhost:11434
-
-    defaults:
-      policy: default
+    app.kubernetes.io/name: philter-ai-proxy
+    app.kubernetes.io/instance: philter-ai-proxy
+data:
+  application.yaml: "proxy:\n  defaults:\n    outbound:\n      action: redact\n  \
+    \    enabled: false\n    policy: default\n  routes: []\n"
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: philter-ai-proxy-data
+  labels:
+    app.kubernetes.io/name: philter-ai-proxy
+    app.kubernetes.io/instance: philter-ai-proxy
+  annotations:
+    helm.sh/resource-policy: keep
+spec:
+  accessModes:
+  - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi

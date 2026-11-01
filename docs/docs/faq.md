@@ -2,15 +2,13 @@
 
 ### What is the Philter AI Proxy?
 
-The Philter AI Proxy is a proxy for OpenAI, Azure OpenAI, Anthropic (Claude), Google Gemini (public API and Vertex AI), Ollama, and Amazon Bedrock that uses [Philter](https://philterd.ai/philter/) to remove PII, PHI, and other sensitive information from LLM requests before they are sent to the provider.
+A self-hosted proxy for LLM providers that removes PII, PHI, and other sensitive information from requests before they leave your network, and can scan responses on the way back. It runs [Phileas](https://github.com/philterd/phileas) in-process, with a PhEye model for person names included in the Docker image. See the [overview](index.md).
 
 ### Why should I use it?
 
-By using the proxy, you ensure that sensitive information never leaves your environment and is not sent to the AI providers, helping you maintain compliance and protect privacy. Every request produces a structured audit log for compliance reporting.
+It puts redaction in the network path, where applications cannot skip it, and keeps a record of what was found in each request. It is designed to reduce how much sensitive data reaches LLM providers and to support your compliance efforts. Detection is probabilistic and does not catch every instance, so validate the output against your own data.
 
 ### Which AI providers are supported?
-
-The proxy supports:
 
 * OpenAI
 * Azure OpenAI
@@ -18,16 +16,26 @@ The proxy supports:
 * Google Gemini
 * Google Vertex AI
 * Ollama
-* Amazon Bedrock (Converse and ConverseStream APIs)
-* Any OpenAI-compatible provider (Mistral, Cohere, vLLM, LM Studio, etc.) via `providers.openaiCompatible`
+* Amazon Bedrock (Converse and ConverseStream)
+* OpenAI-compatible providers (Mistral, vLLM, LM Studio, and others) configured under `proxy.providers.openai-compatible`
 
-Both streaming and non-streaming requests are supported for all providers.
+Streaming and non-streaming requests are supported for all of them. See [Usage](usage.md).
+
+### Do I need a Philter instance?
+
+No. Version 2.0 redacts in-process with Phileas, the library under Philter, and needs no other service. Earlier versions (0.x) sent each text to a Philter instance. Policies are the same format in both, so a Philter policy works in the proxy.
 
 ### Does it support streaming?
 
-Yes. Streaming responses (SSE for OpenAI/Anthropic, chunked JSON for Gemini, NDJSON for Ollama) are forwarded to the client in real time without buffering. Inbound prompt redaction works identically for streaming and non-streaming requests.
+Yes, for every provider. Without response scanning, streamed responses are forwarded as they arrive. With response scanning, the proxy scans the stream as it arrives, holding back a little text so a value split across fragments is scanned whole. See [Streamed responses](api.md#streamed-responses).
 
-Outbound response scanning can only inspect non-streaming responses. Under `action: redact` or `flag` the stream is forwarded unchanged and a warning is logged. Under `action: block` the proxy rejects the response with `403` instead of forwarding an unscanned body, so a client cannot bypass a configured block by requesting a stream.
+### Can the proxy scan LLM responses for PII, not just requests?
+
+Yes, turned on per route. It can redact what it finds, block the response, or return it unchanged and record what it found. See [Response Scanning](api.md#response-scanning-outbound).
+
+### Does response scanning add latency?
+
+Yes. A normal response is scanned after it arrives, which adds about the time it took to redact the request. A streamed response reaches the client a little later than it arrives, since text is held back until it can be scanned. Turn scanning on only for the routes that need it. See [Load tests](load-tests.md).
 
 ### Can it redact file uploads, audio, or images?
 
@@ -35,128 +43,82 @@ No. The proxy handles text conversations only. It expects a JSON request body an
 
 The proxy does not parse multipart bodies, so image edits and file uploads will not be supported. Audio is the exception and is tracked in [#40](https://github.com/philterd/philter-ai-proxy/issues/40): its body is binary with no inbound text, so it can be forwarded untouched and the transcript scanned on the way back. See [Supported request types](api.md#supported-request-types).
 
+Images, audio, and files embedded in a JSON chat request, such as an `image_url` or `input_audio` content part, are forwarded to the provider, but they are not redacted: the proxy redacts text only, and does not inspect what an image, recording, or file contains. The same applies to images and audio in responses. Remove or redact them before the request reaches the proxy if they can contain sensitive data. See [Images, audio, and files are not redacted](api.md#images-audio-and-files-are-not-redacted).
+
 ### Is any sensitive data logged?
 
-No. The audit log contains only metadata (provider, model, entity types, counts, latency, etc.). No message content or filtered text is ever logged. Client IP addresses are included, which may be considered personal data under GDPR.
+The audit log holds metadata only: provider, model, policy, counts of what was found by type, status, and timing. It never holds the text of a prompt or response. It does hold the client's IP address, which may be personal data under GDPR. Metric labels hold no text either.
 
-The same holds for the application log and for Prometheus metric labels, which are exported to anyone who can scrape `/metrics`. A regression test drives distinctively marked content through inbound redaction, all three outbound actions, a streaming response, and the error paths, then asserts the markers appear in none of the three. Adding a field to the audit entry fails that test until the field is declared as metadata, so the guarantee is enforced rather than maintained by convention.
-
-### Do I need a Philter instance?
-
-Yes, the proxy requires a running instance of Philter to perform the redaction. You can launch one in your cloud or on-premise. Visit [philterd.ai](https://philterd.ai/philter/) for more information.
-
-### Can the proxy scan LLM responses for PII, not just requests?
-
-Yes. Outbound response scanning is supported on an opt-in basis. When enabled, the proxy buffers the LLM's response, passes it through Philter, and returns the result to the client. The behavior when PII is detected is configurable: `redact` (replace PII tokens), `block` (return HTTP 403), or `flag` (pass through with a warning log).
-
-Outbound scanning is disabled by default because it adds a Philter round-trip after the provider responds. Enable it only on routes where compliance requires it. See [Configuration](configuration.md#outbound) for details.
-
-### Does outbound scanning add latency?
-
-Yes. When outbound scanning is enabled, the proxy must buffer the full provider response and make an additional request to Philter before returning the response to the client. The added latency equals roughly one Philter round-trip (typically low-double-digit milliseconds on local deployments).
-
-Streaming responses cannot be scanned. Under `redact` and `flag` they are forwarded immediately, so those requests carry no outbound latency overhead; under `block` they are rejected rather than forwarded.
+What the proxy does store is in its database: the policies, hashed API keys, the audit log, and, for contexts, each original value and its replacement, both encrypted with the encryption key.
 
 ### How do I configure the proxy?
 
-The proxy is configured via a YAML configuration file. Please refer to the [Configuration](configuration.md) page for all available settings.
-
-### Can I deploy the proxy to Kubernetes?
-
-Yes. A production-ready Helm chart lives at `deploy/helm/philter-ai-proxy/` in the repo, and plain manifests for non-Helm users at `deploy/k8s/`. The chart supports replicas, autoscaling, Pod Disruption Budgets, optional Ingress, Prometheus Operator `ServiceMonitor`, mTLS, and TLS issuance via either an existing Secret or cert-manager. A starter Grafana dashboard at `deploy/grafana/philter-ai-proxy.json` covers every emitted metric. See the [Kubernetes Quickstart](kubernetes.md) for the full walkthrough.
-
-### Is the proxy open source?
-
-Yes, the Philter AI Proxy is licensed under the Apache License, version 2.
+With `application.yaml` and environment variables. See [Configuration](configuration.md).
 
 ### Does the proxy support authentication?
 
-Yes. API key authentication and mTLS are both supported, and both are disabled by default.
-
-For API key authentication, configure one or more keys under `auth.apiKeys` in the config. Clients send the key in the `x-philter-proxy-key` header (configurable). Requests without a valid key receive HTTP `401`. Each key can optionally be bound to a specific Philter policy, which lets an admin issue a key to the healthcare team that always uses the HIPAA policy regardless of what the client requests. The proxy's auth header is always stripped before forwarding, so LLM providers never see it.
-
-For zero-trust service-to-service authentication, set `listen.clientCA` to a CA certificate. The proxy will require and verify a client TLS certificate on every connection. API key auth and mTLS can be used simultaneously. See [Configuration](configuration.md#authentication) for details and examples.
-
-### Where can I see throughput and latency numbers for the proxy?
-
-A k6 load-test harness lives at [`test/load/`](https://github.com/philterd/philter-ai-proxy/tree/main/test/load) in the repo, with a self-contained docker-compose stack (Philter + a stub LLM provider + the proxy) and five scenarios covering inbound redaction, outbound response scanning, streaming, and a no-proxy baseline for comparison. A reference baseline measured on a single-host Intel i5-11400 - including the OpenAI proxy path at ~2,900 req/s p95=8.8ms, and outbound-scan at ~1,400 req/s p95=32ms - is published at [Load tests](load-tests.md). A scheduled GitHub Actions workflow re-runs the harness weekly and uploads summary JSONs as artifacts.
-
-### Does the proxy support OpenTelemetry tracing?
-
-Yes. With `tracing.enabled: true` in the config, the proxy emits OTLP spans: one root span per inbound request, child spans for each Philter call and each upstream LLM provider call. Trace context is propagated to the upstream via the W3C `traceparent` header, so end-to-end traces work across the proxy in any APM (Jaeger, Honeycomb, Datadog, Grafana Tempo, etc.). Exporter destination, protocol, headers, and sampler are configured via the standard OTel env vars (`OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_TRACES_SAMPLER`, etc.).
-
-Tracing is off by default. Even with `tracing.enabled: true` the default sampler is `always_off`, so spans only flow when an operator explicitly sets `OTEL_TRACES_SAMPLER`. The `trace_id` appears in audit log entries when a request is sampled so APM traces and audit lines can be cross-referenced by ID. See [Distributed Tracing](monitoring.md#distributed-tracing) for the full reference.
-
-### What endpoints should I use for Kubernetes probes?
-
-Point liveness at `/livez` and readiness at `/readyz`. `/livez` always returns 200 as long as the process is running, so transient Philter outages don't restart healthy pods. `/readyz` returns 503 only when the Philter circuit breaker is open with `fallback: block` - the proxy can't serve any traffic in that state. In every other state (no breaker, breaker closed, half-open, or open with `fallback: passthrough`) `/readyz` returns 200. The first-party Helm chart and plain manifests already use these endpoints. Do not point a Kubernetes probe at `/health`: it actively probes Philter, and treating Philter unreachability as a liveness failure is the exact failure mode the split fixes. `/health` serves the standard Philterd health contract (`{"status":"UP","applicationVersion":"..."}`) for load balancers and appliance-wide health rollups that do want the dependency reflected. See [Monitoring -> Health Endpoints](monitoring.md#health-endpoints).
+Yes, always. Every request to a provider needs a proxy key in `x-philter-proxy-key`, and the admin API needs a key with the `admin` role. Keys can be limited to providers, models, and paths, and bound to a policy. See [API keys](api.md#api-keys). Mutual TLS is available too; see [Certificates](installation.md#certificates).
 
 ### Are API keys hashed at rest?
 
-Yes. Keys are hashed when the config is loaded and never held in memory as plaintext. The `auth.apiKeys[].key` field accepts plaintext (auto-hashed with SHA256 at load), `sha256$<64-hex>` for a pre-hashed value, or `bcrypt$<bcrypt-hash>` for users with existing bcrypt key-management workflows. Verification uses constant-time comparison. For production, pre-hash externally so the plaintext never appears in your YAML, source control, or container images. See [API Key Hashing](configuration.md#api-key-hashing) for format details, latency per algorithm, and CLI recipes for generating pre-hashed values.
+Yes. Keys are 32 random bytes, and only their SHA-256 hashes are stored. A key is shown once, when it is created.
 
-To keep the secret out of the config file entirely, the `key:` field also accepts `${ENV_VAR}` (read from an environment variable) and `file:/path/to/secret` (read from a mounted file) references, resolved at load and then hashed like any other value. This is the recommended way to integrate with environment-injected secrets, Kubernetes/Docker secrets, Vault, or AWS Secrets Manager. See [Loading secrets from environment variables and files](configuration.md#loading-secrets-from-environment-variables-and-files) and the [key-rotation procedure](configuration.md#rotating-api-keys).
+### Can I run more than one instance?
 
-### Can I cap token spend or get per-customer usage for billing?
+Each instance needs its own database. The proxy keeps its policies, keys, contexts, and audit log in a SQLite file, and refuses to start on a file another instance is using. For more capacity, give the instance more CPU, or run several instances, each with its own database and keys, behind your gateway.
 
-Not in the proxy. Token quotas, usage export, and per-tenant billing are the job of an AI gateway, and the proxy is designed to run alongside one rather than duplicate it. See [Using with an AI Gateway](ai-gateway.md).
+### Can I deploy the proxy to Kubernetes?
 
-### Can I cache responses to repeated prompts?
+Yes, with the Helm chart or the plain manifests in the repository. See [Kubernetes](kubernetes.md).
 
-Not in the proxy. Response caching is traffic management, which belongs to the AI gateway the proxy runs alongside. Caching in the proxy would also mean storing provider responses keyed by tenant, which adds a cross-tenant exposure risk to a component whose job is to reduce that risk. See [Using with an AI Gateway](ai-gateway.md).
+### What endpoints should I use for Kubernetes probes?
 
-### Do the proxy's replicas need shared state?
+`/livez` for liveness and `/readyz` for readiness. `/readyz` answers once the configured policies and their models are loaded. See [Health endpoints](monitoring.md#health-endpoints).
 
-No. The proxy keeps no state that has to be shared between replicas, so you can scale it horizontally without a database, cache, or coordination service.
+### Does the proxy support OpenTelemetry tracing?
 
-### Does the proxy rate limit requests?
+Yes. It is off by default; turn it on and set an OTLP endpoint. Each sampled request's trace ID is recorded in its audit entry. See [Distributed Tracing](monitoring.md#distributed-tracing).
 
-No. Rate limiting, routing, failover, and spend controls belong to an AI gateway running alongside the proxy. See [Using with an AI Gateway](ai-gateway.md).
+### Where can I see throughput and latency numbers?
 
-### Can I use the proxy with Mistral, Cohere, vLLM, or other OpenAI-compatible providers?
+See [Load tests](load-tests.md) for a reference baseline and how to reproduce it.
 
-Yes. Register any OpenAI-compatible provider under `providers.openaiCompatible` in the config, giving it a short name and a target URL. Clients send requests to `/{name}/v1/...` (e.g., `/mistral/v1/chat/completions`); the proxy strips the prefix and forwards the standard OpenAI-format request to the configured target after running PII redaction. No changes are needed to route configuration - routes work the same way across all OpenAI-compatible providers. See [Configuration](configuration.md#providersopenaicompatible) for details.
+### Can I use the proxy with Mistral, vLLM, or other OpenAI-compatible providers?
+
+Yes. Add each under `proxy.providers.openai-compatible` and call it at `/<name>/v1/...`. See [OpenAI-compatible providers](configuration.md#openai-compatible-providers).
 
 ### How does Bedrock authentication work?
 
-The proxy handles AWS Signature Version 4 signing internally. The client sends a plain JSON request (no AWS credentials needed). The proxy signs the modified request using credentials from the standard AWS credential chain - environment variables, EC2 instance profile, ECS task role, or IRSA - before forwarding it to Bedrock. This means you never expose AWS credentials to API clients, and access control is enforced at the IAM level on the proxy's role.
+The proxy signs each request with SigV4 using its own AWS credentials, from the AWS default chain, optionally assuming a role. Clients send no AWS credentials. See [Amazon Bedrock](configuration.md#amazon-bedrock).
 
 ### Does the proxy support streaming with Amazon Bedrock?
 
-Yes. The `/model/{modelId}/converse-stream` endpoint is supported: the inbound request is redacted as usual and the AWS binary event-stream response is forwarded to the client incrementally (no buffering). As with the other providers, the streamed response body is passed through without outbound scanning. Non-streaming requests via the Converse API are also fully supported.
+Yes. `/model/<model>/converse-stream` responses are forwarded, or scanned with response scanning on, in AWS's event stream format.
 
-### What happens if Philter is temporarily unavailable?
+### Can I bound how many requests the proxy handles at once?
 
-By default, the proxy retries failed Philter calls up to 3 times with exponential backoff before returning an error to the client. Only transient errors (network timeouts, HTTP 5xx responses) are retried; 4xx errors are not.
-
-For sustained Philter unavailability, enable the circuit breaker (`philter.circuitBreaker.enabled: true`). Once the configured failure threshold is reached, the circuit opens and subsequent requests either receive HTTP 503 immediately (`fallback: block`, the default) or are forwarded unredacted with a warning log (`fallback: passthrough`). After the configured timeout, the circuit allows a probe request through; if it succeeds, the circuit closes.
-
-See [Configuration](configuration.md#philterretry) for retry and circuit breaker settings.
-
-### Can I bound how many concurrent requests the proxy will handle?
-
-Yes. Set `listen.maxConcurrentRequests` to cap the total number of in-flight requests across the whole proxy. It is off by default. When the cap is reached, the proxy returns HTTP `503` with `Retry-After: 1` and the JSON body `{"error":{"message":"concurrency limit exceeded","type":"capacity"}}` instead of queuing the request. Per-client concurrency policy belongs to your AI gateway; the proxy's cap exists to protect itself and Philter from overload. The two metrics to watch are `philter_proxy_active_requests` (current utilization) and `philter_proxy_concurrency_shed_total{scope}` (rejections by scope). See [Configuration](configuration.md#concurrency-limits) for sizing guidance and [Monitoring](monitoring.md#concurrency) for the PromQL utilization recipe.
+Yes, with `proxy.limits.max-concurrent-requests`. It is off by default. When the limit is reached, the proxy answers `503` with `Retry-After: 1` instead of queuing the request. Per-client limits belong to your AI gateway.
 
 ### What format are the proxy's error responses in?
-
-All errors the proxy generates itself are structured JSON with the shape:
 
 ```json
 {"error":{"message":"...","type":"...","code":"...","request_id":"..."}}
 ```
 
-`Content-Type: application/json` and an `X-Request-Id` header carrying the same `request_id` are always set. The `(type, code)` pair is a stable enum - codes will not be removed or repurposed across minor versions. The full table lives at [Configuration → Error Responses](configuration.md#error-responses).
+`type` and `code` are stable. Every response carries an `X-Request-Id` header, and the audit entry for the request records the same ID and the error's `type` and `code`. Errors from the provider are returned unchanged, in the provider's format. See [Errors](api.md#errors).
 
-To trace a failed request: grab the `X-Request-Id` header from the response, then search audit logs for `request_id=<that value>`. The audit entry's `error_type` and `error_code` will match what the client received.
+### Can I cap token spend, cache responses, or rate limit?
 
-Errors that originate from the upstream LLM provider are forwarded through unchanged and follow the provider's own format, not the schema above.
+No. Those belong to an AI gateway, which the proxy is designed to run alongside. The proxy does not track token usage at all. See [Using with an AI Gateway](ai-gateway.md).
 
-### Does the proxy track token usage?
+### Can the proxy restore the original values in a response?
 
-No. Token counts appear in neither the audit log nor the metrics. They say nothing about redaction, which is what this proxy exists to do and what its audit trail is evidence of. Tracking them would mean carrying usage-parsing for every provider and streaming format the proxy supports, to produce a partial copy of data the provider already reports accurately.
+No. A response comes back with the replacements in it. Re-identification of values encrypted with `CRYPTO_REPLACE` is tracked in [#21](https://github.com/philterd/philter-ai-proxy/issues/21).
 
-Use your AI gateway's accounting, or the provider's own usage dashboard. See [Using with an AI Gateway](ai-gateway.md).
+### Is the proxy open source?
+
+Yes, under the Apache License 2.0. The source is at [github.com/philterd/philter-ai-proxy](https://github.com/philterd/philter-ai-proxy).
 
 ### Is commercial support available?
 
-Yes, commercial support for the Philter AI Proxy and Philter is available from [Philterd](https://www.philterd.ai). Please [contact us](https://www.philterd.ai/contact/) for more information.
+Yes, commercial support for Philter AI Proxy is available from [Philterd](https://www.philterd.ai). Please [contact us](https://www.philterd.ai/contact/) for more information.

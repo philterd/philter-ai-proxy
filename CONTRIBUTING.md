@@ -1,6 +1,6 @@
-# Contributing to Phileas
+# Contributing to Philter AI Proxy
 
-## Code of Conduct 
+## Code of Conduct
 
 In the interest of fostering an open and welcoming environment, we as contributors and maintainers pledge to making participation in our project and our community a harassment-free experience for everyone, regardless of age, body size, disability, ethnicity, gender identity and expression, level of experience, nationality, personal appearance, race, religion, or sexual identity and orientation.
 
@@ -8,9 +8,9 @@ Please read and understand the [Code of Conduct](https://github.com/philterd/phi
 
 ## GitHub Workflow
 
-We prefer to take contributions as GitHub pull requests. This workflow allows you to create your own copy of Phileas, try out some changes, and then share your changes back to the community, with proper review and feedback from other Phileas contributors.
+We prefer to take contributions as GitHub pull requests. This workflow allows you to create your own copy of Philter AI Proxy, try out some changes, and then share your changes back to the community, with proper review and feedback from other contributors.
 
-1. Create a fork of philterd/phileas
+1. Create a fork of philterd/philter-ai-proxy
 2. Create a feature branch
 3. Build and test local changes
 4. Commit changes to your feature branch
@@ -22,27 +22,26 @@ We prefer to take contributions as GitHub pull requests. This workflow allows yo
 
 ### Required Tools
 
-* Go 1.25+
-* make
-* Docker (only for `make test-integration`)
-
-### Building on Linux
-
-Ubuntu is our daily driver, but any Linux distribution should work.
-
-### Building on MacOS
-
-No additional setup is required.
+* Java 25 (the Maven wrapper downloads Maven)
+* Docker, to build the image
+* Helm, to work on the chart in `deploy/helm/`
 
 ### Testing
 
 ```
-make test          # run the unit tests
-make cover         # run them with coverage and print the total
-make cover-html    # open the per-line coverage report
-make cover-check   # fail if coverage is below the threshold
+./mvnw verify          # build, run the tests, and check coverage
 ```
 
-CI runs `make cover-check`, which fails the build when total statement coverage
-drops below `COVERAGE_THRESHOLD` in the Makefile. Raise that value as coverage
-improves; do not lower it to make a build pass.
+The tests run against stub providers and never call a real one. One test runs the default policy with the real `ph-eye-pii-en-small` model; it is skipped unless `PHILTER_AI_PROXY_TEST_MODELS` names a directory holding the model (see the `onnx` folder of [philterd/ph-eye-pii-en-small](https://huggingface.co/philterd/ph-eye-pii-en-small)).
+
+`./mvnw verify` fails when line coverage drops below `coverage.minimum` in `pom.xml`. Raise that value as coverage improves; do not lower it to make a build pass.
+
+Test fixtures use invented values only: never a real person's name, email address, or other personal data.
+
+### The chart and manifests
+
+After changing the Helm chart, regenerate the plain manifests with `deploy/k8s/generate.sh`. CI fails when they differ from what the chart renders.
+
+### Load tests
+
+See `test/load/README.md`.

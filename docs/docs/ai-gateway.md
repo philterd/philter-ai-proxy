@@ -9,14 +9,14 @@ The two are complementary. Run the gateway for traffic management and the proxy 
 Put the proxy between the gateway and the provider, so redaction is the last thing that happens before data leaves your network:
 
 ```
-client -> AI gateway -> Philter AI Proxy -> Philter -> LLM provider
+client -> AI gateway -> Philter AI Proxy -> LLM provider
                               |
                               +-> audit log
 ```
 
 This ordering matters. Anything downstream of redaction cannot undo it, and no gateway plugin, retry path, or model-fallback rule can route around it. If the gateway is instead placed after the proxy, a fallback to a provider the proxy did not see, or a gateway-injected system prompt, can put unredacted text on the wire.
 
-Configuration is a one-line change on the gateway: point its upstream base URL at the proxy instead of at the provider. The proxy speaks each provider's native wire protocol, so the gateway needs no other changes.
+Configuration on the gateway is two changes: point its upstream base URL at the proxy instead of at the provider, and send a proxy key in the `x-philter-proxy-key` header. The proxy speaks each provider's native wire protocol, so the gateway needs nothing else. Create a key with the `proxy` role for the gateway; see [API keys](api.md#api-keys).
 
 ### LiteLLM
 
@@ -27,11 +27,13 @@ model_list:
       model: openai/gpt-4
       api_base: https://philter-ai-proxy.internal:8080/v1
       api_key: os.environ/OPENAI_API_KEY
+      extra_headers:
+        x-philter-proxy-key: pap_your-proxy-key
 ```
 
 ### Portkey
 
-Set the provider's custom host on the virtual key or in the request config:
+Set the provider's custom host on the virtual key or in the request config, and have Portkey send the `x-philter-proxy-key` header to it:
 
 ```json
 {
@@ -53,23 +55,29 @@ plugins:
         provider: openai
         options:
           upstream_url: https://philter-ai-proxy.internal:8080/v1/chat/completions
+  - name: request-transformer
+    config:
+      add:
+        headers:
+          - "x-philter-proxy-key:${PHILTER_AI_PROXY_KEY}"
 ```
 
-## What to disable when behind a gateway
+## Behind a gateway
 
-When the gateway is the trust boundary and the proxy is on a private network reachable only by the gateway, several proxy features become redundant. Turning them off avoids two systems enforcing overlapping limits with unclear precedence:
+When the gateway is the trust boundary and the proxy is on a private network reachable only by the gateway:
 
 | Proxy feature | Behind a gateway |
 |---|---|
-| `auth.apiKeys` | Redundant as authentication, but keep it if you use per-key policy binding: the key's stable ID is what pins a caller to a Philter policy regardless of what the client requests. |
-| `listen.maxConcurrentRequests` | Keep. This protects the proxy and Philter from overload regardless of what sits in front. |
-| Audit logging | Keep. This is the record of what was redacted, and no gateway produces it. |
+| Proxy keys | Always required. One key for the gateway is enough; give it a `policy` to pin every request to one policy, or use separate keys per team to give each its own policy and scopes. |
+| `proxy.limits.max-concurrent-requests` | Keep. This protects the proxy from overload regardless of what sits in front. |
+| Audit log | Keep. This is the record of what was redacted, and no gateway produces it. |
+| `proxy.security.trusted-proxies` | Set it to the gateway's addresses if the gateway passes on its clients' addresses in `X-Forwarded-For`, so the audit log records them. |
 
-If the proxy is exposed directly to clients in addition to the gateway, keep auth on. See [Configuration](configuration.md).
+See [Configuration](configuration.md).
 
 ## When you do not need the proxy
 
-If your gateway supports guardrail callbacks (LiteLLM, Portkey, and Kong all do), it can call [Philter](https://philterd.ai/philter/) directly and you can skip the proxy entirely. That is a legitimate setup and it is simpler when it fits.
+If your gateway supports guardrail callbacks (LiteLLM, Portkey, and Kong all do), it can call [Philter](https://philterd.ai/philter/), Philterd's redaction API, directly, and you can skip the proxy entirely. That is a legitimate setup and it is simpler when it fits.
 
 The proxy is the better choice when you want redaction enforced at the network layer rather than as a feature of the gateway's configuration:
 

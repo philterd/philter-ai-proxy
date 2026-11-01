@@ -50,7 +50,7 @@
     {
       "id": 9,
       "type": "timeseries",
-      "title": "Philter backend errors",
+      "title": "Redaction errors",
       "datasource": {"type": "prometheus", "uid": "${datasource}"},
       "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
       "fieldConfig": {"defaults": {"unit": "reqps", "custom": {"drawStyle": "line", "lineWidth": 1, "fillOpacity": 10}}},
@@ -58,7 +58,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "rate(philter_proxy_philter_errors_total[5m])",
+          "expr": "rate(philter_proxy_redaction_errors_total[5m])",
           "legendFormat": "errors/s"
         }
       ]
@@ -172,7 +172,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "sum(philter_proxy_active_requests) / on() philter_proxy_concurrency_limit{scope=\"global\"}",
+          "expr": "sum(philter_proxy_active_requests) / on() philter_proxy_concurrency_limit",
           "legendFormat": "utilization"
         }
       ]
@@ -188,7 +188,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "sum by (scope) (rate(philter_proxy_concurrency_shed_total[5m]))",
+          "expr": "sum(rate(philter_proxy_concurrency_shed_total[5m]))",
           "legendFormat": "{{scope}}"
         }
       ]

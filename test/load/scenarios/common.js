@@ -5,8 +5,15 @@
 export const PROXY_URL = __ENV.PROXY_URL || 'https://localhost:8080';
 export const STUB_URL = __ENV.STUB_URL || 'http://localhost:8090';
 
+// Every request to the proxy carries a proxy key; run.sh creates one.
+export const HEADERS = {
+  'Content-Type': 'application/json',
+  'x-philter-proxy-key': __ENV.PROXY_KEY || '',
+};
+
 // The fixture prompt deliberately carries SSN-shape PII so the redaction path
-// actually has work to do on every iteration. The same fixture is used in
+// actually has work to do on every iteration. The default policy also runs the
+// bundled person-name model over every prompt. The same fixture is used in
 // every scenario so the comparison between scenarios is meaningful.
 export const FIXTURE_PII = '123-45-6789';
 

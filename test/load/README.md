@@ -6,8 +6,8 @@
 
 ```
 test/load/
-├── docker-compose.load.yaml   # Philter + stub LLM + proxy
-├── config.load.yaml           # proxy config used by the stack
+├── docker-compose.load.yaml   # stub LLM + proxy
+├── application-load.yaml      # proxy settings used by the stack
 ├── stub-provider/             # tiny Go HTTP server stubbing OpenAI + Anthropic
 ├── scenarios/                 # k6 JS scripts (one per scenario)
 ├── results/                   # k6 summary JSON dropped here (gitignored)
@@ -19,7 +19,7 @@ test/load/
 From the **repo root**:
 
 ```bash
-# 1. Build the proxy image, bring up Philter + stub provider + proxy.
+# 1. Build the proxy image, bring up the stub provider and the proxy.
 docker compose -f test/load/docker-compose.load.yaml up -d --build
 
 # 2. Run a scenario (uses the grafana/k6 docker image; no local k6 needed).
@@ -32,7 +32,7 @@ docker compose -f test/load/docker-compose.load.yaml up -d --build
 docker compose -f test/load/docker-compose.load.yaml down -v
 ```
 
-The proxy listens on `https://localhost:8080` with a self-signed cert generated at image-build time; k6 scenarios skip TLS verification accordingly. Philter is reachable on `http://localhost:8081` and the stub provider on `http://localhost:8090` if you want to poke at them directly.
+The proxy listens on `https://localhost:8080` with a self-signed certificate it generates at startup; k6 scenarios skip TLS verification accordingly. It runs the default policy, including the bundled person-name model, with a context. `run.sh` waits until the proxy is ready and creates a proxy key with the admin API (using the bootstrap key set in `docker-compose.load.yaml`), or uses `PROXY_KEY` if you set it. The stub provider is on `http://localhost:8090` if you want to poke at it directly. If those ports are taken, set `PROXY_PORT`, `METRICS_PORT`, and `STUB_PORT` for `docker compose` and `PROXY_URL` for `run.sh`.
 
 ## Available scenarios
 
@@ -41,7 +41,7 @@ The proxy listens on `https://localhost:8080` with a self-signed cert generated 
 | `openai` | Full inbound redaction + non-streaming round-trip via `/v1/chat/completions`. |
 | `anthropic` | Same shape via `/v1/messages`. |
 | `openai-streaming` | Server-Sent Events round-trip via `/v1/chat/completions` with `stream:true`. Tests the proxy's streaming pass-through path. |
-| `outbound-scan` | Inbound redaction + **outbound response scan** (`outbound.enabled: true`, `action: redact`). Triggered by the `x-loadtest-mode: outbound` header. Doubles the Philter round-trip per request. |
+| `outbound-scan` | Inbound redaction + **outbound response scan** (`outbound.enabled: true`, `action: redact`). Triggered by the `x-loadtest-mode: outbound` header. Redacts each request twice: the prompt and the response. |
 | `no-redaction` | Direct hit on the stub provider, bypassing the proxy entirely. The baseline you compare the other scenarios against. |
 
 Run them by name:
@@ -56,7 +56,7 @@ Run them by name:
 
 ## Knobs
 
-Every scenario reads `VUS` and `DURATION` from the environment. Defaults are 10 virtual users for 30 seconds — enough to read p95/p99 reliably without burning the laptop. Override via env:
+Every scenario reads `VUS` and `DURATION` from the environment. Defaults are 10 virtual users for 30 seconds, enough to read p95/p99 reliably without burning the laptop. Override via env:
 
 ```bash
 VUS=50 DURATION=2m ./test/load/run.sh openai
@@ -68,39 +68,40 @@ The proxy and stub URLs are also overridable via `PROXY_URL` and `STUB_URL` if y
 
 k6 prints a per-iteration summary on stdout and writes a machine-readable JSON to `results/<scenario>.summary.json`. The numbers that matter:
 
-- `http_req_duration` (p50, p95, p99) — end-to-end latency.
-- `http_req_failed` (rate) — fraction of requests that did not return 2xx.
-- `iterations` (count and rate) — requests/second sustained.
+- `http_req_duration` (p50, p95, p99): end-to-end latency.
+- `http_req_failed` (rate): fraction of requests that did not return 2xx.
+- `iterations` (count and rate): requests/second sustained.
 
 Each scenario declares thresholds for `http_req_duration` and `http_req_failed` that k6 enforces and prints as pass/fail. Crossing a threshold marks the run as failed (non-zero exit), which is what the CI workflow uses to gate the build.
 
 ## Comparing redaction-on vs redaction-off
 
-Run the `openai` scenario (proxy + Philter) and the `no-redaction` scenario (direct to stub) with the same `VUS` and `DURATION`. The delta in p95/p99 latency is the cost of one inbound redaction pass; the delta in iterations/second is the throughput cost. See `docs/docs/load-tests.md` for an example report on a reference instance.
+Run the `openai` scenario (through the proxy) and the `no-redaction` scenario (direct to stub) with the same `VUS` and `DURATION`. The delta in p95/p99 latency is the cost of one inbound redaction pass; the delta in iterations/second is the throughput cost. See `docs/docs/load-tests.md` for an example report on a reference instance.
 
 ## Stub provider
 
 The stub at `test/load/stub-provider/` is a 200-line Go HTTP server that returns canned OpenAI- and Anthropic-shape responses (JSON for non-streaming, SSE for streaming). Knobs via query string:
 
-- `delay=200ms` — server-side latency before the response starts.
-- `chunks=8` — number of SSE chunks for streaming endpoints.
-- `chunk_delay=10ms` — delay between chunks.
+- `delay=200ms`: server-side latency before the response starts.
+- `chunks=8`: number of SSE chunks for streaming endpoints.
+- `chunk_delay=10ms`: delay between chunks.
 
-The stub deliberately includes a fake SSN in its response body so the outbound-scan scenario has work to do for Philter.
+The stub deliberately includes a fake SSN in its response body so the outbound-scan scenario has work to do.
 
 ## Pointing the scenarios at a real provider
 
 For a real-world baseline, swap the stub for the upstream provider:
 
 ```yaml
-# config.load.yaml
-providers:
-  openai:
-    target: https://api.openai.com
+# application-load.yaml
+proxy:
+  providers:
+    openai:
+      target: https://api.openai.com
 ```
 
-…and supply a real API key on the k6 requests via env vars. **This will cost money** and is subject to provider rate limits — keep `VUS` modest. Most regression work should use the stub.
+…and supply a real API key on the k6 requests via env vars. **This will cost money** and is subject to provider rate limits, so keep `VUS` modest. Most regression work should use the stub.
 
 ## CI
 
-`.github/workflows/load-test.yml` runs a small baseline (10 VUs × 1 minute) on every push to `main` and on `workflow_dispatch`. Results are uploaded as job artifacts. The workflow does not currently fail PRs on regression — it surfaces numbers, not gates.
+`.github/workflows/load-test.yml` runs the scenarios weekly and on `workflow_dispatch`. Results are uploaded as job artifacts. The workflow does not currently fail PRs on regression: it surfaces numbers, not gates.

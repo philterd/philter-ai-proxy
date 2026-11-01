@@ -1,51 +1,44 @@
 # Load tests
 
-A [k6](https://k6.io) harness lives at `test/load/` in the repo. It brings up a self-contained stack (Philter + a stub LLM provider + the proxy) via docker-compose and exercises five scenarios that together cover the proxy's hot paths: inbound redaction, outbound response scanning, streaming, and a no-proxy baseline for comparison.
-
-See [`test/load/README.md`](https://github.com/philterd/philter-ai-proxy/blob/main/test/load/README.md) for run instructions.
+A [k6](https://k6.io) harness lives at `test/load/` in the repository. It brings up a stub LLM provider and the proxy built from the repository, with the default policy and its bundled person-name model, and runs five scenarios: inbound redaction for OpenAI and Anthropic, a streamed response, response scanning, and a baseline that skips the proxy.
 
 ## Reference baseline
 
-Numbers measured on the reference instance below, 10 virtual users, 20-second runs, deliberate PII fixture in every request body (so redaction has work to do every iteration). Each row is a separate k6 run against the same warm stack.
+Measured on the reference instance below on 2026-11-01: 10 virtual users, 20 seconds per scenario, the same prompt in every request (`The SSN on file is 123-45-6789. Summarize the case.`). The default policy runs the PhEye model over every prompt, and a context is configured, so each request also reads and writes the SQLite context store.
 
-| Scenario | iters | req/s | p50 (ms) | p95 (ms) | p99 (ms) | failures |
+| Scenario | Iterations | req/s | p50 (ms) | p95 (ms) | p99 (ms) | Failures |
 |---|---:|---:|---:|---:|---:|---:|
-| `no-redaction` (direct to stub, baseline) | 798,147 | **39,907** | 0.17 | 0.37 | 0.68 | 0.000% |
-| `openai` (proxy + inbound redaction) | 58,951 | **2,947** | 2.16 | 8.78 | 13.17 | 0.000% |
-| `anthropic` (proxy + inbound redaction) | 14,610 | **729** | 8.36 | 41.67 | 66.03 | 0.000% |
-| `openai-streaming` (proxy + inbound + SSE pass-through) | 13,933 | **696** | 4.85 | 60.50 | 101.98 | 0.000% |
-| `outbound-scan` (proxy + inbound + outbound Philter scan) | 28,537 | **1,424** | 3.25 | 32.14 | 65.22 | 0.000% |
+| `no-redaction` (direct to the stub, no proxy) | 846,986 | **42,349** | 0.2 | 0.3 | 0.5 | 0.000% |
+| `openai` (inbound redaction) | 1,697 | **85** | 110.3 | 177.9 | 242.1 | 0.000% |
+| `anthropic` (inbound redaction) | 1,723 | **86** | 107.9 | 177.7 | 248.6 | 0.000% |
+| `openai-streaming` (inbound redaction, streamed response passed through) | 1,693 | **84** | 107.7 | 186.8 | 282.2 | 0.000% |
+| `outbound-scan` (inbound redaction and response scanning) | 766 | **38** | 256.8 | 351.3 | 389.5 | 0.000% |
 
 ## Reading the table
 
-The `no-redaction` row is a baseline. k6 hits the stub provider directly without traversing the proxy or Philter. Subtracting this row's latency from any of the others gives the **incremental cost of running the proxy and Philter for that flow**.
+The `no-redaction` row is the baseline: k6 calls the stub directly. The difference between it and another row is the cost of the proxy for that flow.
 
-For the most common production case (`openai` inbound redaction):
+- **The model sets the throughput.** Running the PhEye person-name model on the CPU is most of each request's cost: about 110 ms at the median with 10 requests at a time, and about 85 requests a second on this machine. The rest of the proxy (authentication, routing, the context store, forwarding) is small beside it.
+- **Response scanning redacts twice**, the prompt and the response, so `outbound-scan` runs at about half the throughput.
+- **Providers cost the same.** OpenAI, Anthropic, and the streamed response run the same redaction, so their rows match.
+- **A pattern-only policy is much faster.** A policy without a PhEye filter (SSNs, email addresses, phone numbers, and the like) skips the model.
 
-- The proxy adds **~2 ms p50** and **~8.4 ms p95** of latency on top of the direct-to-stub baseline.
-- Sustained throughput drops from ~40K req/s to **~2.9K req/s**. The bottleneck is the Philter container, not the proxy itself: with one Philter instance on the same machine, every request serializes through a single redaction call.
-- For higher throughput, scale Philter horizontally and bring up additional proxy replicas. The proxy is stateless apart from its in-process concurrency slots, so replicas need no shared state.
-
-The `outbound-scan` row is **two** Philter round-trips per request (one inbound on the prompt, one outbound on the response). Throughput halves vs `openai` and p99 climbs from 13ms to 65ms - the price of scanning the LLM's reply for PII before it leaves the proxy.
-
-The `anthropic` row is slower than `openai` despite running through the same proxy code. The difference is on the Philter side: the Anthropic fixture's polymorphic content shape (string-or-array of typed blocks) and Anthropic's request body shape produce a different Philter workload pattern under contention. The proxy's per-request overhead is comparable across providers; the throughput delta is in the redaction backend.
-
-The `openai-streaming` row's p99 (~100ms) reflects the stub's chunk schedule (4 chunks at 10ms intervals = ~40ms minimum body time) plus contention; the proxy's per-request overhead in this scenario is dominated by waiting on the upstream stream, not by its own work.
+For more throughput, give the proxy more CPU, or run more instances, each with its own database, behind your gateway. The model can also run on a GPU through ONNX Runtime's GPU build; the image ships the CPU build.
 
 ## Reference instance
 
 - **CPU:** Intel Core i5-11400 @ 2.60 GHz, 12 logical cores.
-- **RAM:** 62 GiB total, ~52 GiB free.
-- **OS:** Ubuntu 24.04.4 LTS.
-- **Docker:** Engine 29.5.2.
-- **Network:** all components on the same host, communicating via the docker-compose default bridge network.
+- **RAM:** 62 GiB.
+- **OS:** Ubuntu 24.04.5 LTS.
+- **Docker:** Engine 29.9.2.
+- **Network:** every component on the same host, over the docker-compose network.
 
-All five components - Philter, stub provider, proxy, and the k6 container - ran on the same machine in this measurement, so they competed for CPU. In a real deployment Philter would typically be on a separate node sized for redaction throughput.
+The stub, the proxy, and the k6 container ran on the same machine, so they competed for CPU.
 
 ## How to reproduce
 
 ```bash
-# From the repo root.
+# From the repository root.
 docker compose -f test/load/docker-compose.load.yaml up -d --build
 for s in no-redaction openai anthropic openai-streaming outbound-scan; do
   VUS=10 DURATION=20s ./test/load/run.sh "$s"
@@ -53,8 +46,8 @@ done
 docker compose -f test/load/docker-compose.load.yaml down -v
 ```
 
-Per-scenario JSON summaries land under `test/load/results/<scenario>.summary.json`.
+`run.sh` waits until the proxy is ready, creates a proxy key with the admin API, and runs the scenario. Each scenario's summary is written to `test/load/results/<scenario>.summary.json`. If ports 8080, 9090, or 8090 are taken on your machine, set `PROXY_PORT`, `METRICS_PORT`, or `STUB_PORT` for `docker compose`, and `PROXY_URL` (such as `https://localhost:18080`) for `run.sh`.
 
 ## CI
 
-A scheduled GitHub Actions workflow (`.github/workflows/load-test.yml`) re-runs the same baseline weekly and on `workflow_dispatch`, uploading the summary JSONs as job artifacts. The numbers above are not auto-updated in this docs page when the CI workflow runs - they are a point-in-time reference. Open a PR to refresh the table when the baseline shifts materially.
+A scheduled GitHub Actions workflow (`.github/workflows/load-test.yml`) runs the scenarios weekly and on `workflow_dispatch`, and uploads the summaries as artifacts. The table above is a point-in-time reference and is not updated by the workflow.

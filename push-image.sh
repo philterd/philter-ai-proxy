@@ -10,7 +10,7 @@ set -e
 #
 # Usage:
 #   ./push-image.sh                # push the :latest-<arch> tags
-#   ./push-image.sh v1.2.3         # push the :v1.2.3-<arch> tags
+#   ./push-image.sh 2.0.0          # push the :2.0.0-<arch> tags
 #   DRY_RUN=1 ./push-image.sh      # scan and print the plan, push nothing
 #   SKIP_SCAN=1 ./push-image.sh    # push without the vulnerability scan
 #   ALLOW_DIRTY=1 ./push-image.sh  # push a version built from a dirty tree

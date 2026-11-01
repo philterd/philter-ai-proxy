@@ -1,0 +1,156 @@
+# Philter AI Proxy runs as a single replica: it keeps policies, contexts, API keys, and the audit log in a
+# SQLite file on a persistent volume, and a second instance on the same file is refused.
+
+image:
+  repository: philterd/philter-ai-proxy
+  # Defaults to the chart's appVersion.
+  tag: ""
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+podAnnotations: {}
+podLabels: {}
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 10001
+  runAsGroup: 10001
+  fsGroup: 10001
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL
+
+terminationGracePeriodSeconds: 35
+
+# The bundled PhEye model is loaded into memory at startup.
+resources:
+  requests:
+    cpu: 500m
+    memory: 1536Mi
+  limits:
+    memory: 2Gi
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+# Holds the SQLite database. Without persistence, policies, keys, contexts, and the audit log are lost when the
+# pod is replaced.
+persistence:
+  enabled: true
+  existingClaim: ""
+  storageClass: ""
+  accessModes:
+    - ReadWriteOnce
+  size: 1Gi
+
+# encryption-key encrypts values stored at rest: 32 random bytes as 64 hex characters (openssl rand -hex 32).
+# bootstrap-api-key becomes an admin key on first start, while no key exists: at least 32 characters.
+# Set existingSecret to a Secret holding the keys encryption-key and bootstrap-api-key to keep them out of the
+# release values; otherwise the chart creates one from the values below.
+secrets:
+  existingSecret: ""
+  encryptionKey: ""
+  bootstrapApiKey: ""
+
+service:
+  type: ClusterIP
+  port: 8080
+  annotations: {}
+  metrics:
+    enabled: true
+    type: ClusterIP
+    port: 9090
+    annotations: {}
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts:
+    - host: philter-ai-proxy.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+
+# How the proxy serves TLS:
+#   selfSigned      HTTPS with a certificate generated at startup, which no client trusts (the default).
+#   existingSecret  HTTPS with tls.crt and tls.key from the Secret named in existingSecret.
+#   certManager     HTTPS with a certificate cert-manager issues into certManager.secretName.
+#   none            Plain HTTP, for when an ingress or service mesh terminates TLS in front of the proxy.
+tls:
+  mode: selfSigned
+  existingSecret: ""
+  certManager:
+    issuerRef:
+      kind: ClusterIssuer
+      name: ""
+    dnsNames:
+      - philter-ai-proxy.example.com
+    secretName: ""
+
+# Mutual TLS: require clients to present a certificate signed by the CA in caSecretName (key ca.crt).
+# Needs tls.mode existingSecret or certManager.
+mtls:
+  enabled: false
+  caSecretName: ""
+
+livenessProbe:
+  httpGet:
+    path: /livez
+    port: proxy
+  periodSeconds: 10
+  timeoutSeconds: 3
+  failureThreshold: 3
+
+# /readyz answers once the configured policies, and their models, are loaded.
+readinessProbe:
+  httpGet:
+    path: /readyz
+    port: proxy
+  periodSeconds: 5
+  timeoutSeconds: 3
+  failureThreshold: 3
+
+startupProbe:
+  httpGet:
+    path: /livez
+    port: proxy
+  periodSeconds: 5
+  failureThreshold: 36
+
+serviceMonitor:
+  enabled: false
+  labels: {}
+  interval: 30s
+  scrapeTimeout: 10s
+  path: /metrics
+
+# Extra environment variables for the container, such as provider credentials for Bedrock or Vertex AI.
+extraEnv: []
+
+# The proxy's settings, as in application.yaml: rendered into a ConfigMap and loaded after the image's defaults.
+# Secrets do not belong here: use secrets, extraEnv, or environment variables from your own Secret.
+config:
+  proxy:
+    defaults:
+      policy: default
+      outbound:
+        enabled: false
+        action: redact
+    routes: []

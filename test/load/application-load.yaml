@@ -1,0 +1,25 @@
+# Proxy settings for the load-test stack, loaded after the image's defaults.
+proxy:
+  providers:
+    openai:
+      target: http://stub-provider:8090
+    anthropic:
+      target: http://stub-provider:8090
+    gemini:
+      target: http://stub-provider:8090
+    ollama:
+      target: http://stub-provider:8090
+  # The default policy: person names with the bundled ph-eye-pii-en-small model, SSNs, and email addresses.
+  # A context keeps replacements consistent across requests, so the SQLite context store is exercised too.
+  defaults:
+    policy: default
+    context: load-test
+  routes:
+    - match:
+        header: x-loadtest-mode
+        value: outbound
+      policy: default
+      context: load-test
+      outbound:
+        enabled: true
+        action: redact

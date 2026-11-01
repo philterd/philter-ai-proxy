@@ -4,7 +4,7 @@ site_url: https://philterd.github.io/philter-ai-proxy/
 edit_uri: '?query=docs/docs/'
 copyright: Copyright 2023-2026 Philterd, LLC
 site_author: philterd
-site_description: User guide for Philter AI Proxy, a PII/PHI redaction proxy for OpenAI, Claude, and Gemini.
+site_description: User guide for Philter AI Proxy, a self-hosted PII/PHI redaction proxy for LLM providers.
 theme:
   name: material
   locale: en
@@ -13,8 +13,9 @@ theme:
 nav:
   - Home: index.md
   - Installation: installation.md
-  - Kubernetes Quickstart: kubernetes.md
+  - Kubernetes: kubernetes.md
   - Usage: usage.md
+  - Policies: policies.md
   - API Reference: api.md
   - Configuration: configuration.md
   - Using with an AI Gateway: ai-gateway.md

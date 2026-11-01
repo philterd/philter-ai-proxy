@@ -39,6 +39,21 @@ fi
 # reachable via host.docker.internal on Docker Desktop, and via --network host
 # on plain Linux. We use --network host for simplicity here.
 PROXY_URL="${PROXY_URL:-https://localhost:8080}"
+BOOTSTRAP_API_KEY="${BOOTSTRAP_API_KEY:-load-test-bootstrap-key-not-for-real-use}"
+
+# Wait until the proxy has loaded the default policy and its model.
+for _ in $(seq 1 90); do
+  curl -fsk -o /dev/null "${PROXY_URL}/readyz" && break
+  sleep 2
+done
+curl -fsk -o /dev/null "${PROXY_URL}/readyz" || { echo "error: the proxy at ${PROXY_URL} is not ready" >&2; exit 1; }
+
+# Every request needs a proxy key. Create one with the admin API unless PROXY_KEY is given.
+if [[ -z "${PROXY_KEY:-}" ]]; then
+  PROXY_KEY="$(curl -fsSk "${PROXY_URL}/admin/api/keys" \
+    -H "Authorization: Bearer ${BOOTSTRAP_API_KEY}" -H "Content-Type: application/json" \
+    -d '{"name": "load-test", "roles": ["proxy"]}' | sed -E 's/.*"key":"([^"]+)".*/\1/')"
+fi
 STUB_URL="${STUB_URL:-http://localhost:8090}"
 VUS="${VUS:-10}"
 DURATION="${DURATION:-30s}"
@@ -54,6 +69,7 @@ echo
 
 docker run --rm --network host \
   -e PROXY_URL="${PROXY_URL}" \
+  -e PROXY_KEY="${PROXY_KEY}" \
   -e STUB_URL="${STUB_URL}" \
   -e VUS="${VUS}" \
   -e DURATION="${DURATION}" \

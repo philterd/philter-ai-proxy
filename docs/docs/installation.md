@@ -1,151 +1,162 @@
 # Installation
 
-## Prerequisites
+The proxy ships as a Docker image, `philterd/philter-ai-proxy`, that includes the PhEye model the default policy uses to find person names. It also runs as a jar on Java 25.
 
-- Go 1.25 or later
-- [Philter](https://philterd.ai/philter/) 4.0 or later, running and accessible, and a Philter API key for the proxy (see [`philter.apiKey`](configuration.md#philter))
+## Requirements
 
-## Building from Source
-
-To build the proxy from source:
-
-```bash
-make build
-```
-
-This will create an executable named `philter-ai-proxy`.
-
-## Running
-
-The proxy requires a YAML configuration file. Copy and edit the example config:
-
-```bash
-cp config.example.yaml config.yaml
-# Edit config.yaml with your Philter endpoint and provider settings
-./philter-ai-proxy --config config.yaml
-```
-
-See [Configuration](configuration.md) for the full config reference.
-
-### Checking the version
-
-Use `--version` to print the build version and exit:
-
-```bash
-./philter-ai-proxy --version
-# philter-ai-proxy v1.0.0 (commit a1b2c3d4e5f6, built with go1.25)
-```
-
-Release builds stamp the version via `-ldflags "-X main.version=<tag>"` (the `Makefile` and `Dockerfile` derive it from `git describe`). Plain `go build` binaries report `dev` plus the commit recorded by the Go toolchain. The same version is logged at startup.
-
-### Validating a config file
-
-Use `--validate-config` to load and validate a config without starting the proxy. Useful as a CI gate before a deploy reaches a running cluster, or as a pre-restart sanity check.
-
-```bash
-./philter-ai-proxy --validate-config --config config.yaml
-```
-
-Exit codes:
-
-- `0` and `config OK: <path>` on stdout when the file loads, expands all `${ENV_VAR}` / `file:` secret references, and passes schema validation.
-- `1` and `config invalid: <reason>` on stderr otherwise. The reason names the offending field (for example `config: listen.port 999999 is out of range (1-65535)`).
-- `2` for unknown CLI flags.
-
-`--config` may be omitted if `PHILTER_PROXY_CONFIG` is set in the environment.
+- About 1.5 GiB of memory. The PhEye model is loaded into memory when the proxy starts.
+- A persistent directory for the proxy's SQLite database, which holds policies, API keys, contexts, and the audit log.
+- Network access to the LLM providers you use.
 
 ## Docker
 
-To build a local Docker image (single arch, no push):
+Generate the two keys the proxy needs, and keep a copy of the encryption key: the database cannot be read without it, and the proxy refuses to start with a different one.
 
 ```bash
-make docker-build
+export ENCRYPTION_KEY="$(openssl rand -hex 32)"
+export BOOTSTRAP_API_KEY="$(openssl rand -hex 32)"
+
+docker run -d --name philter-ai-proxy \
+  -p 8080:8080 -p 9090:9090 \
+  -v philter-ai-proxy-data:/var/lib/philter-ai-proxy \
+  -e PHILTER_AI_PROXY_ENCRYPTION_KEY="$ENCRYPTION_KEY" \
+  -e PHILTER_AI_PROXY_BOOTSTRAP_API_KEY="$BOOTSTRAP_API_KEY" \
+  philterd/philter-ai-proxy:2.0.0
 ```
 
-### Building for both architectures
+- `PHILTER_AI_PROXY_ENCRYPTION_KEY` encrypts the values the database stores, such as the original values a context keeps: 32 bytes as 64 hex characters or base64.
+- `PHILTER_AI_PROXY_BOOTSTRAP_API_KEY` becomes an admin key on first start, while no API key exists. It must be at least 32 characters.
+- Port 8080 serves provider traffic and the admin API. Port 9090 serves Prometheus metrics; keep it off the internet.
 
-`build-image.sh` builds `linux/amd64` and `linux/arm64` images and loads each into the local Docker daemon under its own tag, so both are available to run and test before anything is published. It pushes nothing.
+The proxy serves HTTPS with a self-signed certificate it generates at startup, so `curl` needs `-k`. See [Certificates](#certificates) to use your own, or to serve plain HTTP behind a load balancer.
+
+Wait until the proxy has loaded the model:
 
 ```bash
-./build-image.sh                      # philterd/philter-ai-proxy:latest-amd64 and :latest-arm64
-./build-image.sh v1.2.3               # philterd/philter-ai-proxy:v1.2.3-amd64 and :v1.2.3-arm64
-make docker-build-multiarch           # same, using the Makefile's derived VERSION
+curl -k https://localhost:8080/readyz
 ```
 
-A single multi-arch tag cannot be loaded into the local daemon, which is why the images carry per-architecture tags. `IMAGE=` overrides the repository name and `ARCHES=` the architecture list.
+```json
+{"status":"ok"}
+```
 
-### Publishing multi-arch images
+### Create a key for your application
 
-Publishing is two deliberate steps, run by hand from a machine holding the credential. Nothing in CI pushes an image.
-
-`build-image.sh` produces the per-architecture images (above); `push-image.sh` pushes them to Docker Hub at [`philterd/philter-ai-proxy`](https://hub.docker.com/repository/docker/philterd/philter-ai-proxy) and joins them into one multi-arch tag with `docker buildx imagetools create`. `push-image.sh` builds nothing, so what gets published is exactly what you built and tested.
+Applications authenticate to the proxy with a proxy key. Create one with the admin API, using the bootstrap key:
 
 ```bash
-docker login                          # one-time, as a user with push access
-./build-image.sh v1.2.3               # build linux/amd64 and linux/arm64
-./push-image.sh v1.2.3                # scan, push, and join into philterd/philter-ai-proxy:v1.2.3
-./push-image.sh                       # repeat for the :latest tag
+curl -k https://localhost:8080/admin/api/keys \
+  -H "Authorization: Bearer $BOOTSTRAP_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"name": "my-app", "roles": ["proxy"]}'
 ```
 
-The Makefile wraps both, using its derived `VERSION`:
+```json
+{"roles":["proxy"],"providers":[],"models":[],"paths":[],"id":"5f0c8a4e-...","name":"my-app","createdAt":"...","key":"pap_..."}
+```
+
+The `key` is shown only once. See [API keys](api.md#api-keys) for limiting a key to providers, models, paths, or a policy.
+
+### Send a request
+
+Point the application at the proxy instead of the provider. It sends its provider credential as usual and its proxy key in `x-philter-proxy-key`:
 
 ```bash
-make docker-build-multiarch
-make docker-push
-make docker-push-dry-run              # scan and print the plan, push nothing
+curl -k https://localhost:8080/v1/chat/completions \
+  -H "x-philter-proxy-key: $PROXY_KEY" \
+  -H "Authorization: Bearer $OPENAI_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"model": "gpt-4o-mini", "messages": [{"role": "user", "content": "George Washington wrote to me at george@example.com."}]}'
 ```
 
-The push is gated on a [Trivy](https://trivy.dev) scan of each image being pushed, so `trivy` must be on your PATH. A HIGH or CRITICAL vulnerability that has a fix available blocks the push; unfixable findings do not, since no rebuild resolves them. Rebuild on a patched base, or record an exception with a reason in `.trivyignore`. `SKIP_SCAN=1` bypasses the gate.
+OpenAI receives `{{{REDACTED-name}}} wrote to me at {{{REDACTED-email-address}}}.` The default policy finds person names, SSNs, and email addresses; see [Policies](policies.md) to change it.
 
-Each invocation publishes one tag, taken from the argument (default `latest`). A version built from a dirty working tree carries a `-dirty` suffix and is refused, to prevent publishing an image that corresponds to no committed state; `ALLOW_DIRTY=1` overrides that.
+### Settings
+
+Settings come from `application.yaml` and environment variables; see [Configuration](configuration.md). To use a settings file, mount it and point the proxy at it:
+
+```bash
+docker run -d --name philter-ai-proxy \
+  -p 8080:8080 -p 9090:9090 \
+  -v philter-ai-proxy-data:/var/lib/philter-ai-proxy \
+  -v "$PWD/application.yaml:/etc/philter-ai-proxy/application.yaml:ro" \
+  -e SPRING_CONFIG_ADDITIONAL_LOCATION=file:/etc/philter-ai-proxy/application.yaml \
+  -e PHILTER_AI_PROXY_ENCRYPTION_KEY="$ENCRYPTION_KEY" \
+  philterd/philter-ai-proxy:2.0.0
+```
 
 ## Docker Compose
 
-To start the proxy using Docker Compose:
+The repository's `docker-compose.yaml` builds the image from source and reads its settings from `application.yaml` and its keys from `.env`:
 
 ```bash
-docker-compose up --build
+cp .env.example .env     # then set both keys in .env
+docker compose up -d --build
 ```
-
-The default `docker-compose.yaml` mounts `config.example.yaml` as the config file. Edit it or replace it with your own config before running.
 
 ## Kubernetes
 
-Two ways to deploy on Kubernetes:
+See [Kubernetes](kubernetes.md) for the Helm chart and plain manifests.
 
-- **Helm chart** at `deploy/helm/philter-ai-proxy/` - production-ready, with values for replicas, autoscaling (HPA), Pod Disruption Budgets, Ingress, Prometheus Operator `ServiceMonitor`, mTLS, and cert-manager-issued TLS.
-- **Plain manifests** at `deploy/k8s/` - minimal Deployment + Service + Secret for users who don't want Helm.
+## Building from Source
 
-A starter Grafana dashboard covering every emitted metric ships alongside at `deploy/grafana/philter-ai-proxy.json`.
+The build needs Java 25. The Maven wrapper downloads Maven.
 
-The [Kubernetes Quickstart](kubernetes.md) walks through both paths end-to-end.
+```bash
+./mvnw package
+java --enable-native-access=ALL-UNNAMED -jar target/philter-ai-proxy.jar \
+  --proxy.storage.sqlite-path=./data/philter-ai-proxy.db \
+  --proxy.models.directory=./models \
+  --proxy.security.encryption-key="$ENCRYPTION_KEY" \
+  --proxy.security.bootstrap-api-key="$BOOTSTRAP_API_KEY"
+```
+
+The jar does not include the model. The default policy names `ph-eye-pii-en-small`, which it expects in `<models directory>/ph-eye-pii-en-small`: download `gliner_config.json`, `tokenizer.json`, and `model.onnx` from the `onnx` folder of [philterd/ph-eye-pii-en-small](https://huggingface.co/philterd/ph-eye-pii-en-small) into that directory, or change the default policy. Without the model, requests that use the default policy are refused with `policy_invalid`.
+
+Run without a certificate setting, the jar serves plain HTTP. `./mvnw verify` runs the tests and the coverage check.
+
+### Checking the version
+
+```bash
+java -jar target/philter-ai-proxy.jar --version
+```
+
+```
+philter-ai-proxy 2.0.0
+```
+
+### Validating the configuration
+
+`--validate-config` checks the settings (providers, the encryption key, trusted proxies, policy file directories) and exits without serving requests. It does not open the database, so it can run beside a running proxy. It exits non-zero when the configuration is invalid.
+
+```bash
+docker run --rm -e PHILTER_AI_PROXY_ENCRYPTION_KEY="$ENCRYPTION_KEY" philterd/philter-ai-proxy:2.0.0 --validate-config
+```
+
+```
+The configuration is valid.
+```
 
 ## Certificates
 
-The proxy listens over TLS and needs a certificate before it will start. There is no default path and the container image ships no keypair, so one of the two options below is required.
+The image serves HTTPS with a self-signed certificate generated at startup (`PROXY_TLS_DEVSELFSIGNEDCERT=true`). It encrypts the connection but does not prove the proxy's identity, so clients must skip verification. Use it for evaluation only.
 
-**Production.** Point `listen.cert` and `listen.key` at your keypair:
-
-```yaml
-listen:
-  cert: /etc/philter-proxy/tls/tls.crt
-  key: /etc/philter-proxy/tls/tls.key
-```
-
-**Evaluation.** Set `listen.devSelfSignedCert: true` and the proxy generates a throwaway certificate at startup, in memory, different on every start. Clients must disable certificate verification to connect, so use it for local trials and tests only. This is what `config.example.yaml` ships with, and it is the line to remove first when moving to production.
-
-A rotated certificate is picked up on restart; the proxy does not reload TLS material while running.
-
-To generate a self-signed keypair on disk instead, for example to share one certificate across a local stack:
+To serve your own certificate, give it and its private key in PEM form:
 
 ```bash
-make cert
+docker run -d --name philter-ai-proxy \
+  -p 8080:8080 -p 9090:9090 \
+  -v philter-ai-proxy-data:/var/lib/philter-ai-proxy \
+  -v "$PWD/tls:/etc/philter-ai-proxy/tls:ro" \
+  -e SERVER_SSL_CERTIFICATE=/etc/philter-ai-proxy/tls/tls.crt \
+  -e SERVER_SSL_CERTIFICATEPRIVATEKEY=/etc/philter-ai-proxy/tls/tls.key \
+  -e SERVER_SSL_ENABLEDPROTOCOLS=TLSv1.3,TLSv1.2 \
+  -e PHILTER_AI_PROXY_ENCRYPTION_KEY="$ENCRYPTION_KEY" \
+  philterd/philter-ai-proxy:2.0.0
 ```
 
-Starting with neither a keypair nor `devSelfSignedCert` fails immediately:
+A configured certificate takes precedence over the self-signed one. To require client certificates (mutual TLS), also set `SERVER_SSL_TRUSTCERTIFICATE` to a PEM file of the CA that signs them and `SERVER_SSL_CLIENTAUTH=need`.
 
-```
-TLS certificate error: no TLS certificate configured: set listen.cert and listen.key
-to your certificate and private key, or set listen.devSelfSignedCert: true to generate
-a throwaway certificate for evaluation
-```
+When a load balancer, ingress, or service mesh terminates TLS in front of the proxy, serve plain HTTP with `PROXY_TLS_DEVSELFSIGNEDCERT=false`.
+
+The metrics port (9090) always serves plain HTTP.

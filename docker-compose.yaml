@@ -1,3 +1,10 @@
+# Runs the proxy built from this repository.
+#
+#   cp .env.example .env    # then set the two keys in .env
+#   docker compose up -d --build
+#
+# Settings go in application.yaml next to this file (see docs/docs/configuration.md).
+
 services:
 
   philter-ai-proxy:
@@ -6,7 +13,14 @@ services:
       dockerfile: Dockerfile
     ports:
       - "8080:8080"
+      - "9090:9090"
     volumes:
-      - ./config.example.yaml:/app/config.yaml:ro
+      - philter-ai-proxy-data:/var/lib/philter-ai-proxy
+      - ./application.yaml:/etc/philter-ai-proxy/application.yaml:ro
     environment:
-      - PHILTER_PROXY_CONFIG=/app/config.yaml
+      - SPRING_CONFIG_ADDITIONAL_LOCATION=file:/etc/philter-ai-proxy/application.yaml
+      - PHILTER_AI_PROXY_ENCRYPTION_KEY=${PHILTER_AI_PROXY_ENCRYPTION_KEY:?set it in .env}
+      - PHILTER_AI_PROXY_BOOTSTRAP_API_KEY=${PHILTER_AI_PROXY_BOOTSTRAP_API_KEY:-}
+
+volumes:
+  philter-ai-proxy-data:

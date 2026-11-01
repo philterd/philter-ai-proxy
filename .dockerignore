@@ -2,24 +2,18 @@
 .github
 .gitignore
 .dockerignore
+.claude
+.env
 
-# Local build outputs
-philter-ai-proxy
-coverage.out
+# Maven build output, built inside the image instead.
+target
 
-# Test corpus and test-only fixtures
-testdata
-*_test.go
-docker-compose.test.yaml
-config.test.yaml
-
-# Generated certs from `make cert`
-cert.pem
-key.pem
-
-# Docs source (not needed at runtime)
+# Not needed in the image
 docs
-mkdocs.yml
+deploy
+test
+*.md
+!LICENSE
 
 # Editor / IDE
 .idea

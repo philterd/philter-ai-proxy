@@ -49,25 +49,16 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - language: go
-            build-mode: autobuild
-          # Covers the workflow-hardening queries that flagged the missing
-          # `permissions` blocks in go.yml, fuzz.yml and load-test.yml.
+          # Build-free analysis of the Java sources, so the job needs no JDK.
+          - language: java-kotlin
+            build-mode: none
+          # Covers the workflow-hardening queries, such as missing
+          # `permissions` blocks.
           - language: actions
             build-mode: none
 
     steps:
     - uses: actions/checkout@v7
-
-    # Pinned to match go.yml and the Dockerfile so autobuild compiles against
-    # the same toolchain that ships. Standard library findings are reported
-    # relative to the Go version in use, so a mismatch here would report on a
-    # binary nobody runs.
-    - name: Set up Go
-      if: matrix.language == 'go'
-      uses: actions/setup-go@v7
-      with:
-        go-version: '1.27'
 
     - name: Initialize CodeQL
       uses: github/codeql-action/init@v4

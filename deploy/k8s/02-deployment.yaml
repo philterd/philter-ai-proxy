@@ -1,94 +1,112 @@
+# Generated from the Helm chart's defaults by deploy/k8s/generate.sh. Do not edit by hand: change the chart
+# and regenerate.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: philter-ai-proxy
   labels:
-    app: philter-ai-proxy
+    app.kubernetes.io/name: philter-ai-proxy
+    app.kubernetes.io/instance: philter-ai-proxy
 spec:
   replicas: 1
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
-      app: philter-ai-proxy
+      app.kubernetes.io/name: philter-ai-proxy
+      app.kubernetes.io/instance: philter-ai-proxy
   template:
     metadata:
       labels:
-        app: philter-ai-proxy
+        app.kubernetes.io/name: philter-ai-proxy
+        app.kubernetes.io/instance: philter-ai-proxy
     spec:
-      terminationGracePeriodSeconds: 35
+      serviceAccountName: default
       securityContext:
+        fsGroup: 10001
+        runAsGroup: 10001
         runAsNonRoot: true
-        runAsUser: 65532
-        runAsGroup: 65532
-        fsGroup: 65532
+        runAsUser: 10001
         seccompProfile:
           type: RuntimeDefault
+      terminationGracePeriodSeconds: 35
       containers:
-        - name: philter-ai-proxy
-          image: philterd/philter-ai-proxy:latest
-          imagePullPolicy: IfNotPresent
-          securityContext:
-            allowPrivilegeEscalation: false
-            readOnlyRootFilesystem: true
-            capabilities:
-              drop: [ALL]
-          args:
-            - --config
-            - /etc/philter-proxy/config/config.yaml
-          env:
-            - name: PHILTER_API_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: philter-api-key
-                  key: api-key
-          ports:
-            - name: proxy
-              containerPort: 8080
-              protocol: TCP
-            - name: metrics
-              containerPort: 9090
-              protocol: TCP
-          # /livez never fails for upstream issues (so transient Philter blips
-          # don't restart healthy pods); /readyz returns 503 when the Philter
-          # circuit breaker is open with fallback=block (so k8s sheds traffic
-          # from pods that can't actually serve).
-          livenessProbe:
-            httpGet:
-              path: /livez
-              port: proxy
-              scheme: HTTPS
-            initialDelaySeconds: 10
-            periodSeconds: 10
-            timeoutSeconds: 3
-          readinessProbe:
-            httpGet:
-              path: /readyz
-              port: proxy
-              scheme: HTTPS
-            initialDelaySeconds: 5
-            periodSeconds: 5
-            timeoutSeconds: 3
-          resources:
-            requests:
-              cpu: 100m
-              memory: 128Mi
-            limits:
-              cpu: 1
-              memory: 512Mi
-          volumeMounts:
-            - name: config
-              mountPath: /etc/philter-proxy/config
-              readOnly: true
-            - name: tls
-              mountPath: /etc/philter-proxy/tls
-              readOnly: true
-            - name: tmp
-              mountPath: /tmp
-      volumes:
+      - name: philter-ai-proxy
+        image: philterd/philter-ai-proxy:2.0.0
+        imagePullPolicy: IfNotPresent
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+          readOnlyRootFilesystem: true
+        ports:
+        - name: proxy
+          containerPort: 8080
+          protocol: TCP
+        - name: metrics
+          containerPort: 9090
+          protocol: TCP
+        env:
+        - name: SPRING_CONFIG_ADDITIONAL_LOCATION
+          value: file:/etc/philter-ai-proxy/application.yaml
+        - name: PHILTER_AI_PROXY_ENCRYPTION_KEY
+          valueFrom:
+            secretKeyRef:
+              name: philter-ai-proxy-secrets
+              key: encryption-key
+        - name: PHILTER_AI_PROXY_BOOTSTRAP_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: philter-ai-proxy-secrets
+              key: bootstrap-api-key
+              optional: true
+        - name: PROXY_TLS_DEVSELFSIGNEDCERT
+          value: 'true'
+        startupProbe:
+          failureThreshold: 36
+          httpGet:
+            path: /livez
+            port: proxy
+            scheme: HTTPS
+          periodSeconds: 5
+        livenessProbe:
+          failureThreshold: 3
+          httpGet:
+            path: /livez
+            port: proxy
+            scheme: HTTPS
+          periodSeconds: 10
+          timeoutSeconds: 3
+        readinessProbe:
+          failureThreshold: 3
+          httpGet:
+            path: /readyz
+            port: proxy
+            scheme: HTTPS
+          periodSeconds: 5
+          timeoutSeconds: 3
+        resources:
+          limits:
+            memory: 2Gi
+          requests:
+            cpu: 500m
+            memory: 1536Mi
+        volumeMounts:
         - name: config
-          secret:
-            secretName: philter-ai-proxy-config
-        - name: tls
-          secret:
-            secretName: philter-ai-proxy-tls
+          mountPath: /etc/philter-ai-proxy/application.yaml
+          subPath: application.yaml
+          readOnly: true
+        - name: data
+          mountPath: /var/lib/philter-ai-proxy
         - name: tmp
-          emptyDir: {}
+          mountPath: /tmp
+      volumes:
+      - name: config
+        configMap:
+          name: philter-ai-proxy-config
+      - name: data
+        persistentVolumeClaim:
+          claimName: philter-ai-proxy-data
+      - name: tmp
+        emptyDir: {}

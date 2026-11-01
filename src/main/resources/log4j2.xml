@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Configuration status="WARN">
+    <Appenders>
+        <Console name="Console" target="SYSTEM_OUT">
+            <PatternLayout pattern="%d{ISO8601} %-5level [%t] %c{1.} - %msg%n"/>
+        </Console>
+        <!-- Audit entries are already JSON; written as-is, one per line. -->
+        <Console name="Audit" target="SYSTEM_OUT">
+            <PatternLayout pattern="%msg%n"/>
+        </Console>
+    </Appenders>
+    <Loggers>
+        <Logger name="philter-ai-proxy.audit" level="info" additivity="false">
+            <AppenderRef ref="Audit"/>
+        </Logger>
+        <Logger name="ai.philterd.phileas" level="warn"/>
+        <Root level="info">
+            <AppenderRef ref="Console"/>
+        </Root>
+    </Loggers>
+</Configuration>

@@ -1,45 +1,43 @@
 # Plain Kubernetes manifests
 
-A minimal, copy-pasteable set of manifests for users who don't want to install Helm. For anything beyond the basics - ingress, ServiceMonitor, HPA, mTLS, cert-manager integration - use the Helm chart at `deploy/helm/philter-ai-proxy/` instead.
+Manifests for running Philter AI Proxy without Helm. They are generated from the Helm chart's defaults, so they
+match what the chart deploys with `tls.mode: selfSigned`. For an ingress, a ServiceMonitor, your own certificate,
+mutual TLS, or cert-manager, use the chart in `deploy/helm/philter-ai-proxy/`.
 
-These manifests deploy:
+| File | Contents |
+|---|---|
+| `01-config.yaml` | The proxy's settings (ConfigMap) and the volume claim for its database |
+| `02-deployment.yaml` | One replica, recreated on update, with probes and a read-only root filesystem |
+| `03-service.yaml` | The proxy port (8080) and the metrics port (9090) |
 
-- `Secret` with the proxy's TLS cert/key (placeholder - replace before applying)
-- `Secret` with the proxy config (referenced by the Deployment)
-- `Deployment` (1 replica, with probes and resource requests)
-- `Service` for the proxy port (8080)
-- `Service` for the metrics port (9090)
+The proxy runs as a single replica: it keeps policies, API keys, contexts, and the audit log in a SQLite file on
+the volume, and a second instance on the same file is refused.
 
-## Quickstart
+## Deploy
 
 ```bash
-# 1. Generate a self-signed TLS cert (or use your real cert/key).
-openssl req -x509 -newkey rsa:4096 -keyout tls.key -out tls.crt -days 365 -nodes \
-  -subj "/CN=philter-ai-proxy"
+# The encryption key protects values stored at rest; keep a copy, since the database cannot be read without it.
+# The bootstrap key becomes an admin key on first start.
+kubectl create secret generic philter-ai-proxy-secrets \
+  --from-literal=encryption-key="$(openssl rand -hex 32)" \
+  --from-literal=bootstrap-api-key="$(openssl rand -hex 32)"
 
-# 2. Create the TLS Secret. Update the namespace if not "default".
-kubectl create secret tls philter-ai-proxy-tls --cert=tls.crt --key=tls.key
-
-# 3. Create the Secret holding your Philter API key.
-kubectl create secret generic philter-api-key --from-literal=api-key=<philter-api-key>
-
-# 4. Edit 01-config.yaml - point `philter.endpoint` at your Philter service.
-# 5. Apply.
 kubectl apply -f deploy/k8s/
 
-# 6. Check.
-kubectl get pods -l app=philter-ai-proxy
-kubectl port-forward svc/philter-ai-proxy 8443:8080 &
-curl -k https://localhost:8443/livez
-curl -k https://localhost:8443/readyz
+kubectl port-forward svc/philter-ai-proxy 8080:8080 &
+curl -k https://localhost:8080/readyz
 ```
 
-## Layout
+The proxy serves HTTPS with a self-signed certificate generated at startup, which no client trusts; `-k` skips
+verification. See the [Kubernetes](https://philterd.github.io/philter-ai-proxy/kubernetes/) page for using your own
+certificate, or plain HTTP behind an ingress that terminates TLS.
 
-| File | Purpose |
-|---|---|
-| `01-config.yaml` | Secret holding `config.yaml`. The proxy reads it via `--config /etc/philter-proxy/config/config.yaml`. |
-| `02-deployment.yaml` | Single-replica Deployment with health probes, resource requests, and a read-only root filesystem. |
-| `03-service.yaml` | ClusterIP Services on 8080 (proxy) and 9090 (metrics). |
+## Regenerate
 
-The TLS cert is not in this directory - create it as a separate `kubernetes.io/tls` Secret as shown above.
+After changing the chart:
+
+```bash
+deploy/k8s/generate.sh
+```
+
+CI runs `deploy/k8s/generate.sh --check` and fails when the manifests differ from what the chart renders.

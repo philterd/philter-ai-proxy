@@ -1,0 +1,73 @@
+# Philter AI Proxy settings. Every value can be set by environment variable instead, such as
+# PROXY_STORAGE_SQLITEPATH or SERVER_PORT. See docs/docs/configuration.md.
+
+server:
+  port: 8080
+  # TLS is off unless configured. To serve HTTPS, set a certificate and key in PEM form,
+  # server.ssl.certificate and server.ssl.certificate-private-key, and limit the protocols with
+  # server.ssl.enabled-protocols: TLSv1.3,TLSv1.2. For mutual TLS, also set server.ssl.trust-certificate
+  # (the client CA) and server.ssl.client-auth: need.
+  # Inbound request hardening.
+  max-http-request-header-size: 1MB
+  tomcat:
+    connection-timeout: 10s
+    max-swallow-size: 1MB
+  error:
+    include-message: never
+    include-stacktrace: never
+
+spring:
+  application:
+    name: philter-ai-proxy
+  main:
+    banner-mode: off
+  threads:
+    virtual:
+      enabled: true
+
+management:
+  server:
+    port: 9090
+    # Metrics are plain HTTP for Prometheus, whatever the main port serves. Keep the port off the internet.
+    ssl:
+      enabled: false
+  # OpenTelemetry tracing is off by default. To turn it on, set management.tracing.enabled: true and
+  # management.opentelemetry.tracing.export.otlp.endpoint (such as http://collector:4318/v1/traces).
+  # Each request's trace ID is then recorded in the audit log.
+  tracing:
+    enabled: false
+    sampling:
+      probability: 1.0
+  # Metrics are served for Prometheus at /metrics, not pushed over OTLP.
+  otlp:
+    metrics:
+      export:
+        enabled: false
+  endpoints:
+    web:
+      base-path: /
+      exposure:
+        include: prometheus
+      path-mapping:
+        prometheus: metrics
+
+proxy:
+  storage:
+    sqlite-path: /var/lib/philter-ai-proxy/philter-ai-proxy.db
+  security:
+    # Load balancers and proxies whose X-Forwarded-For is believed for the audit log's client address.
+    trusted-proxies: []
+    # 32 random bytes as 64 hex characters: openssl rand -hex 32
+    encryption-key: ${PHILTER_AI_PROXY_ENCRYPTION_KEY:}
+    # An admin key created on first start while no key exists. At least 32 characters.
+    bootstrap-api-key: ${PHILTER_AI_PROXY_BOOTSTRAP_API_KEY:}
+  models:
+    directory: /opt/philter-ai-proxy/models
+  providers:
+    openai:
+      target: https://api.openai.com
+  defaults:
+    policy: default
+    outbound:
+      enabled: false
+      action: redact

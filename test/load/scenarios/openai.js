@@ -12,7 +12,7 @@
 
 import http from 'k6/http';
 import { check } from 'k6';
-import { PROXY_URL, OPENAI_BODY, DEFAULT_THRESHOLDS, INSECURE_OPTS } from './common.js';
+import { PROXY_URL, OPENAI_BODY, DEFAULT_THRESHOLDS, INSECURE_OPTS, HEADERS } from './common.js';
 
 export const options = {
   scenarios: {
@@ -30,7 +30,7 @@ export default function () {
   const res = http.post(
     `${PROXY_URL}/v1/chat/completions`,
     OPENAI_BODY,
-    { headers: { 'Content-Type': 'application/json' } },
+    { headers: HEADERS },
   );
   check(res, {
     'status is 200': (r) => r.status === 200,

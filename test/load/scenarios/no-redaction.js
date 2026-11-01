@@ -1,11 +1,11 @@
 // Direct-to-stub baseline. NO proxy, NO redaction. Same fixture body and
 // load profile as scenarios/openai.js, so the delta between this and
-// openai.js is precisely the cost of running the proxy + Philter for one
+// openai.js is precisely the cost of running the proxy for one
 // inbound redaction pass.
 
 import http from 'k6/http';
 import { check } from 'k6';
-import { STUB_URL, OPENAI_BODY, DEFAULT_THRESHOLDS, SUMMARY_TREND_STATS } from './common.js';
+import { STUB_URL, OPENAI_BODY, DEFAULT_THRESHOLDS, SUMMARY_TREND_STATS, HEADERS } from './common.js';
 
 export const options = {
   scenarios: {
@@ -23,7 +23,7 @@ export default function () {
   const res = http.post(
     `${STUB_URL}/v1/chat/completions`,
     OPENAI_BODY,
-    { headers: { 'Content-Type': 'application/json' } },
+    { headers: HEADERS },
   );
   check(res, {
     'status is 200': (r) => r.status === 200,
