@@ -153,4 +153,6 @@ config:
       outbound:
         enabled: false
         action: redact
+      # reject: refuse requests carrying images, audio, video, or files, which are not redacted. forward: send them on.
+      media: reject
     routes: []

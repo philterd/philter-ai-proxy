@@ -57,6 +57,24 @@ public final class OllamaDialect implements ProviderDialect {
         return slots;
     }
 
+    @Override
+    public String mediaPart(final String path, final JsonObject body) {
+        if (hasImages(body)) {
+            return "images";
+        }
+        for (final JsonObject message : Json.objects(body, "messages")) {
+            if (hasImages(message)) {
+                return "images";
+            }
+        }
+        return null;
+    }
+
+    private static boolean hasImages(final JsonObject object) {
+        final com.google.gson.JsonArray images = Json.array(object, "images");
+        return images != null && !images.isEmpty();
+    }
+
     private static void addMessage(final TextSlots slots, final JsonObject message) {
         slots.addString(message, "content");
         slots.addString(message, "thinking");

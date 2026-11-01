@@ -64,6 +64,34 @@ public final class BedrockDialect implements ProviderDialect {
         return slots;
     }
 
+    private static final String[] MEDIA_BLOCKS = {"image", "document", "video"};
+
+    @Override
+    public String mediaPart(final String path, final JsonObject body) {
+        for (final JsonObject message : Json.objects(body, "messages")) {
+            for (final JsonObject block : Json.objects(message, "content")) {
+                if (mediaMember(block) != null) {
+                    return mediaMember(block);
+                }
+                for (final JsonObject inner : Json.objects(Json.object(block, "toolResult"), "content")) {
+                    if (mediaMember(inner) != null) {
+                        return mediaMember(inner);
+                    }
+                }
+            }
+        }
+        return null;
+    }
+
+    private static String mediaMember(final JsonObject block) {
+        for (final String member : MEDIA_BLOCKS) {
+            if (Json.present(block, member)) {
+                return member;
+            }
+        }
+        return null;
+    }
+
     private static void addBlock(final TextSlots slots, final JsonObject block, final boolean response) {
         slots.addString(block, "text");
         final JsonObject toolUse = Json.object(block, "toolUse");

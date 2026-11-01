@@ -183,6 +183,13 @@ public class ProxyController {
         }
 
         final Routes.Resolved resolved = Routes.resolve(properties, path, exchange.model, request::getHeader);
+        if (body != null && resolved.media() == ProxyProperties.Media.REJECT) {
+            final String media = dialect.mediaPart(path, body);
+            if (media != null) {
+                throw new ProxyError(400, "invalid_request", "media_not_allowed", "the request contains a '" + media
+                        + "' part; images, audio, video, and files are not redacted, and this proxy is configured to refuse them");
+            }
+        }
         exchange.policy = key.scopes().policy() != null ? key.scopes().policy() : resolved.policy();
         exchange.context = resolved.context();
 

@@ -45,7 +45,7 @@ public record ProxyProperties(
         models = models == null ? new Models(null) : models;
         policyFiles = policyFiles == null ? new PolicyFiles(null, null) : policyFiles;
         providers = providers == null ? new Providers(null, null, null, null, null, null, null, null) : providers;
-        defaults = defaults == null ? new Defaults(null, null, null) : defaults;
+        defaults = defaults == null ? new Defaults(null, null, null, null) : defaults;
         routes = routes == null ? List.of() : List.copyOf(routes);
         limits = limits == null ? new Limits(0, 0) : limits;
         streaming = streaming == null ? new Streaming(0) : streaming;
@@ -200,25 +200,48 @@ public record ProxyProperties(
         }
     }
 
-    /** What applies to a request no route matches. */
-    public record Defaults(String policy, String context, Outbound outbound) {
+    /**
+     * What applies to a request no route matches.
+     * @param media Whether a request carrying images, audio, video, or files is refused (the default) or forwarded.
+     */
+    public record Defaults(String policy, String context, Outbound outbound, Media media) {
+        @org.springframework.boot.context.properties.bind.ConstructorBinding
         public Defaults {
             policy = blank(policy) ? "default" : policy.strip();
             context = blank(context) ? null : context.strip();
             outbound = outbound == null ? Outbound.DISABLED : outbound;
+            media = media == null ? Media.REJECT : media;
+        }
+
+        public Defaults(final String policy, final String context, final Outbound outbound) {
+            this(policy, context, outbound, null);
         }
     }
 
     /**
-     * The first route whose every set condition matches applies. A route with no policy or context uses the
-     * default's.
+     * The first route whose every set condition matches applies. A route with no policy, context, or media
+     * setting uses the default's.
      */
-    public record Route(Match match, String policy, String context, Outbound outbound) {
+    public record Route(Match match, String policy, String context, Outbound outbound, Media media) {
+        @org.springframework.boot.context.properties.bind.ConstructorBinding
         public Route {
             match = match == null ? new Match(null, null, null, null) : match;
             policy = blank(policy) ? null : policy.strip();
             context = blank(context) ? null : context.strip();
         }
+
+        public Route(final Match match, final String policy, final String context, final Outbound outbound) {
+            this(match, policy, context, outbound, null);
+        }
+    }
+
+    /**
+     * What happens to a request carrying images, audio, video, or files, which the proxy does not redact.
+     * {@code REJECT} refuses it with 400 {@code media_not_allowed}; {@code FORWARD} sends it on with the media
+     * unchanged.
+     */
+    public enum Media {
+        REJECT, FORWARD
     }
 
     public record Match(String path, String model, String header, String value) {

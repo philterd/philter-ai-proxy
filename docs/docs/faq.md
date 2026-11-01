@@ -43,7 +43,7 @@ No. The proxy handles text conversations only. It expects a JSON request body an
 
 The proxy does not parse multipart bodies, so image edits and file uploads will not be supported. Audio is the exception and is tracked in [#40](https://github.com/philterd/philter-ai-proxy/issues/40): its body is binary with no inbound text, so it can be forwarded untouched and the transcript scanned on the way back. See [Supported request types](api.md#supported-request-types).
 
-Images, audio, and files embedded in a JSON chat request, such as an `image_url` or `input_audio` content part, are forwarded to the provider, but they are not redacted: the proxy redacts text only, and does not inspect what an image, recording, or file contains. The same applies to images and audio in responses. Remove or redact them before the request reaches the proxy if they can contain sensitive data. See [Images, audio, and files are not redacted](api.md#images-audio-and-files-are-not-redacted).
+The proxy redacts text only, and does not inspect what an image, recording, video, or file contains. By default it refuses a JSON request that carries one, such as an `image_url` or `input_audio` content part, with `400 invalid_request` / `media_not_allowed`. Set `media: forward` on a route (or in `proxy.defaults`) to forward those requests with the media unchanged and unredacted. Images and audio in responses are returned unscanned. Remove or redact media before the request reaches the proxy if it can contain sensitive data. See [Images, audio, and files are not redacted](api.md#images-audio-and-files-are-not-redacted).
 
 ### Is any sensitive data logged?
 

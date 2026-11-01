@@ -8,8 +8,8 @@ metadata:
     app.kubernetes.io/name: philter-ai-proxy
     app.kubernetes.io/instance: philter-ai-proxy
 data:
-  application.yaml: "proxy:\n  defaults:\n    outbound:\n      action: redact\n  \
-    \    enabled: false\n    policy: default\n  routes: []\n"
+  application.yaml: "proxy:\n  defaults:\n    media: reject\n    outbound:\n     \
+    \ action: redact\n      enabled: false\n    policy: default\n  routes: []\n"
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim

@@ -122,7 +122,8 @@ class UnitTests {
         final ProxyProperties p = new ProxyProperties(null, null, null, null, null,
                 new ProxyProperties.Defaults("base", "ctx", null),
                 List.of(new ProxyProperties.Route(new ProxyProperties.Match(null, "gpt-4o", "x-team", "a"), "team-a", null, redact),
-                        new ProxyProperties.Route(new ProxyProperties.Match("/v1/chat/completions", null, null, null), null, "other", null)),
+                        new ProxyProperties.Route(new ProxyProperties.Match("/v1/chat/completions", null, null, null), null, "other", null,
+                                ProxyProperties.Media.FORWARD)),
                 null, null);
         final Map<String, String> headers = Map.of("x-team", "a");
         final Routes.Resolved first = Routes.resolve(p, "/v1/chat/completions", "gpt-4o", headers::get);
@@ -133,9 +134,12 @@ class UnitTests {
         assertEquals("base", second.policy());
         assertEquals("other", second.context());
         assertFalse(second.outbound().enabled());
+        assertEquals(ProxyProperties.Media.REJECT, first.media());
+        assertEquals(ProxyProperties.Media.FORWARD, second.media());
         final Routes.Resolved none = Routes.resolve(p, "/v1/embeddings", "o3", h -> null);
         assertEquals("base", none.policy());
         assertEquals(ProxyProperties.Outbound.DISABLED, none.outbound());
+        assertEquals(ProxyProperties.Media.REJECT, none.media());
     }
 
     @Test

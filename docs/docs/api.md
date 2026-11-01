@@ -26,19 +26,19 @@ All the fields of one request are redacted together, against one policy. Without
 
 ### Images, audio, and files are not redacted
 
-Only text is redacted. Images, audio, and files embedded in a JSON request are forwarded to the provider unchanged and are not inspected, including any text, faces, or spoken words they contain. That covers, for example:
+Only text is redacted. The proxy does not inspect images, audio, video, or files embedded in a JSON request, including any text, faces, or spoken words they contain. By default it refuses a request that carries one with `400 invalid_request` / `media_not_allowed`, and the error message names the part it found. Set `media: forward` in `proxy.defaults` or on a route to forward such requests instead, with the media unchanged. See [Routes](configuration.md#routes).
 
-| Provider | Not redacted |
+| Provider | Parts refused, or forwarded unredacted under `media: forward` |
 |----------|--------------|
-| OpenAI / OpenAI-compatible / Azure OpenAI | `image_url`, `input_audio`, and `file` content parts; Responses API `input_image` and `input_file` items |
-| Anthropic | `image` and `document` content blocks |
-| Gemini / Vertex AI | `inlineData` and `fileData` parts |
-| Bedrock Converse | `image`, `document`, and `video` content blocks |
-| Ollama | `images` |
+| OpenAI / OpenAI-compatible / Azure OpenAI | Chat completions: every content part other than `text` and `refusal`, such as `image_url`, `input_audio`, `file`, or an OpenAI-compatible server's `video_url`. Responses API: `input_image`, `input_file`, `input_audio`, and `computer_screenshot`, in messages and tool outputs. Moderations: image inputs |
+| Anthropic | `image`, `document`, and `container_upload` content blocks, including those in tool results |
+| Gemini / Vertex AI | `inlineData` and `fileData` parts, including those in function responses |
+| Bedrock Converse | `image`, `document`, and `video` content blocks, including those in tool results |
+| Ollama | A non-empty `images` list |
 
-The same holds for responses: response scanning reads response text only, so generated images and audio, and the transcript that accompanies audio output, are returned unscanned.
+The same holds for responses: response scanning reads response text only, so generated images and audio, and the transcript that accompanies audio output, are returned unscanned. `media` applies to requests only.
 
-If images, audio, or files sent to a provider can contain sensitive data, remove or redact them before the request reaches the proxy, or route those requests elsewhere. Multipart uploads (files, audio transcription, image edits) are refused rather than forwarded; see [Supported request types](#supported-request-types).
+If images, audio, or files sent to a provider can contain sensitive data, remove or redact them before the request reaches the proxy, or route those requests elsewhere. Multipart uploads (files, audio transcription, image edits) are refused under either setting; see [Supported request types](#supported-request-types).
 
 ## Supported request types
 
@@ -52,6 +52,7 @@ The proxy accepts a JSON request body. **It does not parse `multipart/form-data`
 | `/v1/images/edits`, `/v1/images/variations` | **Refused.** Not supported, and not planned | `400` `invalid_request` / `unsupported_content_type` |
 | `/v1/files` (uploads) | **Refused.** Not supported, and not planned | `400` `invalid_request` / `unsupported_content_type` |
 | `/v1/audio/transcriptions`, `/v1/audio/translations` | **Refused** today. Support is tracked in [#40](https://github.com/philterd/philter-ai-proxy/issues/40) | `400` `invalid_request` / `unsupported_content_type` |
+| A JSON request carrying images, audio, video, or files | Refused, unless `media` is `forward` for the route | `400` `invalid_request` / `media_not_allowed` |
 | A body that is not a JSON object | Refused | `400` `invalid_request` / `bad_json` |
 
 Route refused calls directly to the provider.
@@ -121,6 +122,7 @@ Every response carries an `X-Request-Id` header, which the audit log records. An
 | 400 | `invalid_request` | `path_not_canonical` | The path is not in canonical form (`..`, empty segments, encoded dots or slashes) |
 | 400 | `invalid_request` | `unsupported_content_type` | The body is `multipart/form-data` |
 | 400 | `invalid_request` | `bad_json` | The body is not a JSON object |
+| 400 | `invalid_request` | `media_not_allowed` | The request carries an image, audio, video, or file part and `media` is `reject`. See [Images, audio, and files are not redacted](#images-audio-and-files-are-not-redacted) |
 | 401 | `unauthorized` | `missing_api_key`, `invalid_api_key` | No proxy key, or an unknown one |
 | 403 | `forbidden` | `scope_denied_role` | The key lacks the `proxy` role |
 | 403 | `forbidden` | `scope_denied_provider`, `scope_denied_model`, `scope_denied_path` | The request is outside the key's scopes |

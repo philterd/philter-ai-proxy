@@ -81,6 +81,7 @@ proxy:
 | `proxy.defaults.context` | none | The context for a request no route matches. See [Contexts](policies.md#contexts). |
 | `proxy.defaults.outbound.enabled` | `false` | Whether responses to requests no route matches are scanned. |
 | `proxy.defaults.outbound.action` | `redact` | `redact`, `block`, or `flag`. See [Actions](api.md#actions). |
+| `proxy.defaults.media` | `reject` | `reject` refuses a request carrying images, audio, video, or files, which the proxy does not redact; `forward` sends it on with the media unchanged. See [Images, audio, and files are not redacted](api.md#images-audio-and-files-are-not-redacted). |
 | `proxy.routes` | none | Routes, in order; see [Routes](#routes). |
 
 ### Limits and streaming
@@ -196,6 +197,7 @@ A route chooses the policy, context, and response scanning for the requests it m
 | `policy` | The policy to apply. Without one, `proxy.defaults.policy`. |
 | `context` | The context to keep replacements in. Without one, `proxy.defaults.context`. |
 | `outbound.enabled`, `outbound.action` | Response scanning for the route. A route without `outbound` does not scan responses. |
+| `media` | `reject` or `forward` for requests carrying images, audio, video, or files. Without one, `proxy.defaults.media`. |
 
 A key created with a `policy` overrides the route's policy. See [Choosing the policy for a request](policies.md#choosing-the-policy-for-a-request).
 
@@ -211,6 +213,11 @@ proxy:
       outbound:
         enabled: true
         action: block
+    - match:
+        model: gpt-4o
+        header: x-team
+        value: vision
+      media: forward
 ```
 
 A header match is only as trustworthy as whoever sets the header. When clients can set it themselves, they can choose their route; bind a policy to their keys instead.

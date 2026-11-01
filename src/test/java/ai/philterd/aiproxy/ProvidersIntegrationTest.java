@@ -105,6 +105,11 @@ class ProvidersIntegrationTest {
             registry.add("proxy.routes[" + i + "].outbound.enabled", () -> "true");
             registry.add("proxy.routes[" + i + "].outbound.action", () -> action);
         }
+        // The provider tests send images to check they are forwarded unchanged; refusal is tested with x-media.
+        registry.add("proxy.defaults.media", () -> "forward");
+        registry.add("proxy.routes[2].match.header", () -> "x-media");
+        registry.add("proxy.routes[2].match.value", () -> "reject");
+        registry.add("proxy.routes[2].media", () -> "reject");
     }
 
     @TestConfiguration
@@ -291,6 +296,52 @@ class ProvidersIntegrationTest {
         final String blocked = text(post("/v1/messages", "{\"model\":\"m\",\"max_tokens\":1,\"stream\":true,\"messages\":[]}", "x-out", "block"));
         assertFalse(blocked.contains("123-"), blocked);
         assertTrue(blocked.contains("event: error") && blocked.contains("outbound_blocked"), blocked);
+    }
+
+    // ---- media
+
+    @Test
+    void mediaIsRefusedForEveryProviderWhenConfigured() throws Exception {
+        final String[][] cases = {
+                {"/v1/chat/completions", "{\"model\":\"gpt-4o\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hi\"},{\"type\":\"image_url\",\"image_url\":{\"url\":\"data:image/png;base64,AAAA\"}}]}]}", "image_url"},
+                {"/v1/chat/completions", "{\"model\":\"gpt-4o\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"input_audio\",\"input_audio\":{\"data\":\"AAAA\",\"format\":\"wav\"}}]}]}", "input_audio"},
+                {"/v1/chat/completions", "{\"model\":\"gpt-4o\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"file\",\"file\":{\"file_id\":\"file-1\"}}]}]}", "file"},
+                {"/local/v1/chat/completions", "{\"model\":\"m\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"video_url\",\"video_url\":{\"url\":\"https://example.com/v.mp4\"}}]}]}", "video_url"},
+                {"/v1/responses", "{\"model\":\"gpt-4o\",\"input\":[{\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"hi\"},{\"type\":\"input_image\",\"image_url\":\"https://example.com/a.png\"}]}]}", "input_image"},
+                {"/v1/responses", "{\"model\":\"gpt-4o\",\"input\":[{\"type\":\"function_call_output\",\"call_id\":\"c\",\"output\":[{\"type\":\"input_file\",\"file_id\":\"file-1\"}]}]}", "input_file"},
+                {"/v1/moderations", "{\"model\":\"omni-moderation-latest\",\"input\":[{\"type\":\"image_url\",\"image_url\":{\"url\":\"https://example.com/a.png\"}}]}", "image_url"},
+                {"/v1/messages", "{\"model\":\"m\",\"max_tokens\":1,\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"image\",\"source\":{\"type\":\"base64\",\"media_type\":\"image/png\",\"data\":\"AAAA\"}}]}]}", "image"},
+                {"/v1/messages", "{\"model\":\"m\",\"max_tokens\":1,\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"tool_result\",\"tool_use_id\":\"t\",\"content\":[{\"type\":\"document\",\"source\":{\"type\":\"text\",\"media_type\":\"text/plain\",\"data\":\"x\"}}]}]}]}", "document"},
+                {"/v1beta/models/gemini-2.5-flash:generateContent", GEMINI_REQUEST, "inlineData"},
+                {"/v1beta/models/gemini-2.5-flash:generateContent", "{\"contents\":[{\"role\":\"user\",\"parts\":[{\"functionResponse\":{\"name\":\"f\",\"response\":{},\"parts\":[{\"fileData\":{\"mimeType\":\"application/pdf\",\"fileUri\":\"gs://b/f.pdf\"}}]}}]}]}", "fileData"},
+                {"/model/anthropic.claude-3-haiku/converse", "{\"messages\":[{\"role\":\"user\",\"content\":[{\"video\":{\"format\":\"mp4\",\"source\":{\"bytes\":\"AAAA\"}}}]}]}", "video"},
+                {"/model/anthropic.claude-3-haiku/converse", "{\"messages\":[{\"role\":\"user\",\"content\":[{\"toolResult\":{\"toolUseId\":\"t\",\"content\":[{\"image\":{\"format\":\"png\",\"source\":{\"bytes\":\"AAAA\"}}}]}}]}]}", "image"},
+                {"/api/chat", "{\"model\":\"llama\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\",\"images\":[\"AAAA\"]}]}", "images"},
+                {"/api/generate", "{\"model\":\"llama\",\"prompt\":\"hi\",\"images\":[\"AAAA\"]}", "images"},
+        };
+        for (final String[] c : cases) {
+            final HttpResponse<byte[]> response = post(c[0], c[1], "x-media", "reject");
+            assertEquals(400, response.statusCode(), c[0] + " " + c[2]);
+            assertTrue(text(response).contains("media_not_allowed"), text(response));
+            assertTrue(text(response).contains("'" + c[2] + "'"), c[2] + ": " + text(response));
+        }
+        assertEquals(0, STUB.requests);
+    }
+
+    @Test
+    void textOnlyRequestsAreNotRefusedAsMedia() throws Exception {
+        final String[][] cases = {
+                {"/v1/chat/completions", "{\"model\":\"gpt-4o\",\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hi\"}]},{\"role\":\"assistant\",\"content\":[{\"type\":\"refusal\",\"refusal\":\"no\"}]}]}"},
+                {"/v1/responses", "{\"model\":\"gpt-4o\",\"input\":[{\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"an input_image\"}]},{\"type\":\"function_call\",\"call_id\":\"c\",\"name\":\"f\",\"arguments\":\"{\\\"type\\\":\\\"input_image\\\"}\"}]}"},
+                {"/v1/messages", "{\"model\":\"m\",\"max_tokens\":1,\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hi\"},{\"type\":\"tool_result\",\"tool_use_id\":\"t\",\"content\":\"ok\"}]}]}"},
+                {"/v1beta/models/gemini-2.5-flash:generateContent", "{\"contents\":[{\"role\":\"user\",\"parts\":[{\"text\":\"hi\"}]}]}"},
+                {"/api/chat", "{\"model\":\"llama\",\"stream\":false,\"messages\":[{\"role\":\"user\",\"content\":\"hi\",\"images\":[]}]}"},
+        };
+        for (final String[] c : cases) {
+            STUB.reset();
+            assertEquals(200, post(c[0], c[1], "x-media", "reject").statusCode(), c[0]);
+            assertEquals(1, STUB.requests, c[0]);
+        }
     }
 
     // ---- Gemini and Vertex AI

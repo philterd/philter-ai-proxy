@@ -59,6 +59,29 @@ public final class AnthropicDialect implements ProviderDialect {
         return slots;
     }
 
+    private static final java.util.Set<String> MEDIA_BLOCKS = java.util.Set.of("image", "document", "container_upload");
+
+    @Override
+    public String mediaPart(final String path, final JsonObject body) {
+        for (final JsonObject message : Json.objects(body, "messages")) {
+            for (final JsonObject block : Json.objects(message, "content")) {
+                final String type = Json.string(block, "type");
+                if (type != null && MEDIA_BLOCKS.contains(type)) {
+                    return type;
+                }
+                if ("tool_result".equals(type)) {
+                    for (final JsonObject inner : Json.objects(block, "content")) {
+                        final String innerType = Json.string(inner, "type");
+                        if (innerType != null && MEDIA_BLOCKS.contains(innerType)) {
+                            return innerType;
+                        }
+                    }
+                }
+            }
+        }
+        return null;
+    }
+
     private static void addBlock(final TextSlots slots, final JsonObject block, final boolean response) {
         final String type = Json.string(block, "type");
         if (type == null) {

@@ -69,6 +69,64 @@ public final class OpenAiDialect implements ProviderDialect {
         };
     }
 
+    /** Chat content part types that carry text. Every other part (image_url, input_audio, file, ...) is media. */
+    private static final java.util.Set<String> CHAT_TEXT_PARTS = java.util.Set.of("text", "input_text", "output_text", "refusal");
+
+    /** Responses API types that carry media, wherever they appear in {@code input}. */
+    private static final java.util.Set<String> RESPONSES_MEDIA = java.util.Set.of("input_image", "input_file", "input_audio", "computer_screenshot");
+
+    @Override
+    public String mediaPart(final String path, final JsonObject body) {
+        return switch (endpoint(path)) {
+            case CHAT -> {
+                for (final JsonObject message : Json.objects(body, "messages")) {
+                    for (final JsonObject part : Json.objects(message, "content")) {
+                        final String type = Json.string(part, "type");
+                        if (type != null && !CHAT_TEXT_PARTS.contains(type)) {
+                            yield type;
+                        }
+                    }
+                }
+                yield null;
+            }
+            case RESPONSES -> findType(body.get("input"), RESPONSES_MEDIA);
+            case MODERATIONS -> {
+                for (final JsonObject input : Json.objects(body, "input")) {
+                    final String type = Json.string(input, "type");
+                    if (type != null && !type.equals("text")) {
+                        yield type;
+                    }
+                }
+                yield null;
+            }
+            default -> null;
+        };
+    }
+
+    /** The first {@code type} in the set found in any object nested in the element, or null. */
+    private static String findType(final JsonElement element, final java.util.Set<String> types) {
+        if (element instanceof JsonObject object) {
+            final String type = Json.string(object, "type");
+            if (type != null && types.contains(type)) {
+                return type;
+            }
+            for (final java.util.Map.Entry<String, JsonElement> member : object.entrySet()) {
+                final String found = findType(member.getValue(), types);
+                if (found != null) {
+                    return found;
+                }
+            }
+        } else if (element instanceof JsonArray array) {
+            for (final JsonElement item : array) {
+                final String found = findType(item, types);
+                if (found != null) {
+                    return found;
+                }
+            }
+        }
+        return null;
+    }
+
     /** The strings in {@code body.member}: a string, or an array of strings. Token-ID arrays are left alone. */
     private static TextSlots strings(final JsonObject body, final String member) {
         final TextSlots slots = new TextSlots();

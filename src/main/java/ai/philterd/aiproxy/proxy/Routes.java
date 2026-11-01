@@ -22,7 +22,7 @@ import java.util.function.UnaryOperator;
 /** Chooses the policy, context, and outbound scanning for a request. */
 public final class Routes {
 
-    public record Resolved(String policy, String context, ProxyProperties.Outbound outbound) {
+    public record Resolved(String policy, String context, ProxyProperties.Outbound outbound, ProxyProperties.Media media) {
     }
 
     private Routes() {
@@ -30,7 +30,8 @@ public final class Routes {
 
     /**
      * The first route whose every set condition matches, else the defaults. A route without a policy or context
-     * uses the default's; a route without outbound settings does not scan responses.
+     * uses the default's; a route without outbound settings does not scan responses; a route without a media
+     * setting uses the default's.
      */
     public static Resolved resolve(final ProxyProperties properties, final String path, final String model,
                                    final UnaryOperator<String> header) {
@@ -49,9 +50,10 @@ public final class Routes {
             }
             return new Resolved(route.policy() == null ? defaults.policy() : route.policy(),
                     route.context() == null ? defaults.context() : route.context(),
-                    route.outbound() == null ? ProxyProperties.Outbound.DISABLED : route.outbound());
+                    route.outbound() == null ? ProxyProperties.Outbound.DISABLED : route.outbound(),
+                    route.media() == null ? defaults.media() : route.media());
         }
-        return new Resolved(defaults.policy(), defaults.context(), defaults.outbound());
+        return new Resolved(defaults.policy(), defaults.context(), defaults.outbound(), defaults.media());
     }
 
 }

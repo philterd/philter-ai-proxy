@@ -30,6 +30,13 @@ public interface ProviderDialect {
     /** The text to redact in a request to the path. */
     TextSlots requestText(String path, JsonObject body);
 
+    /**
+     * The type of the first image, audio, video, or file part in a request to the path, such as
+     * {@code image_url}, or null when it has none. The proxy redacts text only, so these parts are forwarded
+     * uninspected unless the request is refused.
+     */
+    String mediaPart(String path, JsonObject body);
+
     /** The text to scan in a buffered response from the path (an object, or an array of them). */
     TextSlots responseText(String path, JsonElement body);
 

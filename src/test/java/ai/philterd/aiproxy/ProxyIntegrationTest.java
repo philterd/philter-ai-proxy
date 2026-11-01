@@ -104,6 +104,9 @@ class ProxyIntegrationTest {
         registry.add("proxy.routes[4].context", () -> "ctx");
         registry.add("proxy.routes[5].match.model", () -> "no-context-model");
         registry.add("proxy.routes[5].policy", () -> "random-ssn");
+        registry.add("proxy.routes[6].match.header", () -> "x-media");
+        registry.add("proxy.routes[6].match.value", () -> "forward");
+        registry.add("proxy.routes[6].media", () -> "forward");
     }
 
     @AfterAll
@@ -284,7 +287,8 @@ class ProxyIntegrationTest {
                   {"role":"assistant","function_call":{"name":"legacy","arguments":"SSN %1$s"}},
                   {"role":"user","content":"nothing to see"}
                  ]}""".formatted(SSN, EMAIL);
-        final HttpResponse<String> response = chatWithKey(body, "Authorization", "Bearer sk-provider", "Accept-Encoding", "gzip");
+        final HttpResponse<String> response = chatWithKey(body, "Authorization", "Bearer sk-provider", "Accept-Encoding", "gzip",
+                "x-media", "forward");
         assertEquals(200, response.statusCode());
 
         final JsonObject sent = STUB.lastBody.get();
@@ -387,6 +391,36 @@ class ProxyIntegrationTest {
         assertEquals(400, multipart.statusCode());
         final HttpResponse<String> large = chatWithKey("{\"pad\":\"" + "a".repeat(11 * 1024 * 1024) + "\"}");
         assertEquals(413, large.statusCode());
+        assertEquals(0, STUB.requests.get());
+    }
+
+    @Test
+    void refusesMediaByDefault() throws Exception {
+        final String body = """
+                {"model":"gpt-4o","messages":[{"role":"user","content":[{"type":"text","text":"SSN %s"},
+                 {"type":"image_url","image_url":{"url":"https://example.com/a.png"}}]}]}""".formatted(SSN);
+        final HttpResponse<String> response = chatWithKey(body, "X-Request-Id", "media-1");
+        assertEquals(400, response.statusCode());
+        assertEquals("media_not_allowed", errorCode(response));
+        assertTrue(response.body().contains("'image_url'"), response.body());
+        assertFalse(response.body().contains(SSN));
+        assertEquals(0, STUB.requests.get());
+        assertEquals("media_not_allowed", auditEntry("media-1").details().get("error_code").getAsString());
+    }
+
+    @Test
+    void refusesImageEditsAndVariations() throws Exception {
+        final String body = "--x\r\nContent-Disposition: form-data; name=\"prompt\"\r\n\r\nadd a hat\r\n--x--\r\n";
+        for (final String path : new String[]{"/v1/images/edits", "/v1/images/variations"}) {
+            final HttpRequest request = HttpRequest.newBuilder(URI.create("http://localhost:" + port + path))
+                    .header("x-philter-proxy-key", proxyKey)
+                    .header("Content-Type", "multipart/form-data; boundary=x")
+                    .POST(HttpRequest.BodyPublishers.ofString(body))
+                    .build();
+            final HttpResponse<String> response = http.send(request, HttpResponse.BodyHandlers.ofString());
+            assertEquals(400, response.statusCode(), path);
+            assertEquals("unsupported_content_type", errorCode(response), path);
+        }
         assertEquals(0, STUB.requests.get());
     }
 

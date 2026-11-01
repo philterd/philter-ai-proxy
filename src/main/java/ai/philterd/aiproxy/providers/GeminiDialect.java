@@ -59,6 +59,45 @@ public final class GeminiDialect implements ProviderDialect {
         return slots;
     }
 
+    private static final String[] MEDIA_PARTS = {"inlineData", "inline_data", "fileData", "file_data"};
+
+    @Override
+    public String mediaPart(final String path, final JsonObject body) {
+        final java.util.List<JsonObject> contents = new java.util.ArrayList<>(Json.objects(body, "contents"));
+        for (final String member : new String[]{"systemInstruction", "system_instruction", "content"}) {
+            final JsonObject content = Json.object(body, member);
+            if (content != null) {
+                contents.add(content);
+            }
+        }
+        for (final JsonObject content : contents) {
+            final String found = mediaIn(Json.objects(content, "parts"));
+            if (found != null) {
+                return found;
+            }
+        }
+        return null;
+    }
+
+    /** The first media member in the parts, including the parts of a function response. */
+    private static String mediaIn(final java.util.List<JsonObject> parts) {
+        for (final JsonObject part : parts) {
+            for (final String member : MEDIA_PARTS) {
+                if (Json.present(part, member)) {
+                    return member;
+                }
+            }
+            for (final String response : new String[]{"functionResponse", "function_response"}) {
+                final JsonObject functionResponse = Json.object(part, response);
+                final String found = functionResponse == null ? null : mediaIn(Json.objects(functionResponse, "parts"));
+                if (found != null) {
+                    return found;
+                }
+            }
+        }
+        return null;
+    }
+
     private static void addParts(final TextSlots slots, final JsonObject content) {
         for (final JsonObject part : Json.objects(content, "parts")) {
             slots.addString(part, "text");

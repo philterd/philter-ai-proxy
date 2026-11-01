@@ -30,4 +30,4 @@ The proxy does redaction and the audit trail that goes with it. It deliberately 
 
 It also handles **text conversations only**. The proxy accepts JSON request bodies and does not parse `multipart/form-data`, so file uploads, audio, and image edits are rejected with `400 invalid_request` / `unsupported_content_type`. Audio support is tracked in [#40](https://github.com/philterd/philter-ai-proxy/issues/40); image edits and file uploads are not planned. See [Supported request types](api.md#supported-request-types).
 
-Only text is redacted. Images, audio, and files embedded in a JSON request or response (such as image and audio content parts) are forwarded unchanged and are not inspected. See [Images, audio, and files are not redacted](api.md#images-audio-and-files-are-not-redacted).
+Only text is redacted. A JSON request carrying images, audio, video, or files (such as image and audio content parts) is refused by default, or forwarded with the media unchanged and uninspected when `media` is set to `forward`. Media in responses is returned unscanned. See [Images, audio, and files are not redacted](api.md#images-audio-and-files-are-not-redacted).
