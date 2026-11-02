@@ -15,3 +15,6 @@ target/
 
 # Load-test k6 summaries are per-run artifacts.
 test/load/results/*.summary.json
+
+# Jazzer's working corpus. Crashes worth keeping go in src/test/resources/.../ParserFuzzTestInputs.
+.cifuzz-corpus/

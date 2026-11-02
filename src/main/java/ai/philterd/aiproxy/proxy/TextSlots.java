@@ -18,8 +18,6 @@ package ai.philterd.aiproxy.proxy;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
-import com.google.gson.JsonParseException;
-import com.google.gson.JsonParser;
 import com.google.gson.JsonPrimitive;
 
 import java.util.ArrayList;
@@ -124,19 +122,20 @@ public final class TextSlots {
         if (!(object.get(member) instanceof JsonPrimitive p) || !p.isString() || p.getAsString().isEmpty()) {
             return;
         }
-        final JsonElement parsed;
-        try {
-            parsed = JsonParser.parseString(p.getAsString());
-        } catch (final JsonParseException e) {
-            addString(object, member);
-            return;
-        }
-        if (parsed.isJsonPrimitive() || parsed.isJsonNull()) {
+        final JsonElement parsed = StrictJson.parse(p.getAsString());
+        if (parsed == null || parsed.isJsonPrimitive() || parsed.isJsonNull()) {
             addString(object, member);
             return;
         }
         addAllStrings(parsed);
-        finishers.add(() -> object.addProperty(member, parsed.toString()));
+        // Written back only when a value in it changed, so JSON with nothing redacted is forwarded as it came.
+        final String before = parsed.toString();
+        finishers.add(() -> {
+            final String after = parsed.toString();
+            if (!after.equals(before)) {
+                object.addProperty(member, after);
+            }
+        });
     }
 
 }

@@ -1,0 +1,3 @@
+&{"response":"SSN 123-","done":false}
+{"response":"45-6789","thinking":"My SSN is 123-45-6789, mail jane.doe@example.com","done":false}
+{"response":"","done":true,"context":[1]}

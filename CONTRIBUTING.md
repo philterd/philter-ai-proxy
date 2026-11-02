@@ -46,6 +46,16 @@ After changing the Helm chart, regenerate the plain manifests with `deploy/k8s/g
 
 `test/contract/run.sh` runs each provider's official SDK (OpenAI, Azure OpenAI, Anthropic, Google Gen AI, boto3, and Ollama) against the proxy and a provider simulator, with a real Ollama server. It needs Docker. See `test/contract/README.md`.
 
+### Fuzz tests
+
+`ParserFuzzTest` fuzzes, with [Jazzer](https://github.com/CodeIntelligenceTesting/jazzer), the code that reads what clients and providers send: path decoding, the SSE, NDJSON, and AWS event stream framings, each dialect's request and response fields, and each dialect's stream reader. `./mvnw verify` runs only each target's saved inputs. To fuzz one target:
+
+```bash
+JAZZER_FUZZ=1 ./mvnw test -Dtest='ParserFuzzTest#streams' -Djacoco.skip=true -Djazzer.max_duration=5m
+```
+
+The targets are `pathDecoding`, `sse`, `ndjson`, `eventStream`, `eventStreamMessages` (AWS event stream messages with their checksums corrected), `requestFields`, `responseFields`, and `streams`. Each target's seed inputs, realistic requests, responses, and streams for every provider, are in `src/test/resources/ai/philterd/aiproxy/proxy/ParserFuzzTestInputs/<target>/`. In the field and stream targets, the input's first byte chooses the provider endpoint (`TARGETS` in the test). A crash is saved in the same directory; commit it with the fix, so it runs as a regression test. `.github/workflows/fuzz.yml` fuzzes each target for two minutes on every push and pull request.
+
 ### Load tests
 
 See `test/load/README.md`.

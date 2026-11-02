@@ -16,9 +16,8 @@
 package ai.philterd.aiproxy.stream;
 
 import ai.philterd.aiproxy.redaction.RedactionException;
+import ai.philterd.aiproxy.proxy.StrictJson;
 import com.google.gson.JsonElement;
-import com.google.gson.JsonParseException;
-import com.google.gson.JsonParser;
 
 import java.io.ByteArrayOutputStream;
 import java.io.DataInputStream;
@@ -89,14 +88,8 @@ public final class EventStreamFraming implements Framing {
                 return;
             }
             final String payload = new String(message, 12 + headersLength, total - 16 - headersLength, StandardCharsets.UTF_8);
-            final JsonElement parsed;
-            try {
-                parsed = JsonParser.parseString(payload);
-            } catch (final JsonParseException e) {
-                handler.onUnreadable(message);
-                continue;
-            }
-            if (!parsed.isJsonObject()) {
+            final JsonElement parsed = StrictJson.parse(payload);
+            if (parsed == null || !parsed.isJsonObject()) {
                 handler.onUnreadable(message);
                 continue;
             }

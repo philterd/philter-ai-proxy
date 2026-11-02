@@ -16,9 +16,8 @@
 package ai.philterd.aiproxy.stream;
 
 import ai.philterd.aiproxy.redaction.RedactionException;
+import ai.philterd.aiproxy.proxy.StrictJson;
 import com.google.gson.JsonElement;
-import com.google.gson.JsonParseException;
-import com.google.gson.JsonParser;
 
 import java.io.BufferedReader;
 import java.io.IOException;
@@ -39,14 +38,8 @@ public final class NdjsonFraming implements Framing {
                 continue;
             }
             final byte[] raw = (line + "\n").getBytes(StandardCharsets.UTF_8);
-            final JsonElement parsed;
-            try {
-                parsed = JsonParser.parseString(line);
-            } catch (final JsonParseException e) {
-                handler.onUnreadable(raw);
-                continue;
-            }
-            if (parsed.isJsonObject()) {
+            final JsonElement parsed = StrictJson.parse(line);
+            if (parsed != null && parsed.isJsonObject()) {
                 handler.onEvent(new StreamEvent(null, parsed.getAsJsonObject()));
             } else {
                 handler.onUnreadable(raw);

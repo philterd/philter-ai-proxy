@@ -1,0 +1,14 @@
+data: {"id":"c","choices":[{"index":0,"delta":{"role":"assistant","content":""},"finish_reason":null}]}
+
+data: {"id":"c","choices":[{"index":0,"delta":{"content":"My SSN is 123-"},"finish_reason":null}]}
+
+data: {"id":"c","choices":[{"index":0,"delta":{"content":"45-6789."},"finish_reason":null}]}
+
+data: {"id":"c","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"c","function":{"name":"f","arguments":"{\"q\":\"123-45"}}]},"finish_reason":null}]}
+
+data: {"id":"c","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"-6789\"}"}}]},"finish_reason":null}]}
+
+data: {"id":"c","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}
+
+data: [DONE]
+

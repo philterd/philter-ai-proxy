@@ -447,6 +447,12 @@ class ProxyIntegrationTest {
     void refusesBadRequests() throws Exception {
         assertEquals("bad_json", errorCode(chatWithKey("not json")));
         assertEquals("bad_json", errorCode(chatWithKey("[1,2]")));
+        // JSON a lenient parser would accept and the proxy would forward corrected: refused, as the provider would.
+        for (final String lenient : new String[]{"{'model':'gpt-4o','messages':[]}", "{model:\"gpt-4o\",\"messages\":[]}",
+                "{\"model\":\"gpt-4o\",\"messages\":[]} // comment", "{\"model\":\"gpt\u00014o\",\"messages\":[]}".replace("\\u0001", "\u0001"),
+                "{\"model\":\"gpt-4o\",\"messages\":[],}", "{\"model\":\"gpt-4o\",\"messages\":[]}{}"}) {
+            assertEquals("bad_json", errorCode(chatWithKey(lenient)), lenient);
+        }
         final HttpResponse<String> multipart = chat("--x--", "x-philter-proxy-key", proxyKey, "Content-Type", "multipart/form-data; boundary=x");
         assertEquals(400, multipart.statusCode());
         final HttpResponse<String> large = chatWithKey("{\"pad\":\"" + "a".repeat(11 * 1024 * 1024) + "\"}");

@@ -1,0 +1,1 @@
+{"model":"llama3","messages":[{"role":"user","content":"My SSN is 123-45-6789, mail jane.doe@example.com","images":[]},{"role":"assistant","content":"My SSN is 123-45-6789, mail jane.doe@example.com","tool_calls":[{"function":{"name":"f","arguments":{"q":"My SSN is 123-45-6789, mail jane.doe@example.com"}}}]}]}

@@ -1,0 +1,44 @@
+name: Fuzz
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+permissions:
+  contents: read
+
+jobs:
+
+  # Fuzzes each target in ParserFuzzTest for a fixed time with Jazzer. The unit tests in build.yml only run each
+  # target's saved inputs. A crash is written to src/test/resources/.../ParserFuzzTestInputs/<target>/ and uploaded;
+  # commit it with the fix, so it stays as a regression test.
+  jazzer:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [ pathDecoding, sse, ndjson, eventStream, eventStreamMessages, requestFields, responseFields, streams ]
+    steps:
+    - uses: actions/checkout@v7
+
+    - name: Set up Java
+      uses: actions/setup-java@v6
+      with:
+        distribution: temurin
+        java-version: '25'
+        cache: maven
+
+    - name: Fuzz ${{ matrix.target }}
+      env:
+        JAZZER_FUZZ: '1'
+      run: ./mvnw -B test -Dtest='ParserFuzzTest#${{ matrix.target }}' -Djacoco.skip=true -Djazzer.max_duration=120s
+
+    - name: Upload crashes
+      if: failure()
+      uses: actions/upload-artifact@v7
+      with:
+        name: fuzz-crash-${{ matrix.target }}
+        path: src/test/resources/ai/philterd/aiproxy/proxy/ParserFuzzTestInputs/
+        if-no-files-found: ignore

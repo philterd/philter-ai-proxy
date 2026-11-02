@@ -363,9 +363,13 @@ public final class BedrockDialect implements ProviderDialect {
             }
             final JsonObject decoded;
             try {
-                decoded = com.google.gson.JsonParser.parseString(new String(java.util.Base64.getDecoder().decode(bytes),
-                        java.nio.charset.StandardCharsets.UTF_8)).getAsJsonObject();
-            } catch (final RuntimeException e) {
+                final JsonElement element = ai.philterd.aiproxy.proxy.StrictJson.parse(new String(
+                        java.util.Base64.getDecoder().decode(bytes), java.nio.charset.StandardCharsets.UTF_8));
+                if (element == null || !element.isJsonObject()) {
+                    return unreadable(event, flag);
+                }
+                decoded = element.getAsJsonObject();
+            } catch (final IllegalArgumentException e) {
                 return unreadable(event, flag);
             }
             if (Json.string(decoded, "type") == null) {

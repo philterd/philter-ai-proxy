@@ -1,0 +1,4 @@
+$data: {"candidates":[{"index":0,"content":{"role":"model","parts":[{"text":"SSN 123-"}]}}]}
+
+data: {"candidates":[{"index":0,"content":{"role":"model","parts":[{"text":"45-6789"},{"functionCall":{"name":"f","args":{"q":"My SSN is 123-45-6789, mail jane.doe@example.com"}}}]},"finishReason":"STOP","groundingMetadata":{"webSearchQueries":["My SSN is 123-45-6789, mail jane.doe@example.com"],"searchEntryPoint":{"renderedContent":"My SSN is 123-45-6789, mail jane.doe@example.com"},"groundingChunks":[{"web":{"uri":"https://example.com","title":"My SSN is 123-45-6789, mail jane.doe@example.com"}},{"retrievedContext":{"title":"My SSN is 123-45-6789, mail jane.doe@example.com","text":"My SSN is 123-45-6789, mail jane.doe@example.com"}}],"groundingSupports":[{"segment":{"text":"My SSN is 123-45-6789, mail jane.doe@example.com"}}]}}]}
+

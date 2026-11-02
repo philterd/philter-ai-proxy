@@ -24,7 +24,7 @@ The proxy redacts the text-bearing fields of each request before forwarding it. 
 | Bedrock | InvokeModel, Amazon Titan embedding models | `inputText` |
 | Bedrock | InvokeModel, Cohere Embed models | `texts`, and the `text` parts of `inputs` |
 
-The OpenAI family is OpenAI, Azure OpenAI, and the OpenAI-compatible providers. Arguments and other JSON held in a string are parsed, each string in them redacted, and the JSON written back; when they are not JSON, the whole string is redacted as text.
+The OpenAI family is OpenAI, Azure OpenAI, and the OpenAI-compatible providers. Arguments and other JSON held in a string are parsed, each string in them redacted, and the JSON written back when something in it changed; when they are not valid JSON, the whole string is redacted as text.
 
 Not redacted: Anthropic thinking blocks and Bedrock reasoning blocks sent back in a conversation. The providers verify their signatures, so a redacted block would make the request fail. Their text reaches the provider as the client sends it. If thinking can hold sensitive values, have the client drop thinking blocks from the conversation history it sends back.
 
@@ -62,7 +62,7 @@ The proxy accepts a JSON request body. **It does not parse `multipart/form-data`
 | `/v1/files` (uploads) | **Refused.** Not supported, and not planned | `400` `invalid_request` / `unsupported_content_type` |
 | `/v1/audio/transcriptions`, `/v1/audio/translations` | **Refused** today. Support is tracked in [#40](https://github.com/philterd/philter-ai-proxy/issues/40) | `400` `invalid_request` / `unsupported_content_type` |
 | A JSON request carrying images, audio, video, or files | Refused, unless `media` is `forward` for the route | `400` `invalid_request` / `media_not_allowed` |
-| A body that is not a JSON object | Refused | `400` `invalid_request` / `bad_json` |
+| A body that is not a JSON object, or not strictly valid JSON (RFC 8259: no single quotes, unquoted names, comments, trailing commas, or raw control characters in strings) | Refused | `400` `invalid_request` / `bad_json` |
 
 Route refused calls directly to the provider.
 
@@ -116,7 +116,7 @@ Under `redact` and `block`, data that spells out the original text and cannot be
 
 In JSON such as tool-call arguments, strings are redacted, and so are integers of five or more digits, since an SSN, phone number, or account number can be sent as a number. A number the policy changes is replaced by its redacted text, as a string. Shorter integers, decimals, and object keys are not redacted.
 
-A response that cannot be scanned is refused rather than returned unscanned: one that arrives compressed (the proxy asks for an uncompressed response), one that is not JSON, a stream from an endpoint the proxy cannot scan (for example embeddings), a binary response (`audio/`, `image/`, `video/`, `application/octet-stream`) from any endpoint but speech, a redirect or other 1xx or 3xx status, a stream event whose name is not a plain identifier, and a Bedrock stream that carries an exception message get `502` `provider_error` / `response_unscannable`. A response larger than `proxy.limits.max-response-body-bytes`, or a stream with a line, event, or held text over 16 Mi characters, gets `response_too_large`. A provider's error responses (status 400 and above) are returned unchanged and unscanned. In a scanned stream, an event without data (a keep-alive comment, or only `id:` or `retry:` lines) is forwarded as a bare `:` comment, and `id:` and `retry:` lines are dropped from events with data, since their text is not scanned. A stream the provider cuts short is ended with an error event and recorded in the audit log as `stream_interrupted`.
+A response that cannot be scanned is refused rather than returned unscanned: one that arrives compressed (the proxy asks for an uncompressed response), one that is not strictly valid JSON, a stream from an endpoint the proxy cannot scan (for example embeddings), a binary response (`audio/`, `image/`, `video/`, `application/octet-stream`) from any endpoint but speech, a redirect or other 1xx or 3xx status, a stream event whose name is not a plain identifier, and a Bedrock stream that carries an exception message get `502` `provider_error` / `response_unscannable`. A response larger than `proxy.limits.max-response-body-bytes`, or a stream with a line, event, or held text over 16 Mi characters, gets `response_too_large`. A provider's error responses (status 400 and above) are returned unchanged and unscanned. In a scanned stream, an event without data (a keep-alive comment, or only `id:` or `retry:` lines) is forwarded as a bare `:` comment, and `id:` and `retry:` lines are dropped from events with data, since their text is not scanned. A stream the provider cuts short is ended with an error event and recorded in the audit log as `stream_interrupted`.
 
 ### Streamed responses
 
@@ -147,7 +147,7 @@ Every response carries an `X-Request-Id` header, which the audit log records. An
 | 400 | `invalid_request` | `ambiguous_field` | An OpenAI-family or Ollama request names a field the proxy reads (such as a redacted field, `model`, or `name`) in another case, such as `Messages` or `Model`, or with `ſ` or `K` (Kelvin sign), which Go's `encoding/json` folds to `s` and `k`. A server that ignores case would read it in place of the field the proxy checked. Keys inside tool definitions, schemas, `metadata`, and tool arguments are not checked |
 | 400 | `invalid_request` | `unsupported_endpoint` | The endpoint is not one the proxy can redact, or, with response scanning on, scan; and `unsupported-endpoints` is `reject`. See [Supported request types](#supported-request-types) |
 | 400 | `invalid_request` | `unsupported_content_type` | The body is `multipart/form-data` |
-| 400 | `invalid_request` | `bad_json` | The body is not a JSON object |
+| 400 | `invalid_request` | `bad_json` | The body is not a JSON object, or is not strictly valid JSON |
 | 400 | `invalid_request` | `media_not_allowed` | The request carries an image, audio, video, or file part and `media` is `reject`. See [Images, audio, and files are not redacted](#images-audio-and-files-are-not-redacted) |
 | 401 | `unauthorized` | `missing_api_key`, `invalid_api_key` | No proxy key, or an unknown one |
 | 403 | `forbidden` | `scope_denied_role` | The key lacks the `proxy` role |
@@ -157,7 +157,7 @@ Every response carries an `X-Request-Id` header, which the audit log records. An
 | 403 | `forbidden` | `vertex_project_denied` | A Vertex AI path (`/v1/projects/...` or `/v1beta1/projects/...`) names a project or location other than the configured one |
 | 413 | `payload_too_large` | `request_body_too_large` | The body is larger than `proxy.limits.max-request-body-bytes` |
 | 502 | `provider_error` | `response_too_large` | Response scanning is on and the response is larger than the proxy will scan. See [Response Scanning](#response-scanning-outbound) |
-| 500 | `configuration_error` | `policy_not_found`, `policy_invalid` | The route's policy does not exist, or cannot be used (for example, it names a model that is not installed) |
+| 500 | `configuration_error` | `policy_not_found`, `policy_invalid` | The route's policy does not exist, or cannot be used (for example, it names a model that is not installed). A request without a body whose response is not scanned does not use the policy, so it is forwarded |
 | 500 | `redaction_error` | `redaction_failed` | Redaction failed; the request was not forwarded |
 | 500 | `internal_error` | `internal_error` | An unexpected failure in the proxy; the log has the details under the request ID |
 | 502 | `provider_error` | `unreachable` | The provider could not be reached |

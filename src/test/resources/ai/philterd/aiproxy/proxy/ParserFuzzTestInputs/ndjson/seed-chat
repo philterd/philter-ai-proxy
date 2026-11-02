@@ -1,0 +1,3 @@
+{"message":{"role":"assistant","content":"SSN 123-"},"done":false}
+{"message":{"role":"assistant","content":"45-6789","thinking":"My SSN is 123-45-6789, mail jane.doe@example.com"},"done":false}
+{"message":{"role":"assistant","content":"","tool_calls":[{"function":{"name":"f","arguments":{"q":"My SSN is 123-45-6789, mail jane.doe@example.com"}}}]},"done":true}

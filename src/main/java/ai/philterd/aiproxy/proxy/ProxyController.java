@@ -35,7 +35,6 @@ import ai.philterd.aiproxy.stream.StreamScanner;
 import ai.philterd.phileas.model.filtering.Span;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
-import com.google.gson.JsonParseException;
 import com.google.gson.JsonParser;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
@@ -502,13 +501,8 @@ public class ProxyController {
             throw new ProxyError(502, "provider_error", "response_too_large",
                     "the provider's response is larger than the proxy will scan");
         }
-        final JsonElement json;
-        try {
-            json = JsonParser.parseString(new String(raw, StandardCharsets.UTF_8));
-        } catch (final JsonParseException e) {
-            throw unscannable();
-        }
-        if (!json.isJsonObject() && !json.isJsonArray()) {
+        final JsonElement json = StrictJson.parse(new String(raw, StandardCharsets.UTF_8));
+        if (json == null || !json.isJsonObject() && !json.isJsonArray()) {
             throw unscannable();
         }
         final TextSlots slots = dialect.responseText(path, json);
@@ -628,13 +622,9 @@ public class ProxyController {
     }
 
     private static JsonObject parseObject(final byte[] body) throws ProxyError {
-        try {
-            final JsonElement element = JsonParser.parseString(new String(body, StandardCharsets.UTF_8));
-            if (element.isJsonObject()) {
-                return element.getAsJsonObject();
-            }
-        } catch (final JsonParseException e) {
-            // Refused below.
+        final JsonElement element = StrictJson.parse(new String(body, StandardCharsets.UTF_8));
+        if (element != null && element.isJsonObject()) {
+            return element.getAsJsonObject();
         }
         throw new ProxyError(400, "invalid_request", "bad_json", "invalid JSON in request body");
     }

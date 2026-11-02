@@ -1,0 +1,6 @@
+$data: {"choices":[{"index":0,"text":"SSN 123-"}]}
+
+data: {"choices":[{"index":0,"text":"45-6789","finish_reason":"stop"}]}
+
+data: [DONE]
+

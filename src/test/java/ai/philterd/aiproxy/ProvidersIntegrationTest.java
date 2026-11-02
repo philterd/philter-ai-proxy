@@ -307,6 +307,34 @@ class ProvidersIntegrationTest {
     }
 
     @Test
+    void toolArgumentsWithNothingToRedactAreForwardedAsSent() throws Exception {
+        STUB.reply("application/json", "{\"choices\":[]}");
+        // Spacing and an escape a re-serialization would change, and arguments that are not valid JSON.
+        final String spaced = "{ \\\"city\\\": \\\"Paris\\\\u00e9\\\" }";
+        final String malformed = "{city: Paris}";
+        post("/v1/chat/completions", "{\"model\":\"m\",\"messages\":[{\"role\":\"assistant\",\"tool_calls\":["
+                + "{\"id\":\"a\",\"type\":\"function\",\"function\":{\"name\":\"f\",\"arguments\":\"" + spaced + "\"}},"
+                + "{\"id\":\"b\",\"type\":\"function\",\"function\":{\"name\":\"f\",\"arguments\":\"" + malformed + "\"}}]}]}");
+        final var calls = STUB.lastBody().getAsJsonArray("messages").get(0).getAsJsonObject().getAsJsonArray("tool_calls");
+        assertEquals("{ \"city\": \"Paris\\u00e9\" }", calls.get(0).getAsJsonObject().getAsJsonObject("function").get("arguments").getAsString());
+        assertEquals(malformed, calls.get(1).getAsJsonObject().getAsJsonObject("function").get("arguments").getAsString());
+
+        // Malformed arguments that hold a value are redacted as a whole string.
+        post("/v1/chat/completions", "{\"model\":\"m\",\"messages\":[{\"role\":\"assistant\",\"tool_calls\":["
+                + "{\"id\":\"a\",\"type\":\"function\",\"function\":{\"name\":\"f\",\"arguments\":\"{ssn: " + SSN + "}\"}}]}]}");
+        assertNoOriginals(sent());
+    }
+
+    @Test
+    void aResponseThatIsNotStrictJsonIsUnscannable() throws Exception {
+        STUB.reply("application/json", "{'choices':[{'index':0,'message':{'role':'assistant','content':'SSN " + SSN + "'}}]}");
+        final HttpResponse<byte[]> response = post("/v1/chat/completions", "{\"model\":\"m\",\"messages\":[]}", "x-out", "redact");
+        assertEquals(502, response.statusCode());
+        assertTrue(text(response).contains("response_unscannable"), text(response));
+        assertNoOriginals(text(response));
+    }
+
+    @Test
     void adminAndHealthPathsAreNeverProviderTraffic() throws Exception {
         for (final String[] request : new String[][]{{"GET", "/admin/api/nothing"}, {"PATCH", "/admin/api/keys"},
                 {"GET", "/ADMIN/api/keys"}, {"GET", "/%61dmin/api/nothing"}, {"POST", "/readyz"}, {"POST", "/health/"},

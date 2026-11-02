@@ -1,0 +1,11 @@
+: keep-alive
+id: 1
+retry: 10
+
+data: {"a":
+data: 1}
+
+data: [1]
+
+data: x
+

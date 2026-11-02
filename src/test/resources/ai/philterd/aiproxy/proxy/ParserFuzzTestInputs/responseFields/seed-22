@@ -1,0 +1,1 @@
+{"output":{"message":{"role":"assistant","content":[{"text":"My SSN is 123-45-6789, mail jane.doe@example.com"},{"toolUse":{"toolUseId":"t","name":"f","input":{"q":"My SSN is 123-45-6789, mail jane.doe@example.com"}}},{"reasoningContent":{"reasoningText":{"text":"My SSN is 123-45-6789, mail jane.doe@example.com"}}}]}},"trace":{"guardrail":{}},"stopReason":"end_turn"}
