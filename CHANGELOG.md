@@ -2,6 +2,8 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.1.0] - Unreleased
+
 ## [1.0.0] - 2026-11-02
 
 A rewrite in Java that redacts in-process with Phileas, with no Philter backend. 1.0 does not read 0.x configuration files.
