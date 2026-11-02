@@ -1,0 +1,1475 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="User guide for Philter AI Proxy, a self-hosted PII/PHI redaction proxy for LLM providers.">
+      
+      
+        <meta name="author" content="philterd">
+      
+      
+        <link rel="canonical" href="https://philterd.github.io/philter-ai-proxy/configuration/">
+      
+      
+        <link rel="prev" href="../api/">
+      
+      
+        <link rel="next" href="../ai-gateway/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.0">
+    
+    
+      
+        <title>Configuration - Philter AI Proxy</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.57a0d79d.min.css">
+      
+        
+        <link rel="stylesheet" href="../assets/stylesheets/palette.fb2fffe2.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="red" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#configuration" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href=".." title="Philter AI Proxy" class="md-header__button md-logo" aria-label="Philter AI Proxy" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Philter AI Proxy
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Configuration
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+    
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/philterd/philter-ai-proxy" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="Philter AI Proxy" class="md-nav__button md-logo" aria-label="Philter AI Proxy" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    Philter AI Proxy
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/philterd/philter-ai-proxy" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../installation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Installation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../usage/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Usage
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../authentication/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Authentication
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../policies/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Policies
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#how-settings-are-given" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How settings are given
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#example" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Example
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#settings" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Settings
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Settings">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#security-and-storage" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Security and storage
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#policies-and-models" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Policies and models
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#defaults-and-routes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Defaults and routes
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#limits-and-streaming" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Limits and streaming
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#server-and-tls" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Server and TLS
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#providers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Providers
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Providers">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#azure-openai" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Azure OpenAI
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#vertex-ai" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Vertex AI
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#amazon-bedrock" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Amazon Bedrock
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#openai-compatible-providers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        OpenAI-compatible providers
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#routes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Routes
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../ai-gateway/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Using with an AI Gateway
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../monitoring/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Monitoring
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../load-tests/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Load tests
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../faq/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    FAQ
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#how-settings-are-given" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How settings are given
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#example" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Example
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#settings" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Settings
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Settings">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#security-and-storage" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Security and storage
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#policies-and-models" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Policies and models
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#defaults-and-routes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Defaults and routes
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#limits-and-streaming" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Limits and streaming
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#server-and-tls" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Server and TLS
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#providers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Providers
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Providers">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#azure-openai" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Azure OpenAI
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#vertex-ai" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Vertex AI
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#amazon-bedrock" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Amazon Bedrock
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#openai-compatible-providers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        OpenAI-compatible providers
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#routes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Routes
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="configuration">Configuration</h1>
+<h2 id="how-settings-are-given">How settings are given</h2>
+<p>The proxy is a Spring Boot application. Its settings come from, in increasing precedence:</p>
+<ol>
+<li>The defaults in the image's <code>application.yaml</code>.</li>
+<li>A file of your own, loaded with <code>SPRING_CONFIG_ADDITIONAL_LOCATION=file:/path/to/application.yaml</code>.</li>
+<li>Environment variables.</li>
+<li>Command-line options, such as <code>--proxy.defaults.policy=support</code>.</li>
+</ol>
+<p>An environment variable's name is the setting's name in capitals, with <code>.</code> and <code>[]</code> as <code>_</code> and hyphens removed: <code>proxy.providers.openai.target</code> is <code>PROXY_PROVIDERS_OPENAI_TARGET</code>, <code>proxy.security.trusted-proxies</code> is <code>PROXY_SECURITY_TRUSTEDPROXIES</code>, and <code>proxy.routes[0].match.model</code> is <code>PROXY_ROUTES_0_MATCH_MODEL</code>.</p>
+<p>Two settings also have shorter environment variables, used in the examples:</p>
+<table>
+<thead>
+<tr>
+<th>Variable</th>
+<th>Setting</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>PHILTER_AI_PROXY_ENCRYPTION_KEY</code></td>
+<td><code>proxy.security.encryption-key</code></td>
+</tr>
+<tr>
+<td><code>PHILTER_AI_PROXY_BOOTSTRAP_API_KEY</code></td>
+<td><code>proxy.security.bootstrap-api-key</code></td>
+</tr>
+</tbody>
+</table>
+<p><code>--validate-config</code> checks the settings without serving requests; see <a href="../installation/#validating-the-configuration">Installation</a>.</p>
+<h2 id="example">Example</h2>
+<pre><code class="language-yaml">proxy:
+  providers:
+    bedrock:
+      region: us-east-1
+    openai-compatible:
+      vllm:
+        target: http://vllm.internal:8000
+  defaults:
+    policy: default
+  routes:
+    # Scan responses for one model and keep replacements consistent across requests.
+    - match:
+        model: gpt-4o
+      context: support-conversations
+      outbound:
+        enabled: true
+        action: redact
+    # A stricter policy for one team, chosen by a header their gateway sets.
+    - match:
+        header: x-team
+        value: finance
+      policy: finance
+  limits:
+    max-concurrent-requests: 200
+  security:
+    trusted-proxies:
+      - 10.0.0.0/8
+</code></pre>
+<h2 id="settings">Settings</h2>
+<h3 id="security-and-storage">Security and storage</h3>
+<table>
+<thead>
+<tr>
+<th>Setting</th>
+<th>Default</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>proxy.security.encryption-key</code></td>
+<td>(required)</td>
+<td>Encrypts values stored at rest: policies, and each context's replacements. 32 random bytes as 64 hex characters or base64: <code>openssl rand -hex 32</code>. The proxy refuses to start with a key other than the one its database was created with.</td>
+</tr>
+<tr>
+<td><code>proxy.security.bootstrap-api-key</code></td>
+<td></td>
+<td>An admin key created on first start, while no API key exists. At least 32 characters.</td>
+</tr>
+<tr>
+<td><code>proxy.security.proxy-key-header</code></td>
+<td><code>x-philter-proxy-key</code></td>
+<td>The request header that carries the proxy key on provider traffic. It is never forwarded.</td>
+</tr>
+<tr>
+<td><code>proxy.security.trusted-proxies</code></td>
+<td>none</td>
+<td>Load balancers and proxies (IP addresses or CIDR ranges) whose <code>X-Forwarded-For</code> is believed for the client address in the audit log. The header is read from the right, skipping trusted proxies.</td>
+</tr>
+<tr>
+<td><code>proxy.storage.sqlite-path</code></td>
+<td><code>/var/lib/philter-ai-proxy/philter-ai-proxy.db</code></td>
+<td>The SQLite database: policies, API keys, contexts, and the audit log. Created readable only by the proxy's user. One instance per file.</td>
+</tr>
+<tr>
+<td><code>proxy.audit.file</code></td>
+<td></td>
+<td>A file each audit entry is also appended to, as one JSON line. See <a href="../monitoring/#audit-log">Audit log</a>.</td>
+</tr>
+<tr>
+<td><code>proxy.audit.retention-days</code></td>
+<td><code>0</code> (kept)</td>
+<td>Entries older than this are deleted from the database, once a day. Standard output and the audit file are not pruned.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="policies-and-models">Policies and models</h3>
+<table>
+<thead>
+<tr>
+<th>Setting</th>
+<th>Default</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>proxy.models.directory</code></td>
+<td><code>/opt/philter-ai-proxy/models</code></td>
+<td>Local PhEye models, one per subdirectory. See <a href="../policies/#models">Models</a>.</td>
+</tr>
+<tr>
+<td><code>proxy.policy-files.directories</code></td>
+<td>none</td>
+<td>Directories the files a policy names (such as dictionary files) must be inside. With none, a policy may name no file.</td>
+</tr>
+<tr>
+<td><code>proxy.policy-files.allowed-environment-variables</code></td>
+<td>none</td>
+<td>Environment variables a policy may name as <code>env:NAME</code>, such as a key for <code>CRYPTO_REPLACE</code>. With none, a policy may name none.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="defaults-and-routes">Defaults and routes</h3>
+<table>
+<thead>
+<tr>
+<th>Setting</th>
+<th>Default</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>proxy.defaults.policy</code></td>
+<td><code>default</code></td>
+<td>The policy for a request no route matches.</td>
+</tr>
+<tr>
+<td><code>proxy.defaults.context</code></td>
+<td>none</td>
+<td>The context for a request no route matches. See <a href="../policies/#contexts">Contexts</a>.</td>
+</tr>
+<tr>
+<td><code>proxy.defaults.outbound.enabled</code></td>
+<td><code>false</code></td>
+<td>Whether responses to requests no route matches are scanned.</td>
+</tr>
+<tr>
+<td><code>proxy.defaults.outbound.action</code></td>
+<td><code>redact</code></td>
+<td><code>redact</code>, <code>block</code>, or <code>flag</code>. See <a href="../api/#actions">Actions</a>.</td>
+</tr>
+<tr>
+<td><code>proxy.defaults.unsupported-endpoints</code></td>
+<td><code>reject</code></td>
+<td><code>reject</code> refuses a request with a body to an endpoint the proxy cannot redact; when response scanning is on, a request to an endpoint whose response it cannot scan; and any request to such an endpoint of a provider the proxy authenticates to itself (Vertex AI, Bedrock, and Azure OpenAI with Entra ID). <code>forward</code> sends such requests on unredacted, with responses unscanned. See <a href="../api/#supported-request-types">Supported request types</a>.</td>
+</tr>
+<tr>
+<td><code>proxy.defaults.media</code></td>
+<td><code>reject</code></td>
+<td><code>reject</code> refuses a request carrying images, audio, video, or files, which the proxy does not redact; <code>forward</code> sends it on with the media unchanged. See <a href="../api/#images-audio-and-files-are-not-redacted">Images, audio, and files are not redacted</a>.</td>
+</tr>
+<tr>
+<td><code>proxy.routes</code></td>
+<td>none</td>
+<td>Routes, in order; see <a href="#routes">Routes</a>.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="limits-and-streaming">Limits and streaming</h3>
+<table>
+<thead>
+<tr>
+<th>Setting</th>
+<th>Default</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>proxy.limits.max-request-body-bytes</code></td>
+<td><code>10485760</code> (10 MiB)</td>
+<td>Larger request bodies are refused with <code>413</code>.</td>
+</tr>
+<tr>
+<td><code>proxy.limits.max-concurrent-requests</code></td>
+<td><code>200</code></td>
+<td>Requests handled at once; more are refused with <code>503</code> and <code>Retry-After: 1</code>. A negative value removes the limit.</td>
+</tr>
+<tr>
+<td><code>proxy.limits.redaction-timeout-ms</code></td>
+<td><code>30000</code></td>
+<td>How long redacting one request, or scanning one response or stream window, may take. A request that takes longer is refused with <code>503</code> <code>redaction_timeout</code>; a stream is ended with an error.</td>
+</tr>
+<tr>
+<td><code>proxy.limits.max-response-body-bytes</code></td>
+<td><code>33554432</code> (32 MiB)</td>
+<td>The largest response read to scan it. A larger one is refused with <code>502</code> <code>response_too_large</code>. Applies only when response scanning is on; streams are bounded per line, event, and held text instead.</td>
+</tr>
+<tr>
+<td><code>proxy.streaming.holdback-characters</code></td>
+<td><code>256</code></td>
+<td>How much of a streamed response is held back so a value split across fragments is scanned whole. See <a href="../api/#streamed-responses">Streamed responses</a>.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="server-and-tls">Server and TLS</h3>
+<table>
+<thead>
+<tr>
+<th>Setting</th>
+<th>Default</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>server.port</code></td>
+<td><code>8080</code></td>
+<td>Provider traffic and the admin API.</td>
+</tr>
+<tr>
+<td><code>management.server.port</code></td>
+<td><code>9090</code></td>
+<td>Prometheus metrics at <code>/metrics</code>, always plain HTTP.</td>
+</tr>
+<tr>
+<td><code>proxy.tls.dev-self-signed-cert</code></td>
+<td><code>true</code> in the image, <code>false</code> otherwise</td>
+<td>Serve HTTPS with a self-signed certificate generated at startup. Configured key material (<code>server.ssl.certificate</code>, <code>server.ssl.key-store</code>, or <code>server.ssl.bundle</code>) takes precedence.</td>
+</tr>
+<tr>
+<td><code>server.ssl.certificate</code>, <code>server.ssl.certificate-private-key</code></td>
+<td></td>
+<td>Your certificate and key in PEM form, to serve HTTPS.</td>
+</tr>
+<tr>
+<td><code>server.ssl.enabled-protocols</code></td>
+<td></td>
+<td>Limit the TLS versions, such as <code>TLSv1.3,TLSv1.2</code>. Any <code>server.ssl</code> setting turns TLS on, so set it together with a certificate and key.</td>
+</tr>
+<tr>
+<td><code>server.ssl.trust-certificate</code>, <code>server.ssl.client-auth</code></td>
+<td></td>
+<td>For mutual TLS: the PEM file of the CA that signs client certificates, and <code>need</code>.</td>
+</tr>
+<tr>
+<td><code>server.tomcat.connection-timeout</code></td>
+<td><code>10s</code></td>
+<td>How long the proxy waits for a request to start, and between reads of it. Not a deadline for the whole request, so a client that sends a byte at a time can hold a connection; a load balancer in front of the proxy absorbs slow clients.</td>
+</tr>
+<tr>
+<td><code>server.max-http-request-header-size</code></td>
+<td><code>1MB</code></td>
+<td>Larger request headers are refused.</td>
+</tr>
+</tbody>
+</table>
+<p>The proxy does not limit how many TLS handshakes run at once. Put a load balancer or ingress in front of it to absorb a flood of handshakes or connections.</p>
+<p>See <a href="../monitoring/#distributed-tracing">Monitoring</a> for the tracing settings.</p>
+<h2 id="providers">Providers</h2>
+<table>
+<thead>
+<tr>
+<th>Provider</th>
+<th>Setting</th>
+<th>Enabled</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>OpenAI</td>
+<td><code>proxy.providers.openai</code></td>
+<td>By default, at <code>https://api.openai.com</code></td>
+</tr>
+<tr>
+<td>Anthropic</td>
+<td><code>proxy.providers.anthropic</code></td>
+<td>By default, at <code>https://api.anthropic.com</code></td>
+</tr>
+<tr>
+<td>Gemini</td>
+<td><code>proxy.providers.gemini</code></td>
+<td>By default, at <code>https://generativelanguage.googleapis.com</code></td>
+</tr>
+<tr>
+<td>Ollama</td>
+<td><code>proxy.providers.ollama</code></td>
+<td>By default, at <code>http://localhost:11434</code></td>
+</tr>
+<tr>
+<td>Azure OpenAI</td>
+<td><code>proxy.providers.azure</code></td>
+<td>When <code>target</code> is set</td>
+</tr>
+<tr>
+<td>Vertex AI</td>
+<td><code>proxy.providers.vertex</code></td>
+<td>When <code>project</code> is set</td>
+</tr>
+<tr>
+<td>Amazon Bedrock</td>
+<td><code>proxy.providers.bedrock</code></td>
+<td>When <code>region</code> is set</td>
+</tr>
+<tr>
+<td>OpenAI-compatible</td>
+<td><code>proxy.providers.openai-compatible.&lt;name&gt;</code></td>
+<td>For each name with a <code>target</code></td>
+</tr>
+</tbody>
+</table>
+<p>Every provider takes:</p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Default</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>target</code></td>
+<td>as above</td>
+<td>The provider's base URL.</td>
+</tr>
+<tr>
+<td><code>connect-timeout-ms</code></td>
+<td><code>5000</code></td>
+<td>How long to wait to connect.</td>
+</tr>
+<tr>
+<td><code>response-timeout-ms</code></td>
+<td><code>120000</code></td>
+<td>How long to wait for the response to begin. A stream may then run as long as it lasts.</td>
+</tr>
+<tr>
+<td><code>ca-cert</code></td>
+<td></td>
+<td>A PEM file of certificate authorities to trust for this provider instead of the system's, such as for a self-hosted server with a private CA.</td>
+</tr>
+<tr>
+<td><code>disabled</code></td>
+<td><code>false</code></td>
+<td>Turns off a provider that is on by default. A request for it is refused with <code>404</code>.</td>
+</tr>
+</tbody>
+</table>
+<p>Redirects from providers are not followed.</p>
+<h3 id="azure-openai">Azure OpenAI</h3>
+<pre><code class="language-yaml">proxy:
+  providers:
+    azure:
+      target: https://my-resource.openai.azure.com
+      api-version: 2024-10-21
+      entra-id: false
+</code></pre>
+<p><code>api-version</code> is added to requests that do not send one. With <code>entra-id: true</code>, the proxy authenticates with an Entra ID token from the default Azure credential chain (managed identity, workload identity, environment variables, and so on) instead of passing the client's <code>api-key</code> through.</p>
+<h3 id="vertex-ai">Vertex AI</h3>
+<pre><code class="language-yaml">proxy:
+  providers:
+    vertex:
+      project: my-project
+      location: us-central1
+</code></pre>
+<p>Requests go to <code>https://&lt;location&gt;-aiplatform.googleapis.com</code> unless <code>target</code> is set; with neither <code>location</code> nor <code>target</code>, the proxy does not start. A request whose path names another project, or another location when <code>location</code> is set, is refused with <code>403</code> <code>vertex_project_denied</code>, since the proxy's credential is used for it. The proxy authenticates with Google application default credentials (a service account key named in <code>GOOGLE_APPLICATION_CREDENTIALS</code>, workload identity, or the metadata server), replacing any <code>Authorization</code> the client sends.</p>
+<h3 id="amazon-bedrock">Amazon Bedrock</h3>
+<pre><code class="language-yaml">proxy:
+  providers:
+    bedrock:
+      region: us-east-1
+      role-arn: arn:aws:iam::123456789012:role/philter-ai-proxy
+</code></pre>
+<p>Requests go to <code>https://bedrock-runtime.&lt;region&gt;.amazonaws.com</code> unless <code>target</code> is set. The proxy signs each request with SigV4, with credentials from the AWS default chain (environment variables, a profile, web identity, or instance and container roles), assuming <code>role-arn</code> when it is set. Only <code>Content-Type</code>, the client's <code>X-Amzn-Bedrock-*</code> headers (guardrail, trace, latency tier, and service tier settings), and the signature are forwarded; the client's other headers are not.</p>
+<h3 id="openai-compatible-providers">OpenAI-compatible providers</h3>
+<pre><code class="language-yaml">proxy:
+  providers:
+    openai-compatible:
+      vllm:
+        target: http://vllm.internal:8000
+      mistral:
+        target: https://api.mistral.ai
+</code></pre>
+<p>Each is reached at <code>/&lt;name&gt;/v1/...</code> and redacted like OpenAI. A name is lowercase letters, digits, <code>-</code>, and <code>_</code>, and cannot be one the proxy's own paths use (<code>v1</code>, <code>v1beta</code>, <code>api</code>, <code>openai</code>, <code>model</code>, <code>admin</code>).</p>
+<h2 id="routes">Routes</h2>
+<p>A route chooses the policy, context, and response scanning for the requests it matches. The first route whose every set condition matches applies; a request no route matches uses <code>proxy.defaults</code>.</p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>match.path</code></td>
+<td>The request path, exactly, after any OpenAI-compatible prefix is removed.</td>
+</tr>
+<tr>
+<td><code>match.model</code></td>
+<td>The model the request names, exactly.</td>
+</tr>
+<tr>
+<td><code>match.header</code>, <code>match.value</code></td>
+<td>A request header and the value it must have.</td>
+</tr>
+<tr>
+<td><code>policy</code></td>
+<td>The policy to apply. Without one, <code>proxy.defaults.policy</code>.</td>
+</tr>
+<tr>
+<td><code>context</code></td>
+<td>The context to keep replacements in. Without one, <code>proxy.defaults.context</code>.</td>
+</tr>
+<tr>
+<td><code>outbound.enabled</code>, <code>outbound.action</code></td>
+<td>Response scanning for the route. A route without <code>outbound</code> does not scan responses.</td>
+</tr>
+<tr>
+<td><code>media</code></td>
+<td><code>reject</code> or <code>forward</code> for requests carrying images, audio, video, or files. Without one, <code>proxy.defaults.media</code>.</td>
+</tr>
+<tr>
+<td><code>unsupported-endpoints</code></td>
+<td><code>reject</code> or <code>forward</code> for requests the proxy cannot redact or scan. Without one, <code>proxy.defaults.unsupported-endpoints</code>. Pair <code>forward</code> with <code>match.path</code> to allow one endpoint.</td>
+</tr>
+</tbody>
+</table>
+<p>A key created with a <code>policy</code> overrides the route's policy. See <a href="../policies/#choosing-the-policy-for-a-request">Choosing the policy for a request</a>.</p>
+<pre><code class="language-yaml">proxy:
+  routes:
+    - match:
+        path: /v1/embeddings
+      policy: embeddings
+    - match:
+        header: x-scan-responses
+        value: &quot;true&quot;
+      outbound:
+        enabled: true
+        action: block
+    - match:
+        model: gpt-4o
+        header: x-team
+        value: vision
+      media: forward
+    - match:
+        path: /v1/batches
+      unsupported-endpoints: forward
+</code></pre>
+<p>A header match is only as trustworthy as whoever sets the header. When clients can set it themselves, they can choose their route, including one that forwards media or turns off response scanning. A key with a bound policy skips every route that matches on a header: its requests use only routes that match on path and model, then <code>proxy.defaults</code>. Bind a policy to the keys of clients that must not choose.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Copyright 2023-2026 Philterd, LLC
+    </div>
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": [], "search": "../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.c21346df.min.js"></script>
+      
+    
+  </body>
+</html>

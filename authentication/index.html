@@ -1,0 +1,974 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="User guide for Philter AI Proxy, a self-hosted PII/PHI redaction proxy for LLM providers.">
+      
+      
+        <meta name="author" content="philterd">
+      
+      
+        <link rel="canonical" href="https://philterd.github.io/philter-ai-proxy/authentication/">
+      
+      
+        <link rel="prev" href="../usage/">
+      
+      
+        <link rel="next" href="../policies/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.0">
+    
+    
+      
+        <title>Authentication - Philter AI Proxy</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.57a0d79d.min.css">
+      
+        
+        <link rel="stylesheet" href="../assets/stylesheets/palette.fb2fffe2.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="red" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#authentication" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href=".." title="Philter AI Proxy" class="md-header__button md-logo" aria-label="Philter AI Proxy" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Philter AI Proxy
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Authentication
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+    
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/philterd/philter-ai-proxy" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="Philter AI Proxy" class="md-nav__button md-logo" aria-label="Philter AI Proxy" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    Philter AI Proxy
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/philterd/philter-ai-proxy" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../installation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Installation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../usage/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Usage
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Authentication
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Authentication
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#proxy-keys" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Proxy keys
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Proxy keys">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#the-first-key" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The first key
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#unauthenticated-endpoints" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Unauthenticated endpoints
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#provider-credentials" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Provider credentials
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Provider credentials">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#passed-through-credentials" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Passed-through credentials
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-proxys-own-credentials" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The proxy's own credentials
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#keeping-provider-keys-out-of-applications" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Keeping provider keys out of applications
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#mutual-tls" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Mutual TLS
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#recommendations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Recommendations
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../policies/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Policies
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../configuration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../ai-gateway/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Using with an AI Gateway
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../monitoring/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Monitoring
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../load-tests/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Load tests
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../faq/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    FAQ
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#proxy-keys" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Proxy keys
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Proxy keys">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#the-first-key" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The first key
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#unauthenticated-endpoints" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Unauthenticated endpoints
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#provider-credentials" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Provider credentials
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Provider credentials">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#passed-through-credentials" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Passed-through credentials
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-proxys-own-credentials" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The proxy's own credentials
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#keeping-provider-keys-out-of-applications" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Keeping provider keys out of applications
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#mutual-tls" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Mutual TLS
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#recommendations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Recommendations
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="authentication">Authentication</h1>
+<p>Two credentials are involved in every request, and they are separate:</p>
+<ol>
+<li><strong>A proxy key</strong> authenticates the client to the proxy. The proxy checks it, applies the key's roles and scopes, and never forwards it.</li>
+<li><strong>A provider credential</strong> authenticates the request to the LLM provider. Depending on the provider, it is the client's own key, passed through, or a credential the proxy holds for the whole deployment.</li>
+</ol>
+<p>A proxy key never translates into a provider credential. The proxy has no user accounts: API keys are its only identities.</p>
+<h2 id="proxy-keys">Proxy keys</h2>
+<p>Every request to a provider needs a proxy key in the <code>x-philter-proxy-key</code> header (configurable with <code>proxy.security.proxy-key-header</code>). A request without one is refused with <code>401</code> <code>missing_api_key</code>, and one with an unknown key with <code>401</code> <code>invalid_api_key</code>. There is no anonymous access.</p>
+<p>Keys are created and deleted through the <a href="../api/#api-keys">admin API</a>. Each key has:</p>
+<ul>
+<li><strong>A name</strong>, such as <code>support-bot</code>. The audit log records the key's ID with each request, and with each admin action (creating or deleting a key or policy).</li>
+<li><strong>Roles.</strong> <code>proxy</code> allows provider traffic; <code>admin</code> allows the admin API. A key can hold both, but separate keys are easier to scope and to rotate.</li>
+<li><strong>Scopes</strong> (optional) on the providers, models, and paths the key may use. A request outside them is refused with <code>403</code>.</li>
+<li><strong>A bound policy</strong> (optional), applied to every request with the key. A key with a bound policy also skips routes that match on a header, so its client cannot choose a route that forwards media or turns off response scanning. See <a href="../configuration/#routes">Routes</a>.</li>
+</ul>
+<p>Keys created through the admin API are 32 random bytes, prefixed <code>pap_</code>. Every key, including the bootstrap key, is stored only as a SHA-256 hash. A key is shown once, when it is created. A deleted key stops working at once.</p>
+<p>The admin API takes its key as <code>Authorization: Bearer &lt;key&gt;</code>, as Philter's clients send it, and needs the <code>admin</code> role.</p>
+<h3 id="the-first-key">The first key</h3>
+<p>On first start, while no key exists, the proxy creates an <code>admin</code> key from <code>proxy.security.bootstrap-api-key</code> (<code>PHILTER_AI_PROXY_BOOTSTRAP_API_KEY</code>, at least 32 characters). The key's secret is the configured value itself, and the key is named <code>bootstrap</code>. Use it to create the keys your applications use. It is created only while the database holds no key. A shorter value stops the proxy at startup; with no value, the proxy starts without a key and logs a warning.</p>
+<h3 id="unauthenticated-endpoints">Unauthenticated endpoints</h3>
+<p><code>/livez</code>, <code>/readyz</code>, and <code>/health</code> on port 8080 answer without a key, for probes and load balancers. The metrics port (9090) is also unauthenticated; keep it off the internet.</p>
+<h2 id="provider-credentials">Provider credentials</h2>
+<table>
+<thead>
+<tr>
+<th>Provider</th>
+<th>Credential sent to the provider</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>OpenAI, Anthropic, Gemini, Ollama, OpenAI-compatible providers</td>
+<td>The client's own: <code>Authorization</code>, <code>x-api-key</code>, <code>x-goog-api-key</code>, or Gemini's <code>?key=</code>, forwarded unchanged</td>
+</tr>
+<tr>
+<td>Azure OpenAI</td>
+<td>The client's <code>api-key</code> or <code>Authorization</code>, forwarded unchanged. With <code>entra-id: true</code>, the proxy's Entra ID token instead</td>
+</tr>
+<tr>
+<td>Vertex AI</td>
+<td>The proxy's Google application default credentials, replacing any <code>Authorization</code> the client sends</td>
+</tr>
+<tr>
+<td>Amazon Bedrock</td>
+<td>The proxy's AWS credentials (SigV4, optionally assuming <code>role-arn</code>). No client credentials are forwarded; of the client's headers, only <code>X-Amzn-Bedrock-*</code> settings are</td>
+</tr>
+</tbody>
+</table>
+<p>When client headers are forwarded, the proxy removes the proxy key header, every header starting with <code>x-philter-</code>, hop-by-hop headers, <code>Accept-Encoding</code> (so the response can be scanned), <code>X-Request-Id</code>, <code>X-Forwarded-For</code>, <code>X-Forwarded-Host</code>, <code>X-Forwarded-Proto</code>, and <code>Forwarded</code>.</p>
+<h3 id="passed-through-credentials">Passed-through credentials</h3>
+<p>For the providers in the first two rows, the proxy stores no provider secrets. Each application sends its own provider key alongside its proxy key:</p>
+<pre><code class="language-bash">curl -k https://localhost:8080/v1/chat/completions \
+  -H &quot;x-philter-proxy-key: $PROXY_KEY&quot; \
+  -H &quot;Authorization: Bearer $OPENAI_API_KEY&quot; \
+  -H &quot;Content-Type: application/json&quot; \
+  -d '{&quot;model&quot;: &quot;gpt-4o-mini&quot;, &quot;messages&quot;: [{&quot;role&quot;: &quot;user&quot;, &quot;content&quot;: &quot;Hello&quot;}]}'
+</code></pre>
+<p>The proxy key decides whether the request is allowed and which policy applies; the provider key decides which provider account is used. The proxy does not choose or restrict the provider account.</p>
+<h3 id="the-proxys-own-credentials">The proxy's own credentials</h3>
+<p>For Azure with Entra ID, Vertex AI, and Bedrock, the proxy uses one credential, configured for the deployment (see <a href="../configuration/#providers">Providers</a>). Every key that may reach the provider uses it, so a proxy key alone grants access to the provider through that credential. Use the key's <code>providers</code> and <code>models</code> scopes to decide which clients may use it. A Vertex AI path that names a project or location other than the configured one is refused. With <code>unsupported-endpoints: reject</code>, the default, the credential is used only for the endpoints the proxy redacts: a request to any other endpoint of these providers is refused, with or without a body. A route with <code>unsupported-endpoints: forward</code> lets every key that matches it use the credential on that path.</p>
+<h3 id="keeping-provider-keys-out-of-applications">Keeping provider keys out of applications</h3>
+<p>The proxy cannot hold a provider key and add it for a client. If applications must not see provider keys, put an AI gateway that maps its own keys to provider credentials (such as LiteLLM or Portkey virtual keys) behind the proxy. See <a href="../ai-gateway/">Using with an AI Gateway</a>.</p>
+<h2 id="mutual-tls">Mutual TLS</h2>
+<p>The proxy can also require a client certificate signed by a CA you name, in addition to the proxy key. See <a href="../installation/#certificates">Certificates</a>.</p>
+<h2 id="recommendations">Recommendations</h2>
+<ul>
+<li>Give each application its own <code>proxy</code> key, scoped to the providers, models, and paths it uses, so a leaked key reaches only that and can be deleted alone.</li>
+<li>Bind a policy to keys whose clients must not choose their route.</li>
+<li>Keep <code>admin</code> keys with administrators, one per person, so the audit log shows who made a change, and never in an application.</li>
+<li>Scope keys carefully for providers the proxy authenticates to itself (Azure with Entra ID, Vertex AI, Bedrock), since the key is the only credential the client needs.</li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Copyright 2023-2026 Philterd, LLC
+    </div>
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": [], "search": "../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.c21346df.min.js"></script>
+      
+    
+  </body>
+</html>

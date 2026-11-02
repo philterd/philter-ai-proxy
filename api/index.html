@@ -1,0 +1,1546 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="User guide for Philter AI Proxy, a self-hosted PII/PHI redaction proxy for LLM providers.">
+      
+      
+        <meta name="author" content="philterd">
+      
+      
+        <link rel="canonical" href="https://philterd.github.io/philter-ai-proxy/api/">
+      
+      
+        <link rel="prev" href="../policies/">
+      
+      
+        <link rel="next" href="../configuration/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.0">
+    
+    
+      
+        <title>API Reference - Philter AI Proxy</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.57a0d79d.min.css">
+      
+        
+        <link rel="stylesheet" href="../assets/stylesheets/palette.fb2fffe2.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="red" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#api-reference" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href=".." title="Philter AI Proxy" class="md-header__button md-logo" aria-label="Philter AI Proxy" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Philter AI Proxy
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              API Reference
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+    
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/philterd/philter-ai-proxy" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="Philter AI Proxy" class="md-nav__button md-logo" aria-label="Philter AI Proxy" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    Philter AI Proxy
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/philterd/philter-ai-proxy" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../installation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Installation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../usage/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Usage
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../authentication/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Authentication
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../policies/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Policies
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#redacted-fields" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Redacted Fields
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Redacted Fields">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#images-audio-and-files-are-not-redacted" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Images, audio, and files are not redacted
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#supported-request-types" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Supported request types
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Supported request types">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#endpoints-by-provider" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Endpoints by provider
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#response-scanning-outbound" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Response Scanning (Outbound)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Response Scanning (Outbound)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#actions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Actions
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#streamed-responses" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Streamed responses
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#errors" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Errors
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#admin-api" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Admin API
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Admin API">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#policies" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Policies
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#api-keys" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        API keys
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../configuration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../ai-gateway/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Using with an AI Gateway
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../monitoring/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Monitoring
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../load-tests/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Load tests
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../faq/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    FAQ
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#redacted-fields" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Redacted Fields
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Redacted Fields">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#images-audio-and-files-are-not-redacted" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Images, audio, and files are not redacted
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#supported-request-types" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Supported request types
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Supported request types">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#endpoints-by-provider" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Endpoints by provider
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#response-scanning-outbound" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Response Scanning (Outbound)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Response Scanning (Outbound)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#actions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Actions
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#streamed-responses" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Streamed responses
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#errors" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Errors
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#admin-api" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Admin API
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Admin API">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#policies" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Policies
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#api-keys" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        API keys
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="api-reference">API Reference</h1>
+<p>The proxy serves two APIs on port 8080: provider traffic, which it redacts and forwards, and the admin API under <code>/admin</code>, for policies and API keys. See <a href="../usage/">Usage</a> for which path goes to which provider.</p>
+<h2 id="redacted-fields">Redacted Fields</h2>
+<p>The proxy redacts the text-bearing fields of each request before forwarding it. Every other field, such as model names, sampling parameters, tool definitions, and IDs, is forwarded unchanged.</p>
+<table>
+<thead>
+<tr>
+<th>Provider</th>
+<th>Request</th>
+<th>Fields redacted</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>OpenAI family</td>
+<td>Chat completions</td>
+<td>Each message's <code>content</code> (a string, or the <code>text</code> or <code>refusal</code> of each content part), <code>refusal</code>, <code>reasoning_content</code> and <code>reasoning</code> (OpenAI-compatible servers), <code>tool_calls[].function.arguments</code>, and <code>function_call.arguments</code>; <code>prediction.content</code></td>
+</tr>
+<tr>
+<td>OpenAI family</td>
+<td>Responses (<code>/responses</code>)</td>
+<td><code>instructions</code>; <code>prompt.variables</code> (strings and <code>input_text</code> values); <code>input</code> as a string, or each item: message content (a string or <code>input_text</code> and <code>output_text</code> parts), <code>function_call.arguments</code>, <code>function_call_output.output</code> (a string or <code>input_text</code> parts), custom tool call <code>input</code> and output, <code>mcp_call</code> arguments, output, and error, shell call output (including <code>stdout</code> and <code>stderr</code>), and reasoning summaries and text</td>
+</tr>
+<tr>
+<td>OpenAI family</td>
+<td>Embeddings, moderations, speech (<code>/audio/speech</code>)</td>
+<td><code>input</code> (a string or an array of strings; token-ID arrays are left alone)</td>
+</tr>
+<tr>
+<td>OpenAI family</td>
+<td>Image generation, legacy completions</td>
+<td><code>prompt</code> (a string or an array of strings); <code>suffix</code> (legacy completions)</td>
+</tr>
+<tr>
+<td>Anthropic</td>
+<td>Messages (<code>/v1/messages</code>, <code>/v1/messages/count_tokens</code>), and each request's <code>params</code> in a message batch (<code>/v1/messages/batches</code>)</td>
+<td><code>system</code> (a string or text blocks); each message's content (a string, or <code>text</code> blocks, <code>tool_use</code> input, <code>search_result</code> titles and text, and <code>tool_result</code> content as a string, text blocks, or search results); the citations of <code>text</code> blocks sent back from earlier turns (<code>cited_text</code> and the source's title)</td>
+</tr>
+<tr>
+<td>Gemini, Vertex AI</td>
+<td><code>generateContent</code>, <code>streamGenerateContent</code>, <code>countTokens</code></td>
+<td>Each part's <code>text</code>, <code>functionCall.args</code>, <code>functionResponse.response</code>, <code>executableCode.code</code>, and <code>codeExecutionResult.output</code>, in <code>contents</code> and <code>systemInstruction</code>; for <code>countTokens</code>, also in a wrapped <code>generateContentRequest</code>, and every string in Vertex AI's <code>instances</code></td>
+</tr>
+<tr>
+<td>Gemini</td>
+<td><code>embedContent</code>, <code>batchEmbedContents</code></td>
+<td>The parts of <code>content</code>, as above, and <code>title</code>, in the request or in each of <code>requests</code></td>
+</tr>
+<tr>
+<td>Ollama</td>
+<td><code>/api/generate</code></td>
+<td><code>prompt</code>, <code>system</code>, <code>suffix</code>, <code>template</code></td>
+</tr>
+<tr>
+<td>Ollama</td>
+<td><code>/api/chat</code></td>
+<td>Each message's <code>content</code>, <code>thinking</code>, and <code>tool_calls[].function.arguments</code></td>
+</tr>
+<tr>
+<td>Ollama</td>
+<td><code>/api/embed</code>, <code>/api/embeddings</code></td>
+<td><code>input</code> (a string or an array of strings); <code>prompt</code> (<code>/api/embeddings</code>)</td>
+</tr>
+<tr>
+<td>Ollama</td>
+<td><code>/api/show</code></td>
+<td>Nothing: the request names a model, and neither it nor the response carries conversation text. Forwarded unchanged</td>
+</tr>
+<tr>
+<td>Bedrock</td>
+<td>Converse</td>
+<td><code>system[].text</code> and <code>guardContent</code> text; each message's <code>text</code> blocks, <code>guardContent</code> text, <code>toolUse.input</code>, and <code>toolResult.content</code> (text and JSON)</td>
+</tr>
+<tr>
+<td>Bedrock</td>
+<td>InvokeModel, Anthropic Claude models</td>
+<td>The Messages API fields listed for Anthropic above, and <code>prompt</code> for legacy Text Completions models (Claude 2, Instant). With response scanning on, a legacy model's stream cannot be scanned and is ended with <code>response_unscannable</code>, except under <code>flag</code>, where it is forwarded unscanned</td>
+</tr>
+<tr>
+<td>Bedrock</td>
+<td>InvokeModel, Amazon Titan embedding models</td>
+<td><code>inputText</code></td>
+</tr>
+<tr>
+<td>Bedrock</td>
+<td>InvokeModel, Cohere Embed models</td>
+<td><code>texts</code>, and the <code>text</code> parts of <code>inputs</code></td>
+</tr>
+</tbody>
+</table>
+<p>The OpenAI family is OpenAI, Azure OpenAI, and the OpenAI-compatible providers. Arguments and other JSON held in a string are parsed, each string in them redacted, and the JSON written back when something in it changed; when they are not valid JSON, or repeat a name within an object, the whole string is redacted as text.</p>
+<p>Not redacted: Anthropic thinking blocks and Bedrock reasoning blocks sent back in a conversation. The providers verify their signatures, so a redacted block would make the request fail. Their text reaches the provider as the client sends it. If thinking can hold sensitive values, have the client drop thinking blocks from the conversation history it sends back.</p>
+<p><strong>Embeddings are computed from the redacted text.</strong> Search by meaning still works on such embeddings, but a search for a redacted value matches any text where that kind of value was redacted, not that value. When documents and queries are redacted with the same policy and context, and the policy's strategy replaces a value the same way each time, an exact value can still be matched through its replacement. The client's own copy of the text is not changed.</p>
+<p>All the fields of one request are redacted together, against one policy. Without a configured context, a value is replaced the same way in every field of the request and in its response, when the policy's strategy uses <code>"replacementScope": "CONTEXT"</code>. See <a href="../policies/#contexts">Contexts</a>.</p>
+<h3 id="images-audio-and-files-are-not-redacted">Images, audio, and files are not redacted</h3>
+<p>Only text is redacted. The proxy does not inspect images, audio, video, or files embedded in a JSON request, including any text, faces, or spoken words they contain. By default it refuses a request that carries one with <code>400 invalid_request</code> / <code>media_not_allowed</code>, and the error message names the part it found. Set <code>media: forward</code> in <code>proxy.defaults</code> or on a route to forward such requests instead, with the media unchanged. See <a href="../configuration/#routes">Routes</a>.</p>
+<table>
+<thead>
+<tr>
+<th>Provider</th>
+<th>Parts refused, or forwarded unredacted under <code>media: forward</code></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>OpenAI / OpenAI-compatible / Azure OpenAI</td>
+<td>Chat completions: every content part other than <code>text</code>, <code>input_text</code>, <code>output_text</code>, and <code>refusal</code>, such as <code>image_url</code>, <code>input_audio</code>, <code>file</code>, or an OpenAI-compatible server's <code>video_url</code>. Responses API: <code>input_image</code>, <code>input_file</code>, <code>input_audio</code>, and <code>computer_screenshot</code>, in messages, tool outputs, and <code>prompt.variables</code>. Moderations: image inputs</td>
+</tr>
+<tr>
+<td>Anthropic</td>
+<td><code>image</code>, <code>document</code>, and <code>container_upload</code> content blocks, including those in tool results and message batches</td>
+</tr>
+<tr>
+<td>Gemini / Vertex AI</td>
+<td><code>inlineData</code> and <code>fileData</code> parts, including those in function responses, a wrapped <code>generateContentRequest</code>, and embedding requests</td>
+</tr>
+<tr>
+<td>Bedrock Converse</td>
+<td><code>image</code>, <code>document</code>, and <code>video</code> content blocks, including those in tool results, and images in <code>guardContent</code> (system or message)</td>
+</tr>
+<tr>
+<td>Bedrock InvokeModel</td>
+<td>Claude: as for Anthropic. Titan: <code>inputImage</code>. Cohere Embed: a non-empty <code>images</code> list, and <code>inputs</code> parts other than <code>text</code></td>
+</tr>
+<tr>
+<td>Ollama</td>
+<td>A non-empty <code>images</code> list</td>
+</tr>
+</tbody>
+</table>
+<p>The same holds for responses: response scanning reads response text only, so generated images and audio, and the transcript that accompanies audio output, are returned unscanned. <code>media</code> applies to requests only.</p>
+<p>If images, audio, or files sent to a provider can contain sensitive data, remove or redact them before the request reaches the proxy, or route those requests elsewhere. Multipart uploads (files, audio transcription, image edits) are refused under either setting; see <a href="#supported-request-types">Supported request types</a>.</p>
+<h2 id="supported-request-types">Supported request types</h2>
+<p>The proxy accepts a JSON request body. <strong>It does not parse <code>multipart/form-data</code>.</strong> It decodes the request path once (so <code>/v1/chat/completion%73</code> is handled as <code>/v1/chat/completions</code>) and forwards the path as the client encoded it.</p>
+<table>
+<thead>
+<tr>
+<th>Request type</th>
+<th>Behavior</th>
+<th>Error</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>The requests in the table above</td>
+<td>Redacted, then forwarded</td>
+<td>-</td>
+</tr>
+<tr>
+<td>A request without a body, such as <code>GET /v1/models</code></td>
+<td>Forwarded unchanged when response scanning is off for its route. With scanning on, refused unless the endpoint is in the table above, since its response cannot be scanned. To a provider the proxy authenticates to with its own credential (Vertex AI, Bedrock, and Azure OpenAI with Entra ID), refused unless the endpoint is in the table above, since the proxy would otherwise act for any key on any endpoint, such as deleting resources</td>
+<td><code>400</code> <code>invalid_request</code> / <code>unsupported_endpoint</code></td>
+</tr>
+<tr>
+<td>Any other request with a JSON body, such as <code>/v1/batches</code>, <code>/v1/threads/{id}/messages</code>, Anthropic <code>/v1/messages/batches/{id}/cancel</code>, or Vertex AI <code>:predict</code></td>
+<td><strong>Refused</strong> by default: the proxy does not know where the text is, so it cannot redact it. Set <code>unsupported-endpoints: forward</code> on a route to forward it unredacted, with its response unscanned</td>
+<td><code>400</code> <code>invalid_request</code> / <code>unsupported_endpoint</code></td>
+</tr>
+<tr>
+<td><code>/v1/images/edits</code>, <code>/v1/images/variations</code></td>
+<td><strong>Refused.</strong> Not supported, and not planned</td>
+<td><code>400</code> <code>invalid_request</code> / <code>unsupported_content_type</code></td>
+</tr>
+<tr>
+<td><code>/v1/files</code> (uploads)</td>
+<td><strong>Refused.</strong> Not supported, and not planned</td>
+<td><code>400</code> <code>invalid_request</code> / <code>unsupported_content_type</code></td>
+</tr>
+<tr>
+<td><code>/v1/audio/transcriptions</code>, <code>/v1/audio/translations</code></td>
+<td><strong>Refused</strong> today. Support is tracked in <a href="https://github.com/philterd/philter-ai-proxy/issues/40">#40</a></td>
+<td><code>400</code> <code>invalid_request</code> / <code>unsupported_content_type</code></td>
+</tr>
+<tr>
+<td>A JSON request carrying images, audio, video, or files</td>
+<td>Refused, unless <code>media</code> is <code>forward</code> for the route</td>
+<td><code>400</code> <code>invalid_request</code> / <code>media_not_allowed</code></td>
+</tr>
+<tr>
+<td>A body that is not a JSON object, or not strictly valid JSON (RFC 8259: no single quotes, unquoted names, comments, trailing commas, or raw control characters in strings), or that repeats a name within an object</td>
+<td>Refused</td>
+<td><code>400</code> <code>invalid_request</code> / <code>bad_json</code></td>
+</tr>
+</tbody>
+</table>
+<p>Route refused calls directly to the provider.</p>
+<p><strong>Why image edits are not planned.</strong> Redacting the <code>prompt</code> form field would mean parsing a multipart body, rewriting one field, and re-encoding the rest, which the proxy deliberately does not do.</p>
+<p><strong>Why file uploads are not planned.</strong> A batch file is many embedded requests, so redacting one upload would mean redacting every record inside a single synchronous request. Redact the file contents before uploading.</p>
+<p><strong>Why audio can be supported.</strong> Audio needs no multipart parsing: the body is binary with no inbound text to redact, so it can be forwarded untouched and the transcript scanned on the way back.</p>
+<h3 id="endpoints-by-provider">Endpoints by provider</h3>
+<p>A request with a body to an endpoint not listed as redacted is refused with <code>unsupported_endpoint</code> unless <code>unsupported-endpoints</code> is <code>forward</code>. Uploads (<code>multipart/form-data</code>) are refused with <code>unsupported_content_type</code> under either setting. The refused column names common examples, not every endpoint. A request without a body, such as listing models, retrieving a batch's results, or cancelling a batch or response, is forwarded unchanged when response scanning is off, except to the providers the proxy authenticates to itself (Vertex AI, Bedrock, and Azure OpenAI with Entra ID), where it is refused.</p>
+<table>
+<thead>
+<tr>
+<th>Provider</th>
+<th>Redacted</th>
+<th>Refused (examples)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>OpenAI, Azure OpenAI, OpenAI-compatible</td>
+<td>Chat completions, Responses, legacy completions, embeddings, moderations, image generation, speech</td>
+<td>Creating batches, file uploads, Assistants and threads, vector stores, fine-tuning, updating a stored chat completion, audio transcription and translation, image edits and variations. The Realtime API (WebSocket) is not proxied</td>
+</tr>
+<tr>
+<td>Anthropic</td>
+<td>Messages, token counting, creating a message batch</td>
+<td>Files API uploads</td>
+</tr>
+<tr>
+<td>Gemini, Vertex AI</td>
+<td><code>:generateContent</code>, <code>:streamGenerateContent</code>, <code>:countTokens</code>; on Gemini, also <code>:embedContent</code> and <code>:batchEmbedContents</code></td>
+<td>Vertex AI embeddings (<code>:predict</code>, <code>:embedContent</code>) and other <code>:predict</code> calls, cached contents, file uploads. The Live API (WebSocket) is not proxied</td>
+</tr>
+<tr>
+<td>Amazon Bedrock</td>
+<td>Converse and ConverseStream for any model. InvokeModel for Anthropic Claude, Amazon Titan embedding, and Cohere Embed models, and InvokeModelWithResponseStream for Claude, by model ID or cross-region inference profile ID (such as <code>us.anthropic.claude-...</code>)</td>
+<td>InvokeModel for other model families, such as Meta Llama, Mistral, and Amazon Nova; ApplyGuardrail; asynchronous invocation. A model given as an ARN is refused with <code>400</code> under either setting, since its <code>/</code> is sent encoded as <code>%2F</code>, which is not accepted in a path</td>
+</tr>
+<tr>
+<td>Ollama</td>
+<td><code>/api/generate</code>, <code>/api/chat</code>, <code>/api/embed</code>, <code>/api/embeddings</code>; <code>/api/show</code> is forwarded unchanged</td>
+<td><code>/api/create</code>, <code>/api/copy</code>, <code>/api/pull</code>, <code>/api/push</code>, <code>/api/delete</code>. Pull and delete can be forwarded with routes; see <a href="../usage/#model-management">Model management</a></td>
+</tr>
+</tbody>
+</table>
+<h2 id="response-scanning-outbound">Response Scanning (Outbound)</h2>
+<p>By default, provider responses are returned unchanged. When a route turns on outbound scanning (<a href="../configuration/#routes">Configuration</a>), the proxy scans the response with the route's policy before returning it.</p>
+<table>
+<thead>
+<tr>
+<th>Provider</th>
+<th>Response fields scanned</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>OpenAI family, chat</td>
+<td>Each choice's message content (a string or text parts), <code>refusal</code>, <code>reasoning_content</code> and <code>reasoning</code>, and tool-call and function-call arguments</td>
+</tr>
+<tr>
+<td>OpenAI family, Responses</td>
+<td>Each output item, read as the request's <code>input</code> items are: message text and refusals, function and custom tool call arguments and input, tool and MCP call output, and reasoning summaries and text</td>
+</tr>
+<tr>
+<td>OpenAI family, legacy completions</td>
+<td>Each choice's <code>text</code></td>
+</tr>
+<tr>
+<td>OpenAI family, image generation</td>
+<td>Each image's <code>revised_prompt</code></td>
+</tr>
+<tr>
+<td>Anthropic</td>
+<td><code>text</code> blocks and their citations (the quoted <code>cited_text</code> and the source's title), <code>tool_use</code> and <code>server_tool_use</code> input, and <code>thinking</code> text</td>
+</tr>
+<tr>
+<td>Gemini, Vertex AI</td>
+<td>Each candidate's text parts (including thought summaries), function-call arguments, and executable code and its output; and its grounding metadata: the answer passages citations quote, the search and retrieval queries, the rendered search suggestions, the titles and text of grounding sources (web, image, Google Maps places and their review titles, and documents retrieved from Vertex AI Search, a file search store with its string metadata, or the Vertex AI RAG Engine), and the content of <code>generateAnswer</code>'s grounding attributions. Citation offsets into the answer are not adjusted, so once the answer is redacted they are approximate</td>
+</tr>
+<tr>
+<td>Ollama</td>
+<td><code>response</code> and <code>thinking</code>, or the message's <code>content</code>, <code>thinking</code>, and tool-call arguments</td>
+</tr>
+<tr>
+<td>Bedrock, Converse</td>
+<td><code>output.message.content</code>: text, <code>toolUse.input</code>, and reasoning text</td>
+</tr>
+<tr>
+<td>Bedrock, InvokeModel (Claude)</td>
+<td>As for Anthropic, and a legacy model's <code>completion</code></td>
+</tr>
+</tbody>
+</table>
+<p>Redacting an Anthropic thinking block invalidates its signature, so a client that sends the redacted block back in a later request is refused by Anthropic. Bedrock reasoning blocks behave the same way.</p>
+<p>Responses from other OpenAI endpoints, such as embeddings and moderations, from Ollama's embeddings and <code>/api/show</code>, from Gemini and Vertex AI <code>countTokens</code> and Gemini embeddings, and from Bedrock's Titan and Cohere embedding models, carry no generated text and are returned unchanged. Audio, image, and video bodies are returned unchanged.</p>
+<h3 id="actions">Actions</h3>
+<table>
+<thead>
+<tr>
+<th>Action</th>
+<th>Normal response</th>
+<th>Streamed response</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>redact</code> (default)</td>
+<td>Values found are replaced, and the response returned</td>
+<td>Values found are replaced as the text is released</td>
+</tr>
+<tr>
+<td><code>block</code></td>
+<td><code>403</code> <code>pii_blocked</code> / <code>outbound_blocked</code> instead of the response</td>
+<td>The stream ends with an error event before the text containing the value is sent</td>
+</tr>
+<tr>
+<td><code>flag</code></td>
+<td>Returned unchanged; the values found are counted in the audit log and logged as a warning</td>
+<td>Released unchanged; the values found are counted in the audit log</td>
+</tr>
+</tbody>
+</table>
+<p>Under <code>redact</code> and <code>block</code>, data that spells out the original text and cannot be redacted to match is removed: OpenAI <code>logprobs</code> (set to <code>null</code>, or an empty array in the Responses API), Gemini <code>logprobsResult</code> and the search entry point's <code>sdkBlob</code> (the search terms, base64-encoded), Ollama <code>logprobs</code> and <code>context</code> (the conversation's token IDs), and Bedrock guardrail traces (<code>trace</code> in Converse, <code>amazon-bedrock-trace</code> in InvokeModel), which can quote the text a guardrail matched.</p>
+<p>In JSON such as tool-call arguments, strings are redacted, and so are integers of five or more digits, since an SSN, phone number, or account number can be sent as a number. A number the policy changes is replaced by its redacted text, as a string. Shorter integers, decimals, and object keys are not redacted.</p>
+<p>A response that cannot be scanned is refused rather than returned unscanned: one that arrives compressed (the proxy asks for an uncompressed response), one that is not strictly valid JSON or repeats a name within an object, a stream from an endpoint the proxy cannot scan (for example embeddings), a binary response (<code>audio/</code>, <code>image/</code>, <code>video/</code>, <code>application/octet-stream</code>) from any endpoint but speech, a redirect or other 1xx or 3xx status, a stream event whose name is not a plain identifier, and a Bedrock stream that carries an exception message get <code>502</code> <code>provider_error</code> / <code>response_unscannable</code>. A response larger than <code>proxy.limits.max-response-body-bytes</code>, or a stream with a line, event, or held text over 16 Mi characters, gets <code>response_too_large</code>. A provider's error responses (status 400 and above) are returned unchanged and unscanned. In a scanned stream, an event without data (a keep-alive comment, or only <code>id:</code> or <code>retry:</code> lines) is forwarded as a bare <code>:</code> comment, and <code>id:</code> and <code>retry:</code> lines are dropped from events with data, since their text is not scanned. A stream the provider cuts short is ended with an error event and recorded in the audit log as <code>stream_interrupted</code>.</p>
+<h3 id="streamed-responses">Streamed responses</h3>
+<p>The proxy scans a stream as it arrives instead of forwarding each fragment at once:</p>
+<ul>
+<li>Text is held back. Once twice the holdback has accumulated (<code>proxy.streaming.holdback-characters</code>, default 256), the held text is scanned and all but the last holdback characters are released, cut at whitespace and never inside a detected value. A value split across fragments is scanned whole as long as it is shorter than the holdback.</li>
+<li>What is left is released when its part of the response finishes (a choice, a content block, a candidate) and when the stream ends.</li>
+<li>Tool-call arguments are held whole until their part finishes, then scanned and sent in one fragment. The fragment that opens a tool call (its ID and name) is sent at once.</li>
+<li>Keep-alive comments and pings are forwarded at once.</li>
+<li>Released text is sent in events shaped like the provider's own. In the Responses API, a released delta repeats the <code>sequence_number</code> of the delta it was copied from.</li>
+<li>Under <code>block</code>, the stream has already started with <code>200</code>, so a detection ends it with an error event in the stream's own format, such as <code>data: {"error": {"type": "pii_blocked", "code": "outbound_blocked", ...}}</code>. A Bedrock stream is ended with an AWS event stream error message (<code>:message-type error</code>, with the code in <code>:error-code</code>), which AWS SDKs raise. A stream holding data that is not a valid event is ended the same way, with <code>response_unscannable</code>, except under <code>flag</code>. A stream is also ended this way with <code>response_too_large</code>, or with <code>redaction_failed</code> when scanning fails.</li>
+</ul>
+<p>Holding text back delays each fragment by up to two holdbacks of text. A smaller holdback releases text sooner and catches only shorter values split across fragments.</p>
+<h2 id="errors">Errors</h2>
+<p>The proxy's own errors on provider traffic use the shape OpenAI-compatible clients parse. <code>type</code> and <code>code</code> are stable; <code>message</code> may change.</p>
+<pre><code class="language-json">{&quot;error&quot;: {&quot;message&quot;: &quot;missing API key&quot;, &quot;type&quot;: &quot;unauthorized&quot;, &quot;code&quot;: &quot;missing_api_key&quot;, &quot;request_id&quot;: &quot;6f1c...&quot;}}
+</code></pre>
+<p>Every response carries an <code>X-Request-Id</code> header, which the audit log records. An inbound <code>X-Request-Id</code> of at most 128 printable ASCII characters is kept; any other is replaced with a new ID.</p>
+<table>
+<thead>
+<tr>
+<th>Status</th>
+<th><code>type</code></th>
+<th><code>code</code></th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>400</td>
+<td><code>invalid_request</code></td>
+<td><code>path_not_canonical</code></td>
+<td>The path is not in canonical form once decoded (<code>..</code>, empty segments), or has an escape that decodes to invalid UTF-8, a control character, or one of <code>%</code>, <code>?</code>, <code>#</code>. A malformed escape or an encoded <code>/</code> or <code>\</code> (<code>%2F</code>, <code>%5C</code>) is refused with a plain <code>400</code> from the web server, without this body</td>
+</tr>
+<tr>
+<td>400</td>
+<td><code>invalid_request</code></td>
+<td><code>ambiguous_field</code></td>
+<td>An OpenAI-family or Ollama request names a field the proxy reads (such as a redacted field, <code>model</code>, or <code>name</code>) in another case, such as <code>Messages</code> or <code>Model</code>, or with <code>ſ</code> or <code>K</code> (Kelvin sign), which Go's <code>encoding/json</code> folds to <code>s</code> and <code>k</code>. A server that ignores case would read it in place of the field the proxy checked. Keys inside tool definitions, schemas, <code>metadata</code>, and tool arguments are not checked</td>
+</tr>
+<tr>
+<td>400</td>
+<td><code>invalid_request</code></td>
+<td><code>unsupported_endpoint</code></td>
+<td>The endpoint is not one the proxy can redact, or, with response scanning on, scan; and <code>unsupported-endpoints</code> is <code>reject</code>. See <a href="#supported-request-types">Supported request types</a></td>
+</tr>
+<tr>
+<td>400</td>
+<td><code>invalid_request</code></td>
+<td><code>unsupported_content_type</code></td>
+<td>The body is <code>multipart/form-data</code></td>
+</tr>
+<tr>
+<td>400</td>
+<td><code>invalid_request</code></td>
+<td><code>bad_json</code></td>
+<td>The body is not a JSON object, is not strictly valid JSON, or repeats a name within an object</td>
+</tr>
+<tr>
+<td>400</td>
+<td><code>invalid_request</code></td>
+<td><code>media_not_allowed</code></td>
+<td>The request carries an image, audio, video, or file part and <code>media</code> is <code>reject</code>. See <a href="#images-audio-and-files-are-not-redacted">Images, audio, and files are not redacted</a></td>
+</tr>
+<tr>
+<td>401</td>
+<td><code>unauthorized</code></td>
+<td><code>missing_api_key</code>, <code>invalid_api_key</code></td>
+<td>No proxy key, or an unknown one</td>
+</tr>
+<tr>
+<td>403</td>
+<td><code>forbidden</code></td>
+<td><code>scope_denied_role</code></td>
+<td>The key lacks the <code>proxy</code> role</td>
+</tr>
+<tr>
+<td>403</td>
+<td><code>forbidden</code></td>
+<td><code>scope_denied_provider</code>, <code>scope_denied_model</code>, <code>scope_denied_path</code></td>
+<td>The request is outside the key's scopes</td>
+</tr>
+<tr>
+<td>403</td>
+<td><code>pii_blocked</code></td>
+<td><code>outbound_blocked</code></td>
+<td>Response scanning under <code>block</code> found a value</td>
+</tr>
+<tr>
+<td>404</td>
+<td><code>not_found</code></td>
+<td><code>azure_disabled</code>, <code>vertex_disabled</code>, <code>bedrock_disabled</code>, ...</td>
+<td>The path's provider is not configured</td>
+</tr>
+<tr>
+<td>403</td>
+<td><code>forbidden</code></td>
+<td><code>vertex_project_denied</code></td>
+<td>A Vertex AI path (<code>/v1/projects/...</code> or <code>/v1beta1/projects/...</code>) names a project or location other than the configured one</td>
+</tr>
+<tr>
+<td>413</td>
+<td><code>payload_too_large</code></td>
+<td><code>request_body_too_large</code></td>
+<td>The body is larger than <code>proxy.limits.max-request-body-bytes</code></td>
+</tr>
+<tr>
+<td>502</td>
+<td><code>provider_error</code></td>
+<td><code>response_too_large</code></td>
+<td>Response scanning is on and the response is larger than the proxy will scan. See <a href="#response-scanning-outbound">Response Scanning</a></td>
+</tr>
+<tr>
+<td>500</td>
+<td><code>configuration_error</code></td>
+<td><code>policy_not_found</code>, <code>policy_invalid</code></td>
+<td>The route's policy does not exist, or cannot be used (for example, it names a model that is not installed). A request without a body whose response is not scanned does not use the policy, so it is forwarded</td>
+</tr>
+<tr>
+<td>500</td>
+<td><code>redaction_error</code></td>
+<td><code>redaction_failed</code></td>
+<td>Redaction failed; the request was not forwarded</td>
+</tr>
+<tr>
+<td>500</td>
+<td><code>internal_error</code></td>
+<td><code>internal_error</code></td>
+<td>An unexpected failure in the proxy; the log has the details under the request ID</td>
+</tr>
+<tr>
+<td>502</td>
+<td><code>provider_error</code></td>
+<td><code>unreachable</code></td>
+<td>The provider could not be reached</td>
+</tr>
+<tr>
+<td>502</td>
+<td><code>provider_error</code></td>
+<td><code>&lt;provider&gt;_auth_failed</code></td>
+<td>The proxy could not get its own credentials for Bedrock, Vertex AI, or Azure (Entra ID)</td>
+</tr>
+<tr>
+<td>502</td>
+<td><code>provider_error</code></td>
+<td><code>response_unscannable</code></td>
+<td>Response scanning could not read the response</td>
+</tr>
+<tr>
+<td>503</td>
+<td><code>redaction_error</code></td>
+<td><code>redaction_timeout</code></td>
+<td>Redaction took longer than <code>proxy.limits.redaction-timeout-ms</code></td>
+</tr>
+<tr>
+<td>503</td>
+<td><code>capacity</code></td>
+<td><code>concurrency_exceeded</code></td>
+<td><code>proxy.limits.max-concurrent-requests</code> was reached; retry after <code>Retry-After</code></td>
+</tr>
+</tbody>
+</table>
+<p>When redaction fails, the request is not forwarded.</p>
+<p>For requests routed to Bedrock, the error code is also sent in the <code>x-amzn-ErrorType</code> header, and the body carries a top-level <code>message</code> (<code>"&lt;code&gt;: &lt;message&gt;"</code>), so AWS SDKs report them.</p>
+<h2 id="admin-api">Admin API</h2>
+<p>The admin API manages policies and API keys. Every call needs a key with the <code>admin</code> role as <code>Authorization: Bearer &lt;key&gt;</code>; the bootstrap key has it. Errors use the shape of Philter's API:</p>
+<pre><code class="language-json">{&quot;message&quot;: &quot;The policy changed since it was read. Read it again and retry.&quot;, &quot;reason&quot;: &quot;policy_changed&quot;}
+</code></pre>
+<p><code>reason</code> is stable; <code>field</code> names the invalid parameter, field, or header (<code>If-Match</code>) when there is one. Reasons: <code>invalid_request</code> (400), <code>invalid_credentials</code> (401), <code>missing_scope</code> (403, the key lacks the <code>admin</code> role), <code>not_found</code> (404), <code>policy_exists</code>, <code>policy_changed</code>, <code>policy_default</code>, and <code>self_action_refused</code> (409), and <code>internal_error</code> (500). Every response carries an <code>X-Request-Id</code> header, recorded with the audit events the call causes.</p>
+<p>A request with a body needs <code>Content-Type: application/json</code>. A request under <code>/admin</code>, or to <code>/livez</code>, <code>/readyz</code>, or <code>/health</code>, that no endpoint accepts (an unknown path, or the wrong method or content type) is answered <code>404</code> <code>not_found</code> and never forwarded to a provider.</p>
+<h3 id="policies">Policies</h3>
+<p>The policy endpoints have the paths and bodies of <a href="https://philterd.github.io/philter/api_and_sdks/api/policies_api/">Philter's policy API</a>, under <code>/admin</code>. A client that takes a Philter base URL, such as <code>philter-sdk-java</code>, can use <code>https://&lt;proxy&gt;/admin</code>. Bodies are native Phileas policy JSON; see <a href="../policies/">Policies</a>.</p>
+<table>
+<thead>
+<tr>
+<th>Method and path</th>
+<th>Does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>GET /admin/api/policies?offset=0&amp;limit=25</code></td>
+<td>Lists policies by name: <code>{"policies": [{"name", "revision", "description", "createdAt", "updatedAt"}], "total"}</code>. <code>limit</code> is 1 to 500.</td>
+</tr>
+<tr>
+<td><code>POST /admin/api/policies?name=&lt;name&gt;</code></td>
+<td>Creates a policy. <code>201</code>, with an <code>ETag</code>. <code>409</code> <code>policy_exists</code> when the name is taken.</td>
+</tr>
+<tr>
+<td><code>GET /admin/api/policies/&lt;name&gt;</code></td>
+<td>The policy JSON, with an <code>ETag</code>.</td>
+</tr>
+<tr>
+<td><code>PUT /admin/api/policies/&lt;name&gt;</code></td>
+<td>Replaces the policy and increments its revision. <code>200</code>, with the new <code>ETag</code>; <code>404</code> when the policy does not exist. With <code>If-Match: &lt;ETag&gt;</code>, the write happens only if the policy has not changed since that read, else <code>409</code> <code>policy_changed</code>. Without <code>If-Match</code>, or with <code>*</code>, the write is unconditional.</td>
+</tr>
+<tr>
+<td><code>DELETE /admin/api/policies/&lt;name&gt;</code></td>
+<td>Deletes the policy. <code>204</code>. The <code>default</code> policy cannot be deleted (<code>409</code> <code>policy_default</code>).</td>
+</tr>
+</tbody>
+</table>
+<p>A policy is checked when it is saved and again before it is used, and refused with <code>400</code> and the reason when it is not valid or names something the deployment does not allow. A name cannot contain <code>/</code>, <code>\</code>, <code>;</code>, <code>%</code>, or control characters, cannot be <code>.</code> or <code>..</code>, and is at most 256 characters.</p>
+<h3 id="api-keys">API keys</h3>
+<table>
+<thead>
+<tr>
+<th>Method and path</th>
+<th>Does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>POST /admin/api/keys</code></td>
+<td>Creates a key. <code>201</code>, with the key's fields and the key itself in <code>key</code>, shown only this once.</td>
+</tr>
+<tr>
+<td><code>GET /admin/api/keys</code></td>
+<td>Lists keys, without their secrets: <code>{"keys": [{"id", "name", "createdAt", "roles", "providers", "models", "paths", "policy"}], "total"}</code>. <code>policy</code> is present only when one is bound.</td>
+</tr>
+<tr>
+<td><code>DELETE /admin/api/keys/&lt;id&gt;</code></td>
+<td>Deletes a key. <code>204</code>; <code>404</code> when there is no such key. A key cannot delete itself (<code>409</code> <code>self_action_refused</code>).</td>
+</tr>
+</tbody>
+</table>
+<p>The create body:</p>
+<pre><code class="language-json">{
+  &quot;name&quot;: &quot;support-bot&quot;,
+  &quot;roles&quot;: [&quot;proxy&quot;],
+  &quot;providers&quot;: [&quot;openai&quot;, &quot;anthropic&quot;],
+  &quot;models&quot;: [&quot;gpt-4o*&quot;, &quot;claude-*&quot;],
+  &quot;paths&quot;: [&quot;/v1/chat/completions&quot;, &quot;/v1/messages&quot;],
+  &quot;policy&quot;: &quot;support&quot;
+}
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>name</code></td>
+<td>A label for the key, at most 256 characters. Required.</td>
+</tr>
+<tr>
+<td><code>roles</code></td>
+<td><code>admin</code> (the admin API), <code>proxy</code> (provider traffic), or both. Required.</td>
+</tr>
+<tr>
+<td><code>providers</code></td>
+<td>Providers the key may reach. Empty: any. An entry ending in <code>*</code> matches by prefix.</td>
+</tr>
+<tr>
+<td><code>models</code></td>
+<td>Models the key may request. Empty: any. An entry ending in <code>*</code> matches by prefix. A request that names no model is refused when this is set, and so is one whose body names models other than its own: an Anthropic message batch whose requests name different models, or a Gemini <code>countTokens</code> or <code>batchEmbedContents</code> request naming a model other than the one in its path.</td>
+</tr>
+<tr>
+<td><code>paths</code></td>
+<td>Paths the key may use. Each covers itself and the paths below it, on a segment boundary: <code>/v1/messages</code> allows <code>/v1/messages/count_tokens</code> but not <code>/v1/messagesx</code>, and a Gemini model path allows its methods (<code>...:generateContent</code>). Paths are matched after decoding, against the path as sent, so an OpenAI-compatible provider's paths include its prefix (<code>/vllm/v1/chat/completions</code>). Empty: any.</td>
+</tr>
+<tr>
+<td><code>policy</code></td>
+<td>A policy applied to every request with this key, whatever the route says. It must exist.</td>
+</tr>
+</tbody>
+</table>
+<p>Keys are 32 random bytes, prefixed <code>pap_</code> so secret scanners can recognize them, and stored as SHA-256 hashes. A deleted key stops working on the instance at once.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Copyright 2023-2026 Philterd, LLC
+    </div>
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": [], "search": "../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.c21346df.min.js"></script>
+      
+    
+  </body>
+</html>
