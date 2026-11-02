@@ -6,10 +6,8 @@
 //
 // Endpoints:
 //
-//	POST /v1/chat/completions          OpenAI non-streaming
-//	POST /v1/chat/completions?stream=1 OpenAI SSE stream
-//	POST /v1/messages                  Anthropic non-streaming
-//	POST /v1/messages?stream=1         Anthropic SSE stream
+//	POST /v1/chat/completions  OpenAI, an SSE stream with "stream": true (or ?stream=1)
+//	POST /v1/messages          Anthropic, an SSE stream with "stream": true (or ?stream=1)
 //
 // Knobs:
 //
@@ -53,22 +51,33 @@ func envDefault(key, def string) string {
 	return def
 }
 
-func openAIHandler(w http.ResponseWriter, r *http.Request) {
-	io.Copy(io.Discard, r.Body) // drain so the proxy's writes don't block
+// wantsStream reads and closes the body, and reports whether the request asks for a stream: "stream": true in
+// the body, as the providers read it, or ?stream=1.
+func wantsStream(r *http.Request) bool {
+	body, _ := io.ReadAll(r.Body)
 	r.Body.Close()
+	var req struct {
+		Stream bool `json:"stream"`
+	}
+	_ = json.Unmarshal(body, &req)
+	return req.Stream || r.URL.Query().Get("stream") == "1"
+}
+
+func openAIHandler(w http.ResponseWriter, r *http.Request) {
+	stream := wantsStream(r)
 	if d := parseDuration(r, "delay", 0); d > 0 {
 		time.Sleep(d)
 	}
-	if r.URL.Query().Get("stream") == "1" {
+	if stream {
 		streamOpenAI(w, r)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(map[string]any{
-		"id":      "chatcmpl-stub",
-		"object":  "chat.completion",
-		"model":   "stub-model",
+		"id":     "chatcmpl-stub",
+		"object": "chat.completion",
+		"model":  "stub-model",
 		"choices": []any{map[string]any{
 			"index":         0,
 			"finish_reason": "stop",
@@ -86,12 +95,11 @@ func openAIHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func anthropicHandler(w http.ResponseWriter, r *http.Request) {
-	io.Copy(io.Discard, r.Body)
-	r.Body.Close()
+	stream := wantsStream(r)
 	if d := parseDuration(r, "delay", 0); d > 0 {
 		time.Sleep(d)
 	}
-	if r.URL.Query().Get("stream") == "1" {
+	if stream {
 		streamAnthropic(w, r)
 		return
 	}

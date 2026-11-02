@@ -94,10 +94,6 @@ cp .env.example .env     # then set both keys in .env
 docker compose up -d --build
 ```
 
-## Kubernetes
-
-See [Kubernetes](kubernetes.md) for the Helm chart and plain manifests.
-
 ## Building from Source
 
 The build needs Java 25. The Maven wrapper downloads Maven.

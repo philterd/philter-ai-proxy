@@ -112,10 +112,9 @@ public final class AnthropicDialect implements ProviderDialect {
         switch (type) {
             case "text" -> {
                 slots.addString(block, "text");
-                if (response) {
-                    for (final JsonObject citation : Json.objects(block, "citations")) {
-                        addCitation(slots, citation);
-                    }
+                // Citations come back in responses and are sent again with the conversation's earlier turns.
+                for (final JsonObject citation : Json.objects(block, "citations")) {
+                    addCitation(slots, citation);
                 }
             }
             case "tool_use", "server_tool_use" -> {

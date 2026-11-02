@@ -106,7 +106,7 @@ proxy:
 | `server.ssl.certificate`, `server.ssl.certificate-private-key` | | Your certificate and key in PEM form, to serve HTTPS. |
 | `server.ssl.enabled-protocols` | | Limit the TLS versions, such as `TLSv1.3,TLSv1.2`. Any `server.ssl` setting turns TLS on, so set it together with a certificate and key. |
 | `server.ssl.trust-certificate`, `server.ssl.client-auth` | | For mutual TLS: the PEM file of the CA that signs client certificates, and `need`. |
-| `server.tomcat.connection-timeout` | `10s` | How long the proxy waits for a request to start, and between reads of it. Not a deadline for the whole request; see [Kubernetes](kubernetes.md#tls). |
+| `server.tomcat.connection-timeout` | `10s` | How long the proxy waits for a request to start, and between reads of it. Not a deadline for the whole request, so a client that sends a byte at a time can hold a connection; a load balancer in front of the proxy absorbs slow clients. |
 | `server.max-http-request-header-size` | `1MB` | Larger request headers are refused. |
 
 The proxy does not limit how many TLS handshakes run at once. Put a load balancer or ingress in front of it to absorb a flood of handshakes or connections.

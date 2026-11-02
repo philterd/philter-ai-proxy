@@ -41,30 +41,3 @@ jobs:
           target/surefire-reports/
           target/site/jacoco/
         if-no-files-found: warn
-
-  # Lints the chart, renders it in every TLS mode, and checks that the plain manifests in deploy/k8s are
-  # what the chart renders, so the two cannot drift apart.
-  chart:
-    runs-on: ubuntu-latest
-    steps:
-    - uses: actions/checkout@v7
-
-    - name: Set up Helm
-      uses: azure/setup-helm@v5
-
-    - name: Lint
-      run: helm lint deploy/helm/philter-ai-proxy --set secrets.encryptionKey=ci
-
-    - name: Render every TLS mode
-      run: |
-        for mode in selfSigned existingSecret certManager none; do
-          helm template ci deploy/helm/philter-ai-proxy --set secrets.encryptionKey=ci --set tls.mode="$mode" \
-            --set tls.existingSecret=ci-tls --set tls.certManager.issuerRef.name=ci > /dev/null
-        done
-        helm template ci deploy/helm/philter-ai-proxy --set secrets.encryptionKey=ci --set tls.mode=existingSecret \
-          --set tls.existingSecret=ci-tls --set mtls.enabled=true --set mtls.caSecretName=ci-ca > /dev/null
-
-    - name: Check the plain manifests match the chart
-      run: |
-        pip install --quiet pyyaml
-        deploy/k8s/generate.sh --check

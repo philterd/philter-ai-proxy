@@ -242,7 +242,8 @@ public class ProxyController {
         } catch (final ProxyError e) {
             path = raw == null ? "" : raw;
         }
-        path = path.toLowerCase(Locale.ROOT);
+        // Path parameters (";x") are ignored when the servlet container matches a path to a controller.
+        path = path.toLowerCase(Locale.ROOT).replaceAll(";[^/]*", "");
         while (path.length() > 1 && path.endsWith("/")) {
             path = path.substring(0, path.length() - 1);
         }

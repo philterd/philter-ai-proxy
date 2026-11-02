@@ -13,8 +13,6 @@ scrape_configs:
       - targets: ["philter-ai-proxy:9090"]
 ```
 
-On Kubernetes, the Helm chart's `serviceMonitor.enabled` creates a Prometheus Operator ServiceMonitor.
-
 | Metric | Type | Labels | Meaning |
 |---|---|---|---|
 | `philter_proxy_requests_total` | counter | `provider`, `status`, `policy` | Requests handled, by the status returned to the client. |
@@ -58,7 +56,7 @@ The database copy is kept until `proxy.audit.retention-days` removes it (off by 
 | `request_id` | The `X-Request-Id` returned to the client. |
 | `provider`, `model`, `policy_name`, `context` | What the request used. |
 | `key_id` | The ID of the proxy key, never the key. |
-| `trace_id` | The OpenTelemetry trace ID, when the request was sampled. Recorded whether or not traces are exported. |
+| `trace_id` | The OpenTelemetry trace ID, when the request was sampled. Recorded whether or not traces are exported. A client that sends a W3C `traceparent` header continues its own trace, so the client chooses this ID; use it to correlate, not as evidence. |
 | `client_ip` | The client's address; see `proxy.security.trusted-proxies`. |
 | `http_status` | The status returned to the client. |
 | `fields_redacted`, `entity_count`, `entity_types` | How many text fields had values replaced, and how many values of each type were found in the request. |

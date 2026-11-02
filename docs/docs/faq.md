@@ -71,11 +71,7 @@ Yes. Keys are 32 random bytes, and only their SHA-256 hashes are stored. A key i
 
 Each instance needs its own database. The proxy keeps its policies, keys, contexts, and audit log in a SQLite file, and refuses to start on a file another instance is using. For more capacity, give the instance more CPU, or run several instances, each with its own database and keys, behind your gateway.
 
-### Can I deploy the proxy to Kubernetes?
-
-Yes, with the Helm chart or the plain manifests in the repository. See [Kubernetes](kubernetes.md).
-
-### What endpoints should I use for Kubernetes probes?
+### What endpoints should I use for health checks?
 
 `/livez` for liveness and `/readyz` for readiness. `/readyz` answers once the proxy has finished loading the configured policies and their models; a policy that cannot be loaded is logged rather than holding readiness back. See [Health endpoints](monitoring.md#health-endpoints).
 

@@ -24,7 +24,6 @@ We prefer to take contributions as GitHub pull requests. This workflow allows yo
 
 * Java 25 (the Maven wrapper downloads Maven)
 * Docker, to build the image
-* Helm, to work on the chart in `deploy/helm/`
 
 ### Testing
 
@@ -37,10 +36,6 @@ The tests run against stub providers and never call a real one. One test runs th
 `./mvnw verify` fails when line coverage drops below `coverage.minimum` in `pom.xml`. Raise that value as coverage improves; do not lower it to make a build pass.
 
 Test fixtures use invented values only: never a real person's name, email address, or other personal data.
-
-### The chart and manifests
-
-After changing the Helm chart, regenerate the plain manifests with `deploy/k8s/generate.sh`. CI fails when they differ from what the chart renders.
 
 ### Contract tests
 

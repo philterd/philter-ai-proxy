@@ -222,6 +222,7 @@ public final class GeminiDialect implements ProviderDialect {
                     addParts(slots, content);
                 }
                 addGrounding(slots, candidate);
+                addAttributions(slots, candidate);
             }
         }
         return slots;
@@ -244,7 +245,7 @@ public final class GeminiDialect implements ProviderDialect {
                 slots.addString(segment, "text");
             }
         }
-        for (final String queries : new String[]{"webSearchQueries", "retrievalQueries"}) {
+        for (final String queries : new String[]{"webSearchQueries", "imageSearchQueries", "retrievalQueries"}) {
             if (grounding.get(queries) instanceof JsonArray list) {
                 slots.addAllStrings(list);
             }
@@ -254,23 +255,59 @@ public final class GeminiDialect implements ProviderDialect {
             slots.addString(entryPoint, "renderedContent");
         }
         for (final JsonObject chunk : Json.objects(grounding, "groundingChunks")) {
-            for (final String source : new String[]{"web", "retrievedContext"}) {
+            for (final String source : new String[]{"web", "image", "retrievedContext", "maps"}) {
                 final JsonObject value = Json.object(chunk, source);
                 if (value != null) {
                     slots.addString(value, "title");
                     slots.addString(value, "text");
                 }
             }
+            final JsonObject retrieved = Json.object(chunk, "retrievedContext");
+            if (retrieved != null) {
+                // Vertex AI RAG Engine's chunk, and the metadata a file search store attaches to a document.
+                if (retrieved.get("ragChunk") instanceof JsonObject rag) {
+                    slots.addAllStrings(rag);
+                }
+                for (final JsonObject metadata : Json.objects(retrieved, "customMetadata")) {
+                    slots.addString(metadata, "stringValue");
+                    if (Json.object(metadata, "stringListValue") != null
+                            && Json.object(metadata, "stringListValue").get("values") instanceof JsonArray values) {
+                        slots.addAllStrings(values);
+                    }
+                }
+            }
+            final JsonObject maps = Json.object(chunk, "maps");
+            final JsonObject sources = maps == null ? null : Json.object(maps, "placeAnswerSources");
+            for (final JsonObject review : Json.objects(sources, "reviewSnippets")) {
+                slots.addString(review, "title");
+            }
         }
     }
 
-    /** Removes each candidate's {@code logprobsResult}, whose tokens spell out the unredacted text. */
+    /** The content of each grounding attribution, as {@code generateAnswer} returns. */
+    static void addAttributions(final TextSlots slots, final JsonObject candidate) {
+        for (final JsonObject attribution : Json.objects(candidate, "groundingAttributions")) {
+            final JsonObject content = Json.object(attribution, "content");
+            for (final JsonObject part : Json.objects(content, "parts")) {
+                slots.addString(part, "text");
+            }
+        }
+    }
+
+    /**
+     * Removes each candidate's {@code logprobsResult}, whose tokens spell out the unredacted text, and its search entry
+     * point's {@code sdkBlob}, which encodes the search terms.
+     */
     @Override
     public boolean removeRevealingData(final String path, final JsonElement body) {
         boolean removed = false;
         for (final JsonObject response : Json.each(body)) {
             for (final JsonObject candidate : Json.objects(response, "candidates")) {
                 removed |= candidate.remove("logprobsResult") != null;
+                // Base64 JSON of the search terms and URLs, which repeats the search queries in a form not scanned.
+                final JsonObject grounding = Json.object(candidate, "groundingMetadata");
+                final JsonObject entryPoint = grounding == null ? null : Json.object(grounding, "searchEntryPoint");
+                removed |= entryPoint != null && entryPoint.remove("sdkBlob") != null;
             }
         }
         return removed;
@@ -337,6 +374,11 @@ public final class GeminiDialect implements ProviderDialect {
                 final String group = ProviderDialect.group(Json.integer(candidate, "index", 0));
                 if (scanner.action() != ai.philterd.aiproxy.config.ProxyProperties.Action.FLAG) {
                     candidate.remove("logprobsResult");
+                    final JsonObject grounding = Json.object(candidate, "groundingMetadata");
+                    final JsonObject entryPoint = grounding == null ? null : Json.object(grounding, "searchEntryPoint");
+                    if (entryPoint != null) {
+                        entryPoint.remove("sdkBlob");
+                    }
                 }
                 templates.put(group, json);
                 final JsonObject content = Json.object(candidate, "content");
@@ -367,9 +409,10 @@ public final class GeminiDialect implements ProviderDialect {
                         content.add("parts", keptParts);
                     }
                 }
-                if (Json.present(candidate, "groundingMetadata")) {
+                if (Json.present(candidate, "groundingMetadata") || Json.present(candidate, "groundingAttributions")) {
                     final TextSlots slots = new TextSlots();
                     addGrounding(slots, candidate);
+                    addAttributions(slots, candidate);
                     scanner.scanWhole(slots);
                 }
                 if (Json.present(candidate, "finishReason")) {

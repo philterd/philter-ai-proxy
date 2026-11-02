@@ -13,7 +13,6 @@ theme:
 nav:
   - Home: index.md
   - Installation: installation.md
-  - Kubernetes: kubernetes.md
   - Usage: usage.md
   - Authentication: authentication.md
   - Policies: policies.md

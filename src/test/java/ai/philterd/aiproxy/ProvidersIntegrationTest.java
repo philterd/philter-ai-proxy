@@ -335,10 +335,39 @@ class ProvidersIntegrationTest {
     }
 
     @Test
+    void toolArgumentsThatRepeatANameAreRedactedAsText() throws Exception {
+        // Gson keeps the last of repeated names: read as JSON, only "ok" would be scanned while the forwarded text
+        // still carried the SSN.
+        final String arguments = "{\\\"q\\\":\\\"SSN " + SSN + "\\\",\\\"q\\\":\\\"ok\\\"}";
+        post("/v1/chat/completions", "{\"model\":\"m\",\"messages\":[{\"role\":\"assistant\",\"tool_calls\":["
+                + "{\"id\":\"a\",\"type\":\"function\",\"function\":{\"name\":\"f\",\"arguments\":\"" + arguments + "\"}}]}]}");
+        assertNoOriginals(sent());
+        assertTrue(sent().contains(R_SSN), sent());
+
+        // A body that repeats a name is refused, as the proxy would scan one value and could forward another.
+        final HttpResponse<byte[]> repeated = post("/v1/chat/completions",
+                "{\"model\":\"m\",\"messages\":[{\"role\":\"user\",\"content\":\"SSN " + SSN + "\",\"content\":\"ok\"}]}");
+        assertEquals(400, repeated.statusCode());
+        assertTrue(text(repeated).contains("bad_json"), text(repeated));
+    }
+
+    @Test
+    void anthropicCitationsInEarlierTurnsAreRedacted() throws Exception {
+        post("/v1/messages", """
+                {"model":"m","max_tokens":1,"messages":[{"role":"user","content":"What does it say?"},
+                 {"role":"assistant","content":[{"type":"text","text":"It names a customer.","citations":[
+                  {"type":"char_location","cited_text":"SSN %1$s","document_index":0,"document_title":"Record for %2$s",
+                   "start_char_index":0,"end_char_index":15}]}]},
+                 {"role":"user","content":"Thanks."}]}""".formatted(SSN, EMAIL));
+        assertNoOriginals(sent());
+        assertTrue(sent().contains("\"start_char_index\":0"), sent());
+    }
+
+    @Test
     void adminAndHealthPathsAreNeverProviderTraffic() throws Exception {
         for (final String[] request : new String[][]{{"GET", "/admin/api/nothing"}, {"PATCH", "/admin/api/keys"},
                 {"GET", "/ADMIN/api/keys"}, {"GET", "/%61dmin/api/nothing"}, {"POST", "/readyz"}, {"POST", "/health/"},
-                {"DELETE", "/admin"}}) {
+                {"DELETE", "/admin"}, {"PATCH", "/admin;x/api/keys"}, {"POST", "/livez;x"}, {"POST", "/admin/api;v=1/keys"}}) {
             final HttpResponse<byte[]> response = send(request[0], request[1], null, "Authorization", "Bearer sk-test");
             assertEquals(404, response.statusCode(), request[0] + " " + request[1] + ": " + text(response));
             assertEquals("not_found", json(text(response)).get("reason").getAsString());
@@ -856,9 +885,15 @@ class ProvidersIntegrationTest {
 
     static final String GROUNDING = """
             "groundingMetadata":{"webSearchQueries":["records for %1$s"],"retrievalQueries":["mail %2$s"],
-             "searchEntryPoint":{"renderedContent":"<div>records for %1$s</div>"},
+             "imageSearchQueries":["photo of %2$s"],
+             "searchEntryPoint":{"renderedContent":"<div>records for %1$s</div>","sdkBlob":"c2VhcmNoIHRlcm1z"},
              "groundingChunks":[{"web":{"uri":"https://example.com/a","title":"Page about %2$s"}},
-               {"retrievedContext":{"uri":"gs://bucket/doc.txt","title":"Customer file","text":"SSN %1$s on file"}}],
+               {"retrievedContext":{"uri":"gs://bucket/doc.txt","title":"Customer file","text":"SSN %1$s on file",
+                 "ragChunk":{"text":"chunk with %1$s"},"customMetadata":[{"key":"owner","stringValue":"%2$s"},
+                 {"key":"tags","stringListValue":{"values":["tag %1$s"]}}]}},
+               {"maps":{"uri":"https://example.com/m","title":"Office of %2$s","text":"Open late, ask for %2$s",
+                 "placeAnswerSources":{"reviewSnippets":[{"reviewId":"r","title":"Review by %2$s"}]}}},
+               {"image":{"sourceUri":"https://example.com/i","title":"Image of %2$s"}}],
              "groundingSupports":[{"segment":{"startIndex":0,"endIndex":22,"text":"Your SSN is %1$s"},"groundingChunkIndices":[0,1]}]}"""
             .formatted(SSN, EMAIL);
 
@@ -871,6 +906,8 @@ class ProvidersIntegrationTest {
         final JsonObject grounding = json(redacted).getAsJsonArray("candidates").get(0).getAsJsonObject().getAsJsonObject("groundingMetadata");
         assertEquals("Your SSN is " + R_SSN, grounding.getAsJsonArray("groundingSupports").get(0).getAsJsonObject()
                 .getAsJsonObject("segment").get("text").getAsString());
+        // The search entry point's encoded search terms are removed, as they are not scanned.
+        assertFalse(grounding.getAsJsonObject("searchEntryPoint").has("sdkBlob"), redacted);
         // The citations and their sources are kept.
         assertEquals("https://example.com/a", grounding.getAsJsonArray("groundingChunks").get(0).getAsJsonObject()
                 .getAsJsonObject("web").get("uri").getAsString());

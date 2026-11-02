@@ -47,7 +47,7 @@ curl -k https://localhost:8080/v1/chat/completions \
   -d '{"model": "gpt-4o-mini", "messages": [{"role": "user", "content": "Whose social security number is 123-45-6789?"}]}'
 ```
 
-The image serves HTTPS with a self-signed certificate it generates at startup, hence `-k`. See [Installation](https://philterd.github.io/philter-ai-proxy/installation/) for your own certificate, settings, and building from source, and [Kubernetes](https://philterd.github.io/philter-ai-proxy/kubernetes/) for the Helm chart.
+The image serves HTTPS with a self-signed certificate it generates at startup, hence `-k`. See [Installation](https://philterd.github.io/philter-ai-proxy/installation/) for your own certificate, settings, and building from source.
 
 ## Building
 

@@ -4,15 +4,17 @@ A [k6](https://k6.io) harness lives at `test/load/` in the repository. It brings
 
 ## Reference baseline
 
-Measured on the reference instance below on 2026-11-01: 10 virtual users, 20 seconds per scenario, the same prompt in every request (`The SSN on file is 123-45-6789. Summarize the case.`). The default policy runs the PhEye model over every prompt, and a context is configured, so each request also reads and writes the SQLite context store.
+Measured on the reference instance below on 2026-11-02: 10 virtual users, 20 seconds per scenario, the same prompt in every request (`The SSN on file is 123-45-6789. Summarize the case.`). The default policy runs the PhEye model over every prompt, and a context is configured, so each request also reads and writes the SQLite context store.
 
 | Scenario | Iterations | req/s | p50 (ms) | p95 (ms) | p99 (ms) | Failures |
 |---|---:|---:|---:|---:|---:|---:|
-| `no-redaction` (direct to the stub, no proxy) | 846,986 | **42,349** | 0.2 | 0.3 | 0.5 | 0.000% |
-| `openai` (inbound redaction) | 1,697 | **85** | 110.3 | 177.9 | 242.1 | 0.000% |
-| `anthropic` (inbound redaction) | 1,723 | **86** | 107.9 | 177.7 | 248.6 | 0.000% |
-| `openai-streaming` (inbound redaction, streamed response passed through) | 1,693 | **84** | 107.7 | 186.8 | 282.2 | 0.000% |
-| `outbound-scan` (inbound redaction and response scanning) | 766 | **38** | 256.8 | 351.3 | 389.5 | 0.000% |
+| `no-redaction` (direct to the stub, no proxy) | 741,701 | **37,084** | 0.2 | 0.4 | 0.6 | 0.000% |
+| `openai` (inbound redaction) | 1,684 | **84** | 110.7 | 174.7 | 241.5 | 0.000% |
+| `anthropic` (inbound redaction) | 1,746 | **87** | 104.9 | 170.4 | 270.1 | 0.000% |
+| `openai-streaming` (inbound redaction, streamed response passed through) | 1,744 | **87** | 113.3 | 131.6 | 146.7 | 0.000% |
+| `outbound-scan` (inbound redaction and response scanning) | 809 | **40** | 241.0 | 328.8 | 365.2 | 0.000% |
+
+Before 2026-11-02 the stub answered `openai-streaming` without streaming, since it streamed only for a `?stream=1` query parameter; it now streams when the body asks, as providers do. The earlier figures for the other scenarios were within a few percent of these.
 
 ## Reading the table
 

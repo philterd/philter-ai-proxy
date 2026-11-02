@@ -19,7 +19,6 @@ Detection is probabilistic: the proxy reduces how much sensitive data reaches a 
 ## Deployment options
 
 - **Docker**: the `philterd/philter-ai-proxy` image, with the person-name model included. See [Installation](installation.md).
-- **Kubernetes**: a Helm chart and plain manifests under `deploy/`, plus a Grafana dashboard. See [Kubernetes](kubernetes.md).
 - **From source**: build with Maven and run the jar on Java 25. See [Installation](installation.md#building-from-source).
 
 The proxy keeps its policies, API keys, contexts, and audit log in a SQLite file, so one instance serves each database file. See [FAQ](faq.md#can-i-run-more-than-one-instance).

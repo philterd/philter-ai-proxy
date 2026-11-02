@@ -65,7 +65,7 @@ The proxy cannot hold a provider key and add it for a client. If applications mu
 
 ## Mutual TLS
 
-The proxy can also require a client certificate signed by a CA you name, in addition to the proxy key. See [Certificates](installation.md#certificates) and, on Kubernetes, `mtls.enabled` in [Kubernetes](kubernetes.md#values).
+The proxy can also require a client certificate signed by a CA you name, in addition to the proxy key. See [Certificates](installation.md#certificates).
 
 ## Recommendations
 
