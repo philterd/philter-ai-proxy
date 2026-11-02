@@ -132,12 +132,12 @@ class StreamScannerTest {
         final String sse = chunk("hello ", null) + ": ping\n\n" + "data: not-json\n\n"
                 + "data: {\"choices\":[],\"usage\":{\"total_tokens\":3}}\n\n" + "event: x\ndata: [DONE]\n\n";
         final List<String> events = run(sse, Action.FLAG, 100);
-        // A keep-alive is forwarded at once and releases nothing.
-        assertEquals(": ping\n\n", events.get(0));
+        // A keep-alive is forwarded at once, without its text, and releases nothing.
+        assertEquals(":\n\n", events.get(0));
         assertTrue(events.get(1).contains("hello "), "held text is released before unknown data");
         assertEquals("data: not-json\n\n", events.get(2));
         assertTrue(events.get(3).contains("usage"));
-        assertEquals("event: x\ndata: [DONE]\n\n", events.get(4));
+        assertEquals("data: [DONE]\n\n", events.get(4));
     }
 
     @Test

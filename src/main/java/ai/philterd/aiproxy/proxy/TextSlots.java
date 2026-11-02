@@ -63,12 +63,25 @@ public final class TextSlots {
         }
     }
 
-    /** Adds every non-empty string anywhere inside the element. */
+    /**
+     * Adds every non-empty string anywhere inside the element, such as tool-call arguments, and every integer of
+     * five or more digits, since an SSN, phone number, or account number can be sent as one. A number is read as its
+     * JSON text; it stays a number unless redaction changes it, when the redacted text replaces it as a string.
+     * Shorter integers and decimals are left alone, so numeric data does not become thousands of texts to redact.
+     * Object keys are not redacted.
+     */
     public void addAllStrings(final JsonElement element) {
         if (element instanceof JsonObject object) {
             for (final String member : object.keySet()) {
                 final JsonElement child = object.get(member);
-                if (child instanceof JsonPrimitive) {
+                if (child instanceof JsonPrimitive p && identifierLike(p)) {
+                    final String original = p.getAsString();
+                    slots.add(new Slot(() -> original, value -> {
+                        if (!value.equals(original)) {
+                            object.addProperty(member, value);
+                        }
+                    }));
+                } else if (child instanceof JsonPrimitive) {
                     addString(object, member);
                 } else {
                     addAllStrings(child);
@@ -78,7 +91,14 @@ public final class TextSlots {
             for (int i = 0; i < array.size(); i++) {
                 final int index = i;
                 if (array.get(i) instanceof JsonPrimitive p) {
-                    if (p.isString() && !p.getAsString().isEmpty()) {
+                    if (identifierLike(p)) {
+                        final String original = p.getAsString();
+                        slots.add(new Slot(() -> original, value -> {
+                            if (!value.equals(original)) {
+                                array.set(index, new JsonPrimitive(value));
+                            }
+                        }));
+                    } else if (p.isString() && !p.getAsString().isEmpty()) {
                         slots.add(new Slot(() -> array.get(index).getAsString(), value -> array.set(index, new JsonPrimitive(value))));
                     }
                 } else {
@@ -86,6 +106,14 @@ public final class TextSlots {
                 }
             }
         }
+    }
+
+    private static boolean identifierLike(final JsonPrimitive p) {
+        if (!p.isNumber()) {
+            return false;
+        }
+        final String text = p.getAsString();
+        return text.length() >= 5 && text.chars().allMatch(c -> c >= '0' && c <= '9' || c == '-');
     }
 
     /**

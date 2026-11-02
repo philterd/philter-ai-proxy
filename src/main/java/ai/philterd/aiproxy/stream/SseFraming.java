@@ -34,19 +34,26 @@ import java.util.List;
  */
 public final class SseFraming implements Framing {
 
+    /** The event names providers use, such as {@code response.output_text.delta} or {@code content_block_delta}. */
+    private static final java.util.regex.Pattern EVENT_TYPE = java.util.regex.Pattern.compile("[A-Za-z0-9_.:-]{1,100}");
+
     @Override
     public void read(final InputStream in, final Handler handler) throws IOException, RedactionException,
             StreamScanner.BlockedException, StreamScanner.UnscannableException {
         final BufferedReader reader = new BufferedReader(new InputStreamReader(in, StandardCharsets.UTF_8));
         final List<String> lines = new ArrayList<>();
         String line;
-        while ((line = reader.readLine()) != null) {
+        long eventLength = 0;
+        while ((line = ResponseTooLargeException.readLine(reader)) != null) {
             if (line.isEmpty()) {
                 if (!lines.isEmpty()) {
                     onEvent(lines, handler);
                     lines.clear();
+                    eventLength = 0;
                 }
             } else {
+                eventLength += line.length();
+                ResponseTooLargeException.check(eventLength);
                 lines.add(line);
             }
         }
@@ -76,13 +83,20 @@ public final class SseFraming implements Framing {
                 return;
             }
         }
+        // Comments, ids, and event names are not scanned, so they are not forwarded as they came: a keep-alive is sent
+        // as a bare comment, and the end marker as itself.
         if (!hasData) {
-            handler.onPassThrough(raw, false);
+            handler.onPassThrough(":\n\n".getBytes(StandardCharsets.UTF_8), false);
             return;
         }
         final String payload = data.toString().strip();
         if (payload.equals("[DONE]")) {
-            handler.onPassThrough(raw, true);
+            handler.onPassThrough("data: [DONE]\n\n".getBytes(StandardCharsets.UTF_8), true);
+            return;
+        }
+        if (type != null && !EVENT_TYPE.matcher(type).matches()) {
+            // An event name is forwarded with the event, so one that could carry text cannot be scanned.
+            handler.onUnreadable(raw);
             return;
         }
         final JsonElement parsed;

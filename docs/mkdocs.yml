@@ -15,6 +15,7 @@ nav:
   - Installation: installation.md
   - Kubernetes: kubernetes.md
   - Usage: usage.md
+  - Authentication: authentication.md
   - Policies: policies.md
   - API Reference: api.md
   - Configuration: configuration.md

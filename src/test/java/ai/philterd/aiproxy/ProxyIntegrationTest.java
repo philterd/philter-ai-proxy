@@ -349,6 +349,66 @@ class ProxyIntegrationTest {
         assertEquals(0, STUB.requests.get());
     }
 
+    @Autowired
+    ai.philterd.aiproxy.storage.Database database;
+
+    @Autowired
+    ai.philterd.aiproxy.storage.ContextStore contexts;
+
+    @Autowired
+    ai.philterd.aiproxy.redaction.PolicyCompiler compiler;
+
+    @Test
+    void policiesAreEncryptedAndContextsKeepNoOriginals() throws Exception {
+        chatWithKey(simpleChat("context-model", "SSN " + SSN));
+        try (java.sql.Connection c = database.connect(); java.sql.Statement st = c.createStatement()) {
+            try (java.sql.ResultSet rs = st.executeQuery("SELECT policy FROM policies")) {
+                while (rs.next()) {
+                    assertFalse(rs.getString(1).contains("{"), rs.getString(1));
+                }
+            }
+            int entries = 0;
+            try (java.sql.ResultSet rs = st.executeQuery("SELECT token FROM context_entries")) {
+                while (rs.next()) {
+                    assertEquals("", rs.getString(1));
+                    entries++;
+                }
+            }
+            assertTrue(entries > 0);
+        }
+        assertTrue(policies.find("patterns").orElseThrow().policy().startsWith("{"));
+    }
+
+    @Test
+    void redactionThatTakesTooLongIsRefused() {
+        final ai.philterd.aiproxy.redaction.Redactor slow = new ai.philterd.aiproxy.redaction.Redactor(policies, contexts, compiler,
+                java.time.Duration.ofNanos(1));
+        final List<String> texts = java.util.Collections.nCopies(50, "SSN " + SSN + " and more text to scan");
+        org.junit.jupiter.api.Assertions.assertThrows(ai.philterd.aiproxy.redaction.RedactionTimeoutException.class,
+                () -> slow.session("patterns", null).redact(texts));
+    }
+
+    @Test
+    void prunesTheAuditLogAndBoundsTheModel() throws Exception {
+        chatWithKey(simpleChat("m".repeat(1000), "hi"), "X-Request-Id", "long-model");
+        assertEquals(256, auditEntry("long-model").details().get("model").getAsString().length());
+        assertTrue(audit.prune(java.time.Instant.now().plusSeconds(60)) > 0);
+        assertTrue(audit.recent(10).isEmpty());
+    }
+
+    @Test
+    void aKeyWithABoundPolicyCannotPickAHeaderRoute() throws Exception {
+        final String bound = keys.create("bound-media", new KeyScopes(Set.of(KeyScopes.Role.proxy), List.of(), List.of(), List.of(),
+                "patterns")).secret();
+        final String body = """
+                {"model":"gpt-4o","messages":[{"role":"user","content":[{"type":"image_url","image_url":{"url":"https://example.com/a.png"}}]}]}""";
+        // x-media: forward selects a route that forwards media; a policy-bound key is held to the defaults instead.
+        final HttpResponse<String> response = chat(body, "x-philter-proxy-key", bound, "x-media", "forward");
+        assertEquals(400, response.statusCode());
+        assertEquals("media_not_allowed", errorCode(response));
+        assertEquals(200, chatWithKey(body, "x-media", "forward").statusCode());
+    }
+
     @Test
     void appliesAKeysBoundPolicy() throws Exception {
         final String bound = keys.create("bound", new KeyScopes(Set.of(KeyScopes.Role.proxy), List.of(), List.of(), List.of(),
@@ -480,7 +540,9 @@ class ProxyIntegrationTest {
                     reassemble(response.body()), "chunk size " + chunkSize);
             assertFalse(response.body().contains("6789"), "chunk size " + chunkSize);
             assertTrue(response.body().contains("\"finish_reason\":\"stop\""));
-            assertTrue(response.body().contains(": keep-alive"));
+            // The keep-alive is forwarded as a bare comment, without its text.
+            assertTrue(response.body().contains(":\n\n"));
+            assertFalse(response.body().contains(": keep-alive"));
             assertTrue(response.body().strip().endsWith("data: [DONE]"));
         }
     }

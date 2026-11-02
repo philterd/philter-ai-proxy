@@ -1,6 +1,6 @@
 # Usage
 
-Send requests to the proxy exactly as you would to the provider, with the proxy's address in place of the provider's and your proxy key in the `x-philter-proxy-key` header. The provider's own credential travels as usual and is forwarded; the proxy key is not. Streaming (`"stream": true`) and non-streaming requests are supported.
+Send requests to the proxy exactly as you would to the provider, with the proxy's address in place of the provider's and your proxy key in the `x-philter-proxy-key` header. See [Authentication](authentication.md) for how proxy keys and provider credentials work. The provider's own credential travels as usual and is forwarded; the proxy key is not. Streaming (`"stream": true`) and non-streaming requests are supported.
 
 The examples use the self-signed certificate the Docker image serves by default, so `curl` passes `-k`. `$PROXY_KEY` is a key with the `proxy` role; see [Create a key for your application](installation.md#create-a-key-for-your-application).
 
@@ -12,10 +12,10 @@ The proxy decides the provider from the path, as below. A path no provider claim
 | Azure OpenAI | `/openai/deployments/<deployment>/...` |
 | OpenAI-compatible providers | `/<name>/v1/...`, for each name under `proxy.providers.openai-compatible` |
 | Anthropic | `/v1/messages` |
-| Gemini | paths containing `generateContent`, and `/v1beta/...` |
-| Vertex AI | `/v1/projects/<project>/locations/<location>/publishers/google/models/<model>:generateContent` (and `:streamGenerateContent`) |
-| Ollama | `/api/generate`, `/api/chat` |
-| Amazon Bedrock | `/model/<model>/converse`, `/model/<model>/converse-stream` |
+| Gemini | `/v1beta/...`, and paths naming a Gemini method (`:generateContent`, `:streamGenerateContent`, `:countTokens`, `:embedContent`, `:batchEmbedContents`); see [Endpoints by provider](api.md#endpoints-by-provider) for what is redacted |
+| Vertex AI | `/v1/projects/<project>/...` and `/v1beta1/projects/<project>/...`, such as `.../locations/<location>/publishers/google/models/<model>:generateContent` |
+| Ollama | `/api/...` (`/api/generate`, `/api/chat`, `/api/embed`, and `/api/embeddings` are redacted, and `/api/show` is forwarded; see [Supported request types](api.md#supported-request-types) for the rest) |
+| Amazon Bedrock | `/model/<model>/...`: `converse` and `converse-stream`, and `invoke` and `invoke-with-response-stream` for the model families in [Endpoints by provider](api.md#endpoints-by-provider) |
 
 ## OpenAI
 
@@ -32,7 +32,7 @@ curl -k https://localhost:8080/v1/chat/completions \
 
 OpenAI receives `Whose social security number is {{{REDACTED-ssn}}}?`. Add `"stream": true` to stream the response.
 
-The Responses API, legacy completions, embeddings, moderations, image generation, and speech are redacted too; see [Redacted Fields](api.md#redacted-fields). Requests without a body, such as `GET /v1/models`, are forwarded as they are.
+The Responses API, legacy completions, embeddings, moderations, image generation, and speech are redacted too; see [Redacted Fields](api.md#redacted-fields). Requests without a body, such as `GET /v1/models`, are forwarded as they are, unless response scanning is on for their route (or the provider is one the proxy authenticates to with its own credential; see [Supported request types](api.md#supported-request-types)). A request with a body to any other endpoint is refused by default; see [Supported request types](api.md#supported-request-types).
 
 From an SDK, set the base URL to the proxy and add the header:
 
@@ -85,7 +85,7 @@ curl -k https://localhost:8080/v1/messages \
   }'
 ```
 
-Thinking blocks sent back in a conversation are forwarded unchanged: Anthropic verifies their signatures, so redacting them would make the request fail.
+Thinking blocks sent back in a conversation are forwarded unchanged and unredacted: Anthropic verifies their signatures, so redacting them would make the request fail. See [Redacted Fields](api.md#redacted-fields).
 
 ## Gemini
 
@@ -101,6 +101,8 @@ The key can also go in the `key` query parameter, which is forwarded. The audit 
 
 For streaming, use `streamGenerateContent?alt=sse`. Without `alt=sse`, Gemini streams a JSON array; with response scanning on, the proxy reads that array whole before scanning it.
 
+`:countTokens` and the embedding methods (`:embedContent`, and `:batchEmbedContents`, which the Google Gen AI SDK's `embed_content()` uses) are redacted too. A token count is of the redacted text, which is what a generateContent request through the proxy sends. Embeddings are computed from the redacted text; see [Redacted Fields](api.md#redacted-fields).
+
 ## Vertex AI
 
 Configure `proxy.providers.vertex` (see [Configuration](configuration.md#vertex-ai)). The proxy authenticates with Google application default credentials, replacing any `Authorization` the client sends:
@@ -112,6 +114,8 @@ curl -k "https://localhost:8080/v1/projects/my-project/locations/us-central1/pub
   -d '{"contents": [{"role": "user", "parts": [{"text": "Whose social security number is 123-45-6789?"}]}]}'
 ```
 
+`:countTokens` is redacted as on Gemini. Vertex AI embeddings (`:predict`, `:embedContent`) are refused. Every `/projects/` path must name the configured project and location.
+
 ## Ollama
 
 ```bash
@@ -121,11 +125,28 @@ curl -k https://localhost:8080/api/chat \
   -d '{"model": "llama3.2", "messages": [{"role": "user", "content": "Whose social security number is 123-45-6789?"}]}'
 ```
 
-`/api/generate` redacts `prompt` and `system`. Ollama streams by default, as newline-delimited JSON; send `"stream": false` for one response.
+`/api/generate` redacts `prompt` and `system`, and `/api/embed` redacts `input`. `/api/show`, which front ends such as Open WebUI call for a model's capabilities, is forwarded unchanged. Ollama streams by default, as newline-delimited JSON; send `"stream": false` for one response.
+
+### Model management
+
+`/api/pull`, `/api/delete`, and Ollama's other model management endpoints are refused by default. They carry no conversation text, but allowing them lets any client with a proxy key download models to the Ollama server (filling its disk) or delete them. To manage models through the proxy, forward them with routes:
+
+```yaml
+proxy:
+  routes:
+    - match:
+        path: /api/pull
+      unsupported-endpoints: forward
+    - match:
+        path: /api/delete
+      unsupported-endpoints: forward
+```
+
+These routes apply to every proxy key, and key scopes cannot exclude a path from a key that is otherwise allowed. Where only some clients should manage models, have them call Ollama directly instead. Forwarded responses, such as a pull's progress stream, are returned unscanned.
 
 ## Amazon Bedrock
 
-Configure `proxy.providers.bedrock.region` (see [Configuration](configuration.md#amazon-bedrock)). The proxy signs each request with its own AWS credentials, so the client sends no AWS headers, and only `Content-Type` and the signature are forwarded:
+Configure `proxy.providers.bedrock.region` (see [Configuration](configuration.md#amazon-bedrock)). The proxy signs each request with its own AWS credentials, so the client sends no AWS headers. Only `Content-Type`, `X-Amzn-Bedrock-*` headers (such as a guardrail or the latency tier), and the signature are forwarded:
 
 ```bash
 curl -k https://localhost:8080/model/anthropic.claude-3-5-haiku-20241022-v1:0/converse \
@@ -135,6 +156,28 @@ curl -k https://localhost:8080/model/anthropic.claude-3-5-haiku-20241022-v1:0/co
 ```
 
 `/converse-stream` streams the response in AWS's event stream format.
+
+InvokeModel (`/invoke`, `/invoke-with-response-stream`) is supported for Anthropic Claude models, whose body is the Messages API's, and `/invoke` for Amazon Titan and Cohere embedding models. The Anthropic SDK's Bedrock client uses it:
+
+```python
+from anthropic import AnthropicBedrock
+
+client = AnthropicBedrock(
+    base_url="https://philter-ai-proxy.internal:8080",
+    aws_region="us-east-1",
+    # The client must sign, but the proxy replaces the signature with its own, so any values do.
+    aws_access_key="unused",
+    aws_secret_key="unused",
+    default_headers={"x-philter-proxy-key": PROXY_KEY},
+)
+message = client.messages.create(
+    model="anthropic.claude-3-5-haiku-20241022-v1:0",
+    max_tokens=200,
+    messages=[{"role": "user", "content": "Whose social security number is 123-45-6789?"}],
+)
+```
+
+The client needs AWS credentials only to produce a signature the proxy discards, so placeholders work; without any, the SDK refuses to send the request. The same applies to boto3.
 
 ## Tool Use and Function Calling
 

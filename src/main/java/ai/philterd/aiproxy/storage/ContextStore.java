@@ -118,7 +118,8 @@ public class ContextStore {
             try (Connection c = database.connect(); PreparedStatement ps = c.prepareStatement(sql)) {
                 ps.setString(1, context);
                 ps.setString(2, encryptor.index(token));
-                ps.setString(3, encryptor.encrypt(token));
+                // The original value is not stored; it is found by its keyed hash. The column is kept empty.
+                ps.setString(3, "");
                 // The replacement can itself be a recognizable value (a fake name, a format-preserving number).
                 ps.setString(4, encryptor.encrypt(replacement));
                 ps.setString(5, encryptor.index(replacement));

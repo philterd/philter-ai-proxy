@@ -43,9 +43,25 @@ import java.util.Locale;
  */
 public final class AnthropicDialect implements ProviderDialect {
 
+    /** The message requests in the body: the body itself, or each batch request's {@code params}. */
+    private static java.util.List<JsonObject> requests(final String path, final JsonObject body) {
+        if (path.equals("/v1/messages/batches")) {
+            return Json.objects(body, "requests").stream().map(r -> Json.object(r, "params"))
+                    .filter(java.util.Objects::nonNull).toList();
+        }
+        return java.util.List.of(body);
+    }
+
     @Override
     public TextSlots requestText(final String path, final JsonObject body) {
         final TextSlots slots = new TextSlots();
+        for (final JsonObject request : requests(path, body)) {
+            addRequest(slots, request);
+        }
+        return slots;
+    }
+
+    private static void addRequest(final TextSlots slots, final JsonObject body) {
         slots.addString(body, "system");
         for (final JsonObject block : Json.objects(body, "system")) {
             slots.addString(block, "text");
@@ -56,14 +72,20 @@ public final class AnthropicDialect implements ProviderDialect {
                 addBlock(slots, block, false);
             }
         }
-        return slots;
     }
 
     private static final java.util.Set<String> MEDIA_BLOCKS = java.util.Set.of("image", "document", "container_upload");
 
+    /** Messages, token counting (the same body), and creating a message batch (a list of such bodies). */
+    @Override
+    public boolean supports(final String method, final String path) {
+        return "POST".equals(method) && (path.equals("/v1/messages") || path.equals("/v1/messages/count_tokens")
+                || path.equals("/v1/messages/batches"));
+    }
+
     @Override
     public String mediaPart(final String path, final JsonObject body) {
-        for (final JsonObject message : Json.objects(body, "messages")) {
+        for (final JsonObject message : requests(path, body).stream().flatMap(r -> Json.objects(r, "messages").stream()).toList()) {
             for (final JsonObject block : Json.objects(message, "content")) {
                 final String type = Json.string(block, "type");
                 if (type != null && MEDIA_BLOCKS.contains(type)) {
@@ -99,15 +121,26 @@ public final class AnthropicDialect implements ProviderDialect {
                 for (final JsonObject inner : Json.objects(block, "content")) {
                     if ("text".equals(Json.string(inner, "type"))) {
                         slots.addString(inner, "text");
+                    } else if ("search_result".equals(Json.string(inner, "type"))) {
+                        addSearchResult(slots, inner);
                     }
                 }
             }
+            case "search_result" -> addSearchResult(slots, block);
             case "thinking" -> {
                 if (response) {
                     slots.addString(block, "thinking");
                 }
             }
             default -> { }
+        }
+    }
+
+    /** A search result's title and the text of its content blocks. Its source URL is left alone. */
+    private static void addSearchResult(final TextSlots slots, final JsonObject block) {
+        slots.addString(block, "title");
+        for (final JsonObject inner : Json.objects(block, "content")) {
+            slots.addString(inner, "text");
         }
     }
 
@@ -124,7 +157,13 @@ public final class AnthropicDialect implements ProviderDialect {
 
     @Override
     public String model(final String path, final JsonObject body) {
-        return ProviderDialect.modelMember(body);
+        // A batch names a model per request: it has a model only when they all name the same one, so a model scope
+        // cannot be passed by one allowed request among others.
+        final java.util.Set<String> models = new java.util.HashSet<>();
+        for (final JsonObject request : requests(path, body)) {
+            models.add(ProviderDialect.modelMember(request));
+        }
+        return models.size() == 1 ? models.iterator().next() : null;
     }
 
     @Override

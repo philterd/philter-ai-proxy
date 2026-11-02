@@ -84,8 +84,8 @@ public final class UpstreamClient {
 
     /**
      * @param target               The base URL requests are sent to.
-     * @param forwardClientHeaders Whether the client's headers are forwarded; when not, only {@code Content-Type}
-     *                             and the provider's authentication are sent.
+     * @param forwardClientHeaders Whether the client's headers are forwarded; when not, only {@code Content-Type},
+     *                             {@code X-Amzn-Bedrock-*} headers, and the provider's authentication are sent.
      * @param authentication       The provider's own authentication, or null to pass the client's through.
      */
     public UpstreamClient(final String name, final String target, final ProxyProperties.Provider provider,
@@ -107,6 +107,11 @@ public final class UpstreamClient {
 
     public String name() {
         return name;
+    }
+
+    /** Whether requests are authenticated with the proxy's own credential rather than the client's. */
+    public boolean usesOwnCredential() {
+        return authentication != null;
     }
 
     public String target() {
@@ -153,6 +158,13 @@ public final class UpstreamClient {
             }
         } else {
             headers.put("Content-Type", List.of("application/json"));
+            // Bedrock takes request settings, such as a guardrail or the latency tier, in these headers. They are
+            // signed with the rest of the request.
+            for (final String header : Collections.list(request.getHeaderNames())) {
+                if (header.toLowerCase(Locale.ROOT).startsWith("x-amzn-bedrock-")) {
+                    headers.put(header, Collections.list(request.getHeaders(header)));
+                }
+            }
         }
         if (authentication != null) {
             try {

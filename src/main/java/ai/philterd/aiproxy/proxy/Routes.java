@@ -22,7 +22,8 @@ import java.util.function.UnaryOperator;
 /** Chooses the policy, context, and outbound scanning for a request. */
 public final class Routes {
 
-    public record Resolved(String policy, String context, ProxyProperties.Outbound outbound, ProxyProperties.Media media) {
+    public record Resolved(String policy, String context, ProxyProperties.Outbound outbound,
+                           ProxyProperties.Mode media, ProxyProperties.Mode unsupportedEndpoints) {
     }
 
     private Routes() {
@@ -30,14 +31,27 @@ public final class Routes {
 
     /**
      * The first route whose every set condition matches, else the defaults. A route without a policy or context
-     * uses the default's; a route without outbound settings does not scan responses; a route without a media
-     * setting uses the default's.
+     * uses the default's; a route without outbound settings does not scan responses; a route without a media or
+     * unsupported-endpoints setting uses the default's.
      */
     public static Resolved resolve(final ProxyProperties properties, final String path, final String model,
                                    final UnaryOperator<String> header) {
+        return resolve(properties, path, model, header, false);
+    }
+
+    /**
+     * @param skipHeaderRoutes Skip routes that match on a header. A header is chosen by the client, so a key whose
+     *                         policy is bound must not be able to pick a route that forwards media, turns off response
+     *                         scanning, or names a context.
+     */
+    public static Resolved resolve(final ProxyProperties properties, final String path, final String model,
+                                   final UnaryOperator<String> header, final boolean skipHeaderRoutes) {
         final ProxyProperties.Defaults defaults = properties.defaults();
         for (final ProxyProperties.Route route : properties.routes()) {
             final ProxyProperties.Match match = route.match();
+            if (skipHeaderRoutes && match.header() != null && !match.header().isBlank()) {
+                continue;
+            }
             if (match.header() != null && !match.header().isBlank()
                     && !java.util.Objects.equals(header.apply(match.header()), match.value())) {
                 continue;
@@ -51,9 +65,11 @@ public final class Routes {
             return new Resolved(route.policy() == null ? defaults.policy() : route.policy(),
                     route.context() == null ? defaults.context() : route.context(),
                     route.outbound() == null ? ProxyProperties.Outbound.DISABLED : route.outbound(),
-                    route.media() == null ? defaults.media() : route.media());
+                    route.media() == null ? defaults.media() : route.media(),
+                    route.unsupportedEndpoints() == null ? defaults.unsupportedEndpoints() : route.unsupportedEndpoints());
         }
-        return new Resolved(defaults.policy(), defaults.context(), defaults.outbound(), defaults.media());
+        return new Resolved(defaults.policy(), defaults.context(), defaults.outbound(), defaults.media(),
+                defaults.unsupportedEndpoints());
     }
 
 }

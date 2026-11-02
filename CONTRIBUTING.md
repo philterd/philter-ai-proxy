@@ -42,6 +42,10 @@ Test fixtures use invented values only: never a real person's name, email addres
 
 After changing the Helm chart, regenerate the plain manifests with `deploy/k8s/generate.sh`. CI fails when they differ from what the chart renders.
 
+### Contract tests
+
+`test/contract/run.sh` runs each provider's official SDK (OpenAI, Azure OpenAI, Anthropic, Google Gen AI, boto3, and Ollama) against the proxy and a provider simulator, with a real Ollama server. It needs Docker. See `test/contract/README.md`.
+
 ### Load tests
 
 See `test/load/README.md`.

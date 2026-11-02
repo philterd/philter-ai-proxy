@@ -47,6 +47,8 @@ Each request to a provider produces one audit entry, written:
 - to standard output as one JSON line, through the `philter-ai-proxy.audit` logger;
 - and to `proxy.audit.file` when it is set, as one JSON line, in a file created readable only by the proxy's user.
 
+The database copy is kept until `proxy.audit.retention-days` removes it (off by default). The `model` field holds at most 256 characters of what the client sent.
+
 ```json
 {"timestamp":"2026-11-01T14:02:11.482Z","request_id":"6f1c...","event":"proxy_request","provider":"openai","model":"gpt-4o-mini","policy_name":"default","key_id":"5f0c8a4e-...","trace_id":"4bf92f3577b34da6a3ce929d0e0e4736","client_ip":"203.0.113.50","http_status":200,"fields_redacted":1,"entity_count":2,"entity_types":{"email-address":1,"name":1},"redact_latency_ms":31,"duration_ms":842,"streamed":false}
 ```

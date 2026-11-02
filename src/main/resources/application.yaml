@@ -73,3 +73,5 @@ proxy:
       action: redact
     # reject: refuse requests carrying images, audio, video, or files, which are not redacted. forward: send them on.
     media: reject
+    # reject: refuse requests the proxy cannot redact, or whose responses it cannot scan when scanning is on.
+    unsupported-endpoints: reject

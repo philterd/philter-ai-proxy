@@ -34,7 +34,7 @@ public final class NdjsonFraming implements Framing {
             StreamScanner.BlockedException, StreamScanner.UnscannableException {
         final BufferedReader reader = new BufferedReader(new InputStreamReader(in, StandardCharsets.UTF_8));
         String line;
-        while ((line = reader.readLine()) != null) {
+        while ((line = ResponseTooLargeException.readLine(reader)) != null) {
             if (line.isBlank()) {
                 continue;
             }

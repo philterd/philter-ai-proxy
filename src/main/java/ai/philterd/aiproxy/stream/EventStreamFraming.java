@@ -35,7 +35,7 @@ import java.util.zip.CRC32;
  * The AWS event stream binary framing, as Bedrock's ConverseStream sends it. Each message is a 12-byte prelude
  * (total length, headers length, prelude CRC32), headers, a JSON payload, and a CRC32 of the whole message. An
  * {@code event} message is passed on as a JSON event typed by its {@code :event-type} header; any other message
- * (an exception or error) is forwarded unchanged. A message with a bad checksum cannot be scanned.
+ * (an exception or error) ends the stream and cannot be scanned. A message with a bad checksum cannot be scanned.
  */
 public final class EventStreamFraming implements Framing {
 
@@ -82,9 +82,11 @@ public final class EventStreamFraming implements Framing {
                 return;
             }
             if (!"event".equals(headers.get(":message-type"))) {
-                // An exception or error message ends the stream.
-                handler.onPassThrough(message, true);
-                continue;
+                // An exception or error message ends the stream. Its text is not scanned, so it is treated as
+                // unreadable: the stream is ended with an error, or under flag forwarded as it is. Nothing after it
+                // is read.
+                handler.onUnreadable(message);
+                return;
             }
             final String payload = new String(message, 12 + headersLength, total - 16 - headersLength, StandardCharsets.UTF_8);
             final JsonElement parsed;
@@ -143,8 +145,25 @@ public final class EventStreamFraming implements Framing {
         header(headers, ":event-type", event.type() == null ? "" : event.type());
         header(headers, ":content-type", "application/json");
         header(headers, ":message-type", "event");
-        final byte[] h = headers.toByteArray();
-        final byte[] payload = event.json().toString().getBytes(StandardCharsets.UTF_8);
+        return message(headers.toByteArray(), event.json().toString().getBytes(StandardCharsets.UTF_8));
+    }
+
+    /**
+     * An error message ({@code :message-type error}), which AWS SDKs raise with its code and message. An event named
+     * "error" is not in any Bedrock stream's event union, so SDKs would skip it and the stream would just stop; an
+     * exception message is read against the SDK's model of known exceptions, which loses an unknown code.
+     */
+    @Override
+    public byte[] encodeError(final String code, final com.google.gson.JsonObject error) {
+        final ByteArrayOutputStream headers = new ByteArrayOutputStream();
+        header(headers, ":message-type", "error");
+        header(headers, ":error-code", code);
+        header(headers, ":error-message", error.getAsJsonObject("error").get("message").getAsString());
+        header(headers, ":content-type", "application/json");
+        return message(headers.toByteArray(), error.toString().getBytes(StandardCharsets.UTF_8));
+    }
+
+    private static byte[] message(final byte[] h, final byte[] payload) {
         final int total = 12 + h.length + payload.length + 4;
         final ByteBuffer b = ByteBuffer.allocate(total);
         b.putInt(total).putInt(h.length);

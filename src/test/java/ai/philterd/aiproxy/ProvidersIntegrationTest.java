@@ -107,9 +107,18 @@ class ProvidersIntegrationTest {
         }
         // The provider tests send images to check they are forwarded unchanged; refusal is tested with x-media.
         registry.add("proxy.defaults.media", () -> "forward");
+        registry.add("proxy.limits.max-response-body-bytes", () -> "65536");
         registry.add("proxy.routes[2].match.header", () -> "x-media");
         registry.add("proxy.routes[2].match.value", () -> "reject");
         registry.add("proxy.routes[2].media", () -> "reject");
+        registry.add("proxy.routes[3].match.header", () -> "x-unsupported");
+        registry.add("proxy.routes[3].match.value", () -> "forward");
+        registry.add("proxy.routes[3].unsupported-endpoints", () -> "forward");
+        registry.add("proxy.routes[4].match.header", () -> "x-unsupported");
+        registry.add("proxy.routes[4].match.value", () -> "forward-scanned");
+        registry.add("proxy.routes[4].unsupported-endpoints", () -> "forward");
+        registry.add("proxy.routes[4].outbound.enabled", () -> "true");
+        registry.add("proxy.routes[4].outbound.action", () -> "block");
     }
 
     @TestConfiguration
@@ -318,6 +327,14 @@ class ProvidersIntegrationTest {
                 {"/model/anthropic.claude-3-haiku/converse", "{\"messages\":[{\"role\":\"user\",\"content\":[{\"toolResult\":{\"toolUseId\":\"t\",\"content\":[{\"image\":{\"format\":\"png\",\"source\":{\"bytes\":\"AAAA\"}}}]}}]}]}", "image"},
                 {"/api/chat", "{\"model\":\"llama\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\",\"images\":[\"AAAA\"]}]}", "images"},
                 {"/api/generate", "{\"model\":\"llama\",\"prompt\":\"hi\",\"images\":[\"AAAA\"]}", "images"},
+                {"/v1beta/models/gemini-embedding-001:embedContent", "{\"content\":{\"parts\":[{\"inlineData\":{\"mimeType\":\"image/png\",\"data\":\"AAAA\"}}]}}", "inlineData"},
+                {"/v1beta/models/gemini-embedding-001:batchEmbedContents", "{\"requests\":[{\"content\":{\"parts\":[{\"text\":\"a\"}]}},{\"content\":{\"parts\":[{\"fileData\":{\"fileUri\":\"gs://b/f.png\"}}]}}]}", "fileData"},
+                {"/v1beta/models/gemini-2.5-flash:countTokens", "{\"generateContentRequest\":{\"model\":\"models/gemini-2.5-flash\",\"contents\":[{\"parts\":[{\"inlineData\":{\"mimeType\":\"image/png\",\"data\":\"AAAA\"}}]}]}}", "inlineData"},
+                {"/model/anthropic.claude-3-haiku-20240307-v1%3A0/invoke", "{\"anthropic_version\":\"bedrock-2023-05-31\",\"max_tokens\":1,"
+                        + "\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"image\",\"source\":{\"type\":\"base64\",\"data\":\"AAAA\"}}]}]}", "image"},
+                {"/model/amazon.titan-embed-image-v1/invoke", "{\"inputText\":\"a cat\",\"inputImage\":\"AAAA\"}", "inputImage"},
+                {"/model/cohere.embed-v4%3A0/invoke", "{\"images\":[\"data:image/png;base64,AAAA\"],\"input_type\":\"image\"}", "images"},
+                {"/model/cohere.embed-v4%3A0/invoke", "{\"inputs\":[{\"content\":[{\"type\":\"text\",\"text\":\"a\"},{\"type\":\"image_url\",\"image_url\":\"data:image/png;base64,AAAA\"}]}]}", "image_url"},
         };
         for (final String[] c : cases) {
             final HttpResponse<byte[]> response = post(c[0], c[1], "x-media", "reject");
@@ -402,6 +419,53 @@ class ProvidersIntegrationTest {
         }
         assertEquals("Your SSN is " + R_SSN + " ok.", out.toString());
         assertTrue(stream.contains(R_EMAIL) && stream.contains("usageMetadata") && stream.contains("STOP"));
+    }
+
+    @Test
+    void geminiEmbeddingsAreRedacted() throws Exception {
+        STUB.reply("application/json", "{\"embedding\":{\"values\":[0.1,0.2]}}");
+        final HttpResponse<byte[]> embed = post("/v1beta/models/gemini-embedding-001:embedContent", """
+                {"content":{"parts":[{"text":"SSN %1$s"}]},"taskType":"RETRIEVAL_DOCUMENT","title":"mail %2$s","outputDimensionality":256}"""
+                .formatted(SSN, EMAIL), "x-out", "block");
+        assertEquals(200, embed.statusCode(), text(embed));
+        assertEquals("/v1beta/models/gemini-embedding-001:embedContent", STUB.lastPath);
+        assertNoOriginals(sent());
+        assertEquals("mail " + R_EMAIL, STUB.lastBody().get("title").getAsString());
+        assertEquals(256, STUB.lastBody().get("outputDimensionality").getAsInt());
+        assertTrue(text(embed).contains("[0.1,0.2]"), text(embed));
+
+        // The v1 API is routed to Gemini by its method, like v1beta.
+        STUB.reply("application/json", "{\"embeddings\":[{\"values\":[0.1]},{\"values\":[0.2]}]}");
+        assertEquals(200, post("/v1/models/gemini-embedding-001:batchEmbedContents", """
+                {"requests":[{"model":"models/gemini-embedding-001","content":{"parts":[{"text":"SSN %1$s"}]}},
+                  {"model":"models/gemini-embedding-001","content":{"parts":[{"text":"x"}]},"title":"mail %2$s"}]}"""
+                .formatted(SSN, EMAIL), "x-goog-api-key", "g-key").statusCode());
+        assertEquals("/v1/models/gemini-embedding-001:batchEmbedContents", STUB.lastPath);
+        assertEquals("g-key", STUB.lastHeaders.getFirst("x-goog-api-key"));
+        assertNoOriginals(sent());
+        assertTrue(sent().contains(R_SSN), sent());
+    }
+
+    @Test
+    void geminiTokenCountsAreRedacted() throws Exception {
+        STUB.reply("application/json", "{\"totalTokens\":12}");
+        assertEquals(200, post("/v1beta/models/gemini-2.5-flash:countTokens", "{\"contents\":[{\"role\":\"user\",\"parts\":[{\"text\":\"SSN "
+                + SSN + "\"}]}]}", "x-out", "redact").statusCode());
+        assertEquals("/v1beta/models/gemini-2.5-flash:countTokens", STUB.lastPath);
+        assertNoOriginals(sent());
+        assertTrue(sent().contains(R_SSN), sent());
+        // A wrapped generateContentRequest, as the SDKs send with a system instruction or tools.
+        assertEquals(200, post("/v1beta/models/gemini-2.5-flash:countTokens", """
+                {"generateContentRequest":{"model":"models/gemini-2.5-flash","contents":[{"role":"user","parts":[{"text":"SSN %1$s"}]}],
+                 "systemInstruction":{"parts":[{"text":"mail %2$s"}]}}}""".formatted(SSN, EMAIL)).statusCode());
+        assertNoOriginals(sent());
+        assertTrue(sent().contains(R_EMAIL), sent());
+        // Vertex AI's countTokens has the same shape, and goes to Vertex AI with the proxy's credential.
+        final String vertex = "/v1/projects/test-project/locations/us-central1/publishers/google/models/gemini-2.5-pro:countTokens";
+        assertEquals(200, post(vertex, "{\"contents\":[{\"role\":\"user\",\"parts\":[{\"text\":\"SSN " + SSN + "\"}]}]}").statusCode());
+        assertEquals(vertex, STUB.lastPath);
+        assertEquals("Bearer google-test-token", STUB.lastHeaders.getFirst("Authorization"));
+        assertNoOriginals(sent());
     }
 
     @Test
@@ -524,6 +588,187 @@ class ProvidersIntegrationTest {
         assertNoOriginals(new String(response.body(), StandardCharsets.UTF_8));
     }
 
+    @Test
+    void bedrockInvokeClaudeIsSignedRedactedAndScanned() throws Exception {
+        STUB.reply("application/json", "{\"id\":\"msg_1\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"SSN "
+                + SSN + "\"}],\"stop_reason\":\"end_turn\",\"amazon-bedrock-guardrailAction\":\"NONE\",\"amazon-bedrock-trace\":{\"guardrail\":"
+                + "{\"output\":[{\"match\":\"" + EMAIL + "\"}]}}}");
+        final String request = """
+                {"anthropic_version":"bedrock-2023-05-31","max_tokens":10,"system":"ssn %1$s",
+                 "messages":[{"role":"user","content":[{"type":"text","text":"mail %2$s"}]}]}""".formatted(SSN, EMAIL);
+        final HttpResponse<byte[]> response = post("/model/us.anthropic.claude-sonnet-4-20250514-v1%3A0/invoke", request, "x-out", "redact",
+                "X-Amzn-Bedrock-GuardrailIdentifier", "gr-1", "X-Custom", "not forwarded");
+        assertEquals(200, response.statusCode(), text(response));
+        assertEquals("/model/us.anthropic.claude-sonnet-4-20250514-v1%3A0/invoke", STUB.lastPath);
+        assertNoOriginals(sent());
+        assertEquals("bedrock-2023-05-31", STUB.lastBody().get("anthropic_version").getAsString());
+        final String auth = STUB.lastHeaders.getFirst("Authorization");
+        assertTrue(auth.contains("/us-east-1/bedrock/aws4_request"), auth);
+        // Bedrock's settings headers are forwarded and signed; other client headers are not forwarded.
+        assertEquals("gr-1", STUB.lastHeaders.getFirst("X-Amzn-Bedrock-GuardrailIdentifier"));
+        assertTrue(auth.contains("x-amzn-bedrock-guardrailidentifier"), auth);
+        assertNull(STUB.lastHeaders.getFirst("X-Custom"));
+        assertNoOriginals(text(response));
+        assertTrue(text(response).contains("SSN " + R_SSN), text(response));
+        // The guardrail trace quotes matched text the scan does not read, so it is removed.
+        assertFalse(text(response).contains("amazon-bedrock-trace"), text(response));
+        assertTrue(text(response).contains("amazon-bedrock-guardrailAction"), text(response));
+    }
+
+    @Test
+    void bedrockInvokeClaudeStreamIsScanned() throws Exception {
+        final EventStreamFraming framing = new EventStreamFraming();
+        final java.util.function.Function<String, byte[]> chunk = inner -> framing.encode(new StreamEvent("chunk",
+                json("{\"bytes\":\"" + java.util.Base64.getEncoder().encodeToString(inner.getBytes(StandardCharsets.UTF_8)) + "\",\"p\":\"abcd\"}")));
+        final List<byte[]> frames = new ArrayList<>();
+        frames.add(chunk.apply("{\"type\":\"message_start\",\"message\":{\"id\":\"msg_1\",\"role\":\"assistant\",\"content\":[]}}"));
+        frames.add(chunk.apply("{\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}"));
+        for (final String piece : new String[]{"Your SSN is 12", "3-45-67", "89, ok."}) {
+            frames.add(chunk.apply("{\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"" + piece + "\"}}"));
+        }
+        frames.add(chunk.apply("{\"type\":\"content_block_stop\",\"index\":0}"));
+        frames.add(chunk.apply("{\"type\":\"message_stop\",\"amazon-bedrock-invocationMetrics\":{\"inputTokenCount\":5},"
+                + "\"amazon-bedrock-trace\":{\"guardrail\":{\"match\":\"" + EMAIL + "\"}}}"));
+        STUB.reply("application/vnd.amazon.eventstream", frames);
+
+        final HttpResponse<byte[]> response = post("/model/anthropic.claude-3-haiku-20240307-v1%3A0/invoke-with-response-stream",
+                "{\"anthropic_version\":\"bedrock-2023-05-31\",\"max_tokens\":10,\"messages\":[{\"role\":\"user\",\"content\":\"ssn " + SSN + "\"}]}",
+                "x-out", "redact");
+        assertEquals(200, response.statusCode(), text(response));
+        assertNoOriginals(sent());
+        final List<JsonObject> inner = new ArrayList<>();
+        framing.read(new ByteArrayInputStream(response.body()), new ai.philterd.aiproxy.stream.Framing.Handler() {
+            @Override
+            public void onEvent(final StreamEvent event) {
+                assertEquals("chunk", event.type());
+                inner.add(json(new String(java.util.Base64.getDecoder().decode(event.json().get("bytes").getAsString()), StandardCharsets.UTF_8)));
+            }
+
+            @Override
+            public void onPassThrough(final byte[] raw, final boolean end) {
+            }
+
+            @Override
+            public void onUnreadable(final byte[] raw) {
+                throw new AssertionError("the proxy sent an unreadable frame");
+            }
+        });
+        final StringBuilder textOut = new StringBuilder();
+        for (final JsonObject e : inner) {
+            if ("content_block_delta".equals(e.get("type").getAsString())) {
+                textOut.append(e.getAsJsonObject("delta").get("text").getAsString());
+            }
+            assertNoOriginals(e.toString());
+        }
+        assertEquals("Your SSN is " + R_SSN + ", ok.", textOut.toString());
+        assertEquals("message_stop", inner.getLast().get("type").getAsString());
+        assertTrue(inner.getLast().has("amazon-bedrock-invocationMetrics"));
+        assertFalse(inner.getLast().has("amazon-bedrock-trace"));
+    }
+
+    @Test
+    void bedrockInvokeEmbeddingInputIsRedacted() throws Exception {
+        STUB.reply("application/json", "{\"embedding\":[0.1,0.2],\"inputTextTokenCount\":3}");
+        assertEquals(200, post("/model/amazon.titan-embed-text-v2%3A0/invoke", "{\"inputText\":\"ssn " + SSN + "\",\"dimensions\":256}").statusCode());
+        assertNoOriginals(sent());
+        assertTrue(sent().contains(R_SSN), sent());
+        assertEquals(256, STUB.lastBody().get("dimensions").getAsInt());
+
+        STUB.reply("application/json", "{\"embeddings\":[[0.1],[0.2]],\"id\":\"e\"}");
+        assertEquals(200, post("/model/cohere.embed-english-v3/invoke", "{\"texts\":[\"ssn " + SSN + "\",\"mail " + EMAIL
+                + "\"],\"input_type\":\"search_document\"}").statusCode());
+        assertNoOriginals(sent());
+        assertEquals(200, post("/model/cohere.embed-v4%3A0/invoke", "{\"inputs\":[{\"content\":[{\"type\":\"text\",\"text\":\"ssn "
+                + SSN + "\"}]}],\"input_type\":\"search_query\"}").statusCode());
+        assertNoOriginals(sent());
+        assertTrue(sent().contains(R_SSN), sent());
+    }
+
+    @Test
+    void bedrockInvokeOfOtherModelsIsRefused() throws Exception {
+        final String[][] cases = {
+                {"/model/meta.llama3-8b-instruct-v1%3A0/invoke", "{\"prompt\":\"ssn " + SSN + "\"}", "unsupported_endpoint"},
+                {"/model/amazon.titan-embed-text-v2%3A0/invoke-with-response-stream", "{\"inputText\":\"ssn " + SSN + "\"}", "unsupported_endpoint"},
+        };
+        for (final String[] c : cases) {
+            final HttpResponse<byte[]> response = post(c[0], c[1]);
+            assertEquals(400, response.statusCode(), c[0]);
+            assertTrue(text(response).contains(c[2]), c[0] + ": " + text(response));
+            // AWS SDKs read the code from this header and the message from a top-level "message".
+            assertEquals(c[2], response.headers().firstValue("x-amzn-ErrorType").orElse(null));
+            assertTrue(json(text(response)).get("message").getAsString().startsWith(c[2] + ": "), text(response));
+        }
+        assertEquals(0, STUB.requests);
+    }
+
+    @Test
+    void bedrockConverseGuardrailTraceIsRemoved() throws Exception {
+        STUB.reply("application/json", "{\"output\":{\"message\":{\"role\":\"assistant\",\"content\":[{\"text\":\"ok\"}]}},"
+                + "\"stopReason\":\"end_turn\",\"trace\":{\"guardrail\":{\"outputAssessments\":{\"g\":[{\"match\":\"" + EMAIL + "\"}]}}}}");
+        final HttpResponse<byte[]> response = post("/model/m/converse", "{\"messages\":[]}", "x-out", "redact");
+        assertEquals(200, response.statusCode());
+        assertNoOriginals(text(response));
+        assertFalse(text(response).contains("\"trace\""), text(response));
+    }
+
+    @Test
+    void bedrockInvokeLegacyClaudeIsRedactedAndItsStreamRefusedUnderScanning() throws Exception {
+        STUB.reply("application/json", "{\"completion\":\" SSN " + SSN + "\",\"stop_reason\":\"stop_sequence\"}");
+        final HttpResponse<byte[]> response = post("/model/anthropic.claude-v2%3A1/invoke",
+                "{\"prompt\":\"\\n\\nHuman: SSN " + SSN + "\\n\\nAssistant:\",\"max_tokens_to_sample\":50}", "x-out", "redact");
+        assertEquals(200, response.statusCode(), text(response));
+        assertNoOriginals(sent());
+        assertTrue(sent().contains(R_SSN), sent());
+        assertNoOriginals(text(response));
+
+        // A legacy stream's chunks are not Messages events, so under scanning the stream is ended with an exception.
+        final EventStreamFraming framing = new EventStreamFraming();
+        STUB.reply("application/vnd.amazon.eventstream", List.of(framing.encode(new StreamEvent("chunk", json("{\"bytes\":\""
+                + java.util.Base64.getEncoder().encodeToString(("{\"completion\":\"SSN " + SSN + "\"}").getBytes(StandardCharsets.UTF_8)) + "\"}")))));
+        final HttpResponse<byte[]> stream = post("/model/anthropic.claude-v2%3A1/invoke-with-response-stream",
+                "{\"prompt\":\"\\n\\nHuman: hi\\n\\nAssistant:\",\"max_tokens_to_sample\":5}", "x-out", "redact");
+        final String body = new String(stream.body(), StandardCharsets.UTF_8);
+        assertNoOriginals(body);
+        // AWS SDKs raise an error message with its code; an event named "error" would be skipped.
+        assertTrue(body.contains(":message-type") && body.contains(":error-code") && body.contains("response_unscannable"), body);
+    }
+
+    @Test
+    void bodylessRequestsToProvidersUsingTheProxysCredentialAreRefused() throws Exception {
+        // The proxy would otherwise act with its own Google or AWS credential for any key, on any endpoint.
+        for (final String[] c : new String[][]{
+                {"GET", "/v1/projects/test-project/locations/us-central1/cachedContents"},
+                {"DELETE", "/v1/projects/test-project/locations/us-central1/endpoints/123"},
+                {"POST", "/v1/projects/test-project/locations/us-central1/tuningJobs/t1:cancel"},
+                {"GET", "/model/anthropic.claude-3-haiku-20240307-v1%3A0/invoke"}}) {
+            final HttpResponse<byte[]> response = send(c[0], c[1], null);
+            assertEquals(400, response.statusCode(), c[1]);
+            assertTrue(text(response).contains("unsupported_endpoint") && text(response).contains("own credential"), text(response));
+        }
+        assertEquals(0, STUB.requests);
+        // A provider that receives the client's own credential still forwards bodyless requests.
+        assertEquals(200, send("GET", "/v1/models", null).statusCode());
+    }
+
+    @Test
+    void vertexCountTokensInstancesAreRedacted() throws Exception {
+        STUB.reply("application/json", "{\"totalTokens\":3}");
+        assertEquals(200, post("/v1/projects/test-project/locations/us-central1/publishers/google/models/gemini-2.5-flash:countTokens",
+                "{\"instances\":[{\"prompt\":\"SSN " + SSN + "\",\"nested\":{\"t\":\"mail " + EMAIL + "\"}}]}").statusCode());
+        assertNoOriginals(sent());
+        assertTrue(sent().contains(R_SSN), sent());
+    }
+
+    @Test
+    void anyGenerateContentMethodGoesToGemini() throws Exception {
+        STUB.reply("application/json", "{}");
+        // Not a method the proxy reads, so refused, but by Gemini's route, not sent to OpenAI with the Google key.
+        final HttpResponse<byte[]> response = post("/v1/models/gemini-2.5-flash:batchGenerateContent", "{\"batch\":{}}", "x-goog-api-key", "g");
+        assertEquals(400, response.statusCode());
+        assertTrue(text(response).contains("unsupported_endpoint"), text(response));
+        assertEquals(0, STUB.requests);
+    }
+
     // ---- Azure OpenAI and OpenAI-compatible providers
 
     @Test
@@ -609,9 +854,293 @@ class ProvidersIntegrationTest {
     @Test
     void streamsFromEndpointsThatCannotBeScannedAreRefused() throws Exception {
         STUB.replyChunks("text/event-stream", sse("data: {\"x\":1}"));
-        final HttpResponse<byte[]> response = post("/v1/batches", "{\"input_file_id\":\"f\"}", "x-out", "redact");
+        final HttpResponse<byte[]> response = post("/v1/embeddings", "{\"model\":\"e\",\"input\":\"hi\"}", "x-out", "redact");
         assertEquals(502, response.statusCode());
         assertTrue(text(response).contains("response_unscannable"));
+    }
+
+    // ---- lower-severity hardening
+
+    @Test
+    void binaryResponsesAreReturnedUnscannedOnlyFromSpeech() throws Exception {
+        STUB.reply("application/octet-stream", "SSN 123-45-6789");
+        final HttpResponse<byte[]> chat = post("/v1/chat/completions", "{\"model\":\"m\",\"messages\":[]}", "x-out", "redact");
+        assertEquals(502, chat.statusCode());
+        assertTrue(text(chat).contains("response_unscannable"));
+        STUB.reply("audio/mpeg", "ID3");
+        assertEquals(200, post("/v1/audio/speech", "{\"model\":\"tts\",\"input\":\"hi\"}", "x-out", "redact").statusCode());
+    }
+
+    @Test
+    void redirectsAreRefusedWhenScanning() throws Exception {
+        STUB.status(302);
+        STUB.reply("text/plain", "SSN 123-45-6789");
+        final HttpResponse<byte[]> scanned = post("/v1/chat/completions", "{\"model\":\"m\",\"messages\":[]}", "x-out", "redact");
+        assertEquals(502, scanned.statusCode());
+        assertNoOriginals(text(scanned));
+        assertEquals(302, post("/v1/chat/completions", "{\"model\":\"m\",\"messages\":[]}").statusCode());
+    }
+
+    @Test
+    void unscannedStreamLinesAreNotForwarded() throws Exception {
+        STUB.replyChunks("text/event-stream", sse(
+                ": keep-alive 123-45-6789",
+                "id: 123-45-6789\nretry: 5",
+                "data: {\"id\":\"c\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}",
+                "id: 123-45-6789\ndata: [DONE]"));
+        final String out = text(post("/v1/chat/completions", "{\"model\":\"m\",\"stream\":true,\"messages\":[]}", "x-out", "redact"));
+        assertNoOriginals(out);
+        assertTrue(out.contains(":\n\n") && out.contains("data: [DONE]"), out);
+
+        STUB.replyChunks("text/event-stream", sse("event: SSN 123-45-6789\ndata: {\"id\":\"c\",\"choices\":[]}"));
+        final String named = text(post("/v1/chat/completions", "{\"model\":\"m\",\"stream\":true,\"messages\":[]}", "x-out", "redact"));
+        assertNoOriginals(named);
+        assertTrue(named.contains("response_unscannable"), named);
+    }
+
+    @Test
+    void anInterruptedStreamEndsWithAnError() throws Exception {
+        STUB.replyChunks("text/event-stream", sse("data: {\"id\":\"c\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"partial\"}}]}"));
+        STUB.abortAfterChunks();
+        final String out = text(post("/v1/chat/completions", "{\"model\":\"m\",\"stream\":true,\"messages\":[]}", "x-out", "redact"));
+        assertTrue(out.contains("stream_interrupted"), out);
+    }
+
+    @Test
+    void pathScopesIncludeTheCompatibleProvidersPrefix() throws Exception {
+        final String chatOnly = keys.create("chat-only", new KeyScopes(Set.of(KeyScopes.Role.proxy), List.of(), List.of(),
+                List.of("/v1/chat/completions"), null)).secret();
+        final String body = "{\"model\":\"m\",\"messages\":[]}";
+        assertEquals(403, sendWithKey(chatOnly, "/local/v1/chat/completions", body).statusCode());
+        assertEquals(200, sendWithKey(chatOnly, "/v1/chat/completions", body).statusCode());
+        final String local = keys.create("local", new KeyScopes(Set.of(KeyScopes.Role.proxy), List.of(), List.of(),
+                List.of("/local/v1"), null)).secret();
+        assertEquals(200, sendWithKey(local, "/local/v1/chat/completions", body).statusCode());
+    }
+
+    @Test
+    void vertexPathsMustNameTheConfiguredProject() throws Exception {
+        final HttpResponse<byte[]> response = post("/v1/projects/other-project/locations/us-central1/publishers/google/models/g:generateContent",
+                "{\"contents\":[]}");
+        assertEquals(403, response.statusCode());
+        assertTrue(text(response).contains("vertex_project_denied"));
+        // Every project path is checked, whatever its method, including requests without a body.
+        for (final String path : new String[]{"/v1/projects/other-project/locations/us-central1/publishers/google/models/g:countTokens",
+                "/v1beta1/projects/other-project/locations/us-central1/endpoints"}) {
+            final HttpResponse<byte[]> other = send("GET", path, null);
+            assertEquals(403, other.statusCode(), path);
+            assertTrue(text(other).contains("vertex_project_denied"), text(other));
+        }
+        assertEquals(0, STUB.requests);
+    }
+
+    @Test
+    void fieldsGoFoldsToARedactedFieldAreRefused() throws Exception {
+        // Go's encoding/json matches "meſſages" (long s) to Messages, and a second "Model" key overrides "model".
+        for (final String body : new String[]{
+                "{\"model\":\"m\",\"me\u017f\u017fages\":[{\"role\":\"user\",\"content\":\"SSN " + SSN + "\"}]}",
+                "{\"model\":\"m\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\",\"tool_calls\":[{\"function\":{\"name\":\"f\",\"argument\u017f\":{\"s\":\"" + SSN + "\"}}}]}]}",
+                "{\"model\":\"allowed\",\"Model\":\"other\",\"messages\":[]}"}) {
+            final HttpResponse<byte[]> response = post("/api/chat", body);
+            assertEquals(400, response.statusCode(), body);
+            assertTrue(text(response).contains("ambiguous_field"), text(response));
+        }
+        assertEquals(0, STUB.requests);
+    }
+
+    @Test
+    void fieldsSpelledInAnotherCaseAreRefused() throws Exception {
+        final HttpResponse<byte[]> ollama = post("/api/chat", "{\"model\":\"m\",\"Messages\":[{\"role\":\"user\",\"content\":\"SSN " + SSN + "\"}]}");
+        assertEquals(400, ollama.statusCode());
+        assertTrue(text(ollama).contains("ambiguous_field"));
+        final HttpResponse<byte[]> nested = post("/v1/chat/completions", "{\"model\":\"m\",\"messages\":[{\"role\":\"user\",\"Content\":\"SSN " + SSN + "\"}]}");
+        assertEquals(400, nested.statusCode());
+        assertEquals(0, STUB.requests);
+        // A tool schema's own property names are the application's, not fields the proxy reads.
+        assertEquals(200, post("/v1/chat/completions", "{\"model\":\"m\",\"messages\":[],\"tools\":[{\"type\":\"function\","
+                + "\"function\":{\"name\":\"f\",\"parameters\":{\"type\":\"object\",\"properties\":{\"Content\":{\"type\":\"string\"}}}}}]}").statusCode());
+        // Anthropic's servers read field names exactly, so the check does not apply there.
+        assertEquals(200, post("/v1/messages", "{\"model\":\"m\",\"max_tokens\":1,\"messages\":[],\"Metadata\":{}}").statusCode());
+    }
+
+    HttpResponse<byte[]> sendWithKey(final String secret, final String path, final String body) throws Exception {
+        return http.send(HttpRequest.newBuilder(URI.create("http://localhost:" + port + path)).header("x-philter-proxy-key", secret)
+                .header("Content-Type", "application/json").POST(HttpRequest.BodyPublishers.ofString(body)).build(),
+                HttpResponse.BodyHandlers.ofByteArray());
+    }
+
+    // ---- response limits and reasoning text
+
+    @Test
+    void aBufferedResponseLargerThanTheLimitIsRefused() throws Exception {
+        STUB.reply("application/json", "{\"choices\":[{\"message\":{\"content\":\"" + "a".repeat(70_000) + "\"}}]}");
+        final HttpResponse<byte[]> response = post("/v1/chat/completions", "{\"model\":\"m\",\"messages\":[]}", "x-out", "redact");
+        assertEquals(502, response.statusCode());
+        assertTrue(text(response).contains("response_too_large"), text(response));
+        // Without scanning the response is passed through, not buffered.
+        assertEquals(200, post("/v1/chat/completions", "{\"model\":\"m\",\"messages\":[]}").statusCode());
+    }
+
+    @Test
+    void reasoningTextIsScannedInStreams() throws Exception {
+        STUB.replyChunks("text/event-stream", sse(
+                "data: {\"id\":\"c\",\"choices\":[{\"index\":0,\"delta\":{\"reasoning_content\":\"SSN 123-\"}}]}",
+                "data: {\"id\":\"c\",\"choices\":[{\"index\":0,\"delta\":{\"reasoning_content\":\"45-6789 ok\"}}]}",
+                "data: {\"id\":\"c\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}",
+                "data: [DONE]"));
+        final String chat = text(post("/local/v1/chat/completions", "{\"model\":\"m\",\"stream\":true,\"messages\":[]}", "x-out", "redact"));
+        assertNoOriginals(chat);
+        assertTrue(chat.contains("REDACTED-ssn"), chat);
+
+        final String item = "\"item_id\":\"rs\",\"output_index\":0,\"summary_index\":0";
+        STUB.replyChunks("text/event-stream", sse(
+                "event: response.reasoning_summary_text.delta\ndata: {\"type\":\"response.reasoning_summary_text.delta\"," + item + ",\"delta\":\"SSN 123-45-6789\"}",
+                "event: response.reasoning_summary_text.done\ndata: {\"type\":\"response.reasoning_summary_text.done\"," + item + ",\"text\":\"SSN 123-45-6789\"}",
+                "event: response.reasoning_summary_part.done\ndata: {\"type\":\"response.reasoning_summary_part.done\"," + item + ",\"part\":{\"type\":\"summary_text\",\"text\":\"SSN 123-45-6789\"}}",
+                "event: response.reasoning_text.delta\ndata: {\"type\":\"response.reasoning_text.delta\",\"item_id\":\"rs\",\"output_index\":1,\"content_index\":0,\"delta\":\"SSN 123-45-6789\"}",
+                "event: response.reasoning_text.done\ndata: {\"type\":\"response.reasoning_text.done\",\"item_id\":\"rs\",\"output_index\":1,\"content_index\":0,\"text\":\"SSN 123-45-6789\"}"));
+        final String responses = text(post("/v1/responses", "{\"model\":\"o\",\"stream\":true,\"input\":\"hi\"}", "x-out", "redact"));
+        assertNoOriginals(responses);
+        assertTrue(responses.contains("response.reasoning_summary_part.done"), responses);
+    }
+
+    // ---- unsupported endpoints and encoded paths
+
+    @Test
+    void anthropicMessageBatchesAreRedacted() throws Exception {
+        assertEquals(200, post("/v1/messages/batches", "{\"requests\":[{\"custom_id\":\"a\",\"params\":{\"model\":\"m\",\"max_tokens\":1,"
+                + "\"system\":\"mail " + EMAIL + "\",\"messages\":[{\"role\":\"user\",\"content\":\"SSN " + SSN + "\"}]}}]}").statusCode());
+        assertEquals("/v1/messages/batches", STUB.lastPath);
+        assertNoOriginals(sent());
+        assertTrue(sent().contains(R_SSN), sent());
+    }
+
+    @Test
+    void ollamaEmbeddingInputIsRedacted() throws Exception {
+        STUB.reply("application/json", "{\"model\":\"llama\",\"embeddings\":[[0.1,0.2],[0.3,0.4]]}");
+        final HttpResponse<byte[]> embed = post("/api/embed", "{\"model\":\"llama\",\"input\":[\"SSN " + SSN + "\",\"mail " + EMAIL + "\"]}", "x-out", "redact");
+        assertEquals(200, embed.statusCode(), text(embed));
+        assertEquals("/api/embed", STUB.lastPath);
+        assertNoOriginals(sent());
+        assertTrue(sent().contains(R_SSN), sent());
+        assertTrue(text(embed).contains("[[0.1,0.2],[0.3,0.4]]"), text(embed));
+
+        assertEquals(200, post("/api/embed", "{\"model\":\"llama\",\"input\":\"SSN " + SSN + "\"}").statusCode());
+        assertNoOriginals(sent());
+        assertTrue(sent().contains(R_SSN), sent());
+
+        STUB.reply("application/json", "{\"embedding\":[0.1,0.2]}");
+        assertEquals(200, post("/api/embeddings", "{\"model\":\"llama\",\"prompt\":\"SSN " + SSN + "\"}").statusCode());
+        assertEquals("/api/embeddings", STUB.lastPath);
+        assertNoOriginals(sent());
+        assertTrue(sent().contains(R_SSN), sent());
+    }
+
+    @Test
+    void ollamaShowIsForwardedUnchanged() throws Exception {
+        final String metadata = "{\"template\":\"{{ .Prompt }}\",\"details\":{\"family\":\"qwen2\"},\"capabilities\":[\"completion\",\"tools\"]}";
+        STUB.reply("application/json", metadata);
+        final HttpResponse<byte[]> show = post("/api/show", "{\"model\":\"llama\"}", "x-out", "block");
+        assertEquals(200, show.statusCode(), text(show));
+        assertEquals("/api/show", STUB.lastPath);
+        assertEquals("{\"model\":\"llama\"}", sent());
+        assertTrue(text(show).contains("\"capabilities\":[\"completion\",\"tools\"]"), text(show));
+    }
+
+    @Test
+    void requestsTheProxyCannotRedactAreRefused() throws Exception {
+        final String[][] cases = {
+                {"/v1/batches", "{\"input_file_id\":\"f\"}"},
+                {"/v1/threads/t/messages", "{\"role\":\"user\",\"content\":\"SSN " + SSN + "\"}"},
+                {"/v1/chat/completions/c1", "{\"metadata\":{}}"},
+                {"/v1/messages/batches/b1/cancel", "{}"},
+                {"/v1beta/models/imagen-4.0-generate-001:predict", "{\"instances\":[{\"prompt\":\"SSN " + SSN + "\"}]}"},
+                {"/v1/projects/test-project/locations/us-central1/publishers/google/models/text-embedding-005:predict", "{\"instances\":[{\"content\":\"SSN " + SSN + "\"}]}"},
+                {"/v1/projects/test-project/locations/us-central1/publishers/google/models/gemini-embedding-001:embedContent", "{\"content\":{\"parts\":[{\"text\":\"SSN " + SSN + "\"}]}}"},
+                {"/api/create", "{\"model\":\"llama\",\"system\":\"SSN " + SSN + "\"}"},
+                {"/local/v1/threads/t/messages", "{\"content\":\"SSN " + SSN + "\"}"},
+        };
+        for (final String[] c : cases) {
+            final HttpResponse<byte[]> response = post(c[0], c[1]);
+            assertEquals(400, response.statusCode(), c[0]);
+            assertTrue(text(response).contains("unsupported_endpoint"), c[0] + ": " + text(response));
+        }
+        assertEquals(0, STUB.requests);
+    }
+
+    @Test
+    void responsesTheProxyCannotScanAreRefusedWhenScanningIsOn() throws Exception {
+        for (final String path : new String[]{"/v1/responses/resp_1", "/v1/chat/completions", "/v1/chat/completions/c1/messages"}) {
+            final HttpResponse<byte[]> response = send("GET", path, null, "x-out", "block");
+            assertEquals(400, response.statusCode(), path);
+            assertTrue(text(response).contains("unsupported_endpoint"), text(response));
+        }
+        assertEquals(0, STUB.requests);
+        // Without scanning, a request with no body has nothing to redact and is forwarded.
+        assertEquals(200, send("GET", "/v1/responses/resp_1", null).statusCode());
+        assertEquals(1, STUB.requests);
+    }
+
+    @Test
+    void unsupportedEndpointsCanBeForwardedWhenConfigured() throws Exception {
+        assertEquals(200, post("/v1/batches", "{\"input_file_id\":\"f\"}", "x-unsupported", "forward").statusCode());
+        assertEquals("/v1/batches", STUB.lastPath);
+    }
+
+    @Test
+    void forwardedUnsupportedEndpointsAreReturnedUnscanned() throws Exception {
+        // Ollama model management: a streamed pull's progress lines carry no text field, and reach the client as
+        // sent even with response scanning on for the route.
+        final String progress = "{\"status\":\"pulling manifest\"}\n{\"status\":\"pulling 6a0746a1ec1a\",\"digest\":\"sha256:6a07\","
+                + "\"total\":2019393189,\"completed\":241970}\n{\"status\":\"success\"}\n";
+        STUB.reply("application/x-ndjson", List.of(progress.getBytes(StandardCharsets.UTF_8)));
+        final HttpResponse<byte[]> pull = post("/api/pull", "{\"model\":\"llama\"}", "x-unsupported", "forward-scanned");
+        assertEquals(200, pull.statusCode(), text(pull));
+        assertEquals("/api/pull", STUB.lastPath);
+        assertEquals(progress, text(pull));
+
+        // A buffered response from a forwarded endpoint is not scanned either.
+        STUB.reply("application/json", "{\"id\":\"batch_1\",\"note\":\"SSN " + SSN + "\"}");
+        final HttpResponse<byte[]> batch = post("/v1/batches", "{\"input_file_id\":\"f\"}", "x-unsupported", "forward-scanned");
+        assertEquals(200, batch.statusCode(), text(batch));
+        assertTrue(text(batch).contains(SSN), text(batch));
+
+        STUB.reply("application/json", "");
+        final HttpResponse<byte[]> delete = send("DELETE", "/api/delete", "{\"model\":\"llama\"}", "x-unsupported", "forward");
+        assertEquals(200, delete.statusCode(), text(delete));
+        assertEquals("DELETE", STUB.lastMethod);
+        assertEquals("{\"model\":\"llama\"}", sent());
+
+        // Refused by default.
+        assertEquals(400, post("/api/pull", "{\"model\":\"llama\"}").statusCode());
+        assertEquals(400, send("DELETE", "/api/delete", "{\"model\":\"llama\"}").statusCode());
+    }
+
+    @Test
+    void encodedPathsAreClassifiedAsTheProviderDecodesThem() throws Exception {
+        STUB.reply("application/json", "{}");
+        // An encoded letter: redacted like the endpoint it decodes to, and forwarded as the client encoded it.
+        assertEquals(200, post("/v1/chat/completion%73", "{\"model\":\"gpt-4o\",\"messages\":[{\"role\":\"user\",\"content\":\"SSN " + SSN + "\"}]}").statusCode());
+        assertNoOriginals(sent());
+        assertEquals("/v1/chat/completion%73", STUB.lastPath);
+        STUB.reset();
+        assertEquals(200, post("/v1/messag%65s", "{\"model\":\"m\",\"max_tokens\":1,\"messages\":[{\"role\":\"user\",\"content\":\"SSN " + SSN + "\"}]}").statusCode());
+        assertNoOriginals(sent());
+        STUB.reset();
+        assertEquals(200, post("/loc%61l/v1/chat/completions", "{\"model\":\"m\",\"messages\":[{\"role\":\"user\",\"content\":\"SSN " + SSN + "\"}]}").statusCode());
+        assertNoOriginals(sent());
+        assertEquals("/v1/chat/completions", STUB.lastPath);
+        STUB.reset();
+        assertEquals(200, post("/model/anthropic.claude-3-haiku-v1%3A0/converse", "{\"messages\":[{\"role\":\"user\",\"content\":[{\"text\":\"SSN " + SSN + "\"}]}]}").statusCode());
+        assertNoOriginals(sent());
+        assertEquals("/model/anthropic.claude-3-haiku-v1%3A0/converse", STUB.lastPath);
+        STUB.reset();
+        for (final String path : new String[]{"/v1/chat%2Fcompletions", "/v1/chat/completions%25", "/v1/chat/completions%3F", "/v1/%2e%2e/chat/completions",
+                "/v1/chat/completions%0a", "/v1/chat/completions%C3", "/v1/chat/completions%5c"}) {
+            final HttpResponse<byte[]> response = post(path, "{\"model\":\"m\",\"messages\":[]}");
+            assertEquals(400, response.statusCode(), path);
+        }
+        assertEquals(0, STUB.requests);
     }
 
     @Test

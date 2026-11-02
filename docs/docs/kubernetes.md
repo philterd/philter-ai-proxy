@@ -50,9 +50,11 @@ In the cluster, applications reach the proxy at `https://philter-ai-proxy.<names
 | `extraEnv` | `[]` | Extra environment variables, such as credentials for Bedrock or Vertex AI from a Secret. |
 | `persistence.enabled`, `.size`, `.storageClass`, `.existingClaim` | on, 1Gi | The database volume. The claim is kept when the release is uninstalled. |
 | `tls.mode` | `selfSigned` | `selfSigned`, `existingSecret`, `certManager`, or `none`. See [TLS](#tls). |
-| `mtls.enabled`, `mtls.caSecretName` | off | Require client certificates signed by the CA in the Secret's `ca.crt`. |
+| `mtls.enabled`, `mtls.caSecretName` | off | Require client certificates signed by the CA in the Secret's `ca.crt`. The kubelet cannot present a client certificate, so with mTLS on the probes become TCP checks, and readiness no longer waits for the model to load. |
 | `ingress.*` | off | An Ingress for port 8080. |
 | `serviceMonitor.enabled` | off | A Prometheus Operator ServiceMonitor for `/metrics` on port 9090. |
+| `networkPolicy.enabled`, `.proxyFrom`, `.metricsFrom` | off | A NetworkPolicy allowing port 8080 from `proxyFrom` (any peer when empty) and port 9090 only from `metricsFrom` (no peer when empty). Egress is not restricted. |
+| `serviceAccount.automountToken` | `false` | Mount the service account token. The proxy does not call the Kubernetes API, and workload identity for Bedrock or Vertex AI does not need it. |
 | `resources` | 500m CPU and 1.5 GiB requested, 2 GiB limit | The model is loaded into memory at startup. |
 
 Settings in `config` are rendered into a ConfigMap, so keep secrets out of them. For example, to scan responses for one model and add an OpenAI-compatible provider:
@@ -83,7 +85,7 @@ config:
 
 The probes follow the mode. The metrics port always serves plain HTTP.
 
-The proxy bounds each connection with a 10-second timeout (`server.tomcat.connection-timeout`) but does not limit how many TLS handshakes run at once. Put a load balancer or ingress in front of it to absorb a flood of handshakes or connections.
+`server.tomcat.connection-timeout` (10 seconds) is how long the proxy waits for a request to start and between reads of it; it is not a deadline for the whole request, so a client that sends a byte at a time can hold a connection. The proxy also does not limit how many TLS handshakes run at once. Put a load balancer or ingress in front of it to absorb slow clients and floods of handshakes or connections.
 
 ## Plain manifests
 

@@ -73,7 +73,8 @@ final class Exchange {
     Map<String, Object> details() {
         final Map<String, Object> d = new LinkedHashMap<>();
         d.put("provider", provider);
-        d.put("model", model);
+        // The model comes from the client: keep a bounded copy, so a request cannot write megabytes into the log.
+        d.put("model", model == null || model.length() <= 256 ? model : model.substring(0, 256));
         d.put("policy_name", policy);
         d.put("context", context);
         d.put("key_id", keyId);

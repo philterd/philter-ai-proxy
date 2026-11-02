@@ -95,6 +95,7 @@ public final class StreamScanner {
     private final Sink sink;
     private final List<Span> detections = new ArrayList<>();
     private final Map<Key, StringBuilder> text = new TreeMap<>(ORDER);
+    private final Map<Key, Integer> retryAt = new java.util.HashMap<>();
     private final Map<Key, StringBuilder> arguments = new LinkedHashMap<>();
 
     public StreamScanner(final Framing framing, final StreamDialect dialect, final Scanner scanner, final Action action,
@@ -161,15 +162,19 @@ public final class StreamScanner {
         }
         final StringBuilder held = text.computeIfAbsent(key, k -> new StringBuilder());
         held.append(fragment);
-        if (held.length() >= 2 * holdback) {
+        ResponseTooLargeException.check(held.length());
+        // When a scan could release nothing (a detected value runs to the end), wait for the text to double before
+        // scanning again, so a long held text is not rescanned on every fragment.
+        if (held.length() >= Math.max(2 * holdback, retryAt.getOrDefault(key, 0))) {
             release(key, false);
         }
     }
 
     /** Holds a fragment of arguments JSON until its group finishes. */
-    public void appendArguments(final Key key, final String fragment) {
+    public void appendArguments(final Key key, final String fragment) throws ResponseTooLargeException {
         if (fragment != null && !fragment.isEmpty()) {
-            arguments.computeIfAbsent(key, k -> new StringBuilder()).append(fragment);
+            final StringBuilder held = arguments.computeIfAbsent(key, k -> new StringBuilder()).append(fragment);
+            ResponseTooLargeException.check(held.length());
         }
     }
 
@@ -249,8 +254,10 @@ public final class StreamScanner {
         final Redaction redaction = scanner.scan(t);
         final int cut = cutPoint(t, redaction.spans(), last ? t.length() : t.length() - holdback, last);
         if (cut <= 0) {
+            retryAt.put(key, t.length() * 2);
             return;
         }
+        retryAt.remove(key);
         final List<Span> released = redaction.spans().stream().filter(s -> s.getCharacterEnd() <= cut).toList();
         if (action == Action.BLOCK && !released.isEmpty()) {
             throw new BlockedException();

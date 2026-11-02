@@ -38,6 +38,10 @@ public final class OpenAiChat {
                 }
             }
         }
+        // Predicted Outputs: a string, or text parts.
+        if (request.get("prediction") instanceof JsonObject prediction) {
+            addContent(slots, prediction);
+        }
         return slots;
     }
 
@@ -76,17 +80,11 @@ public final class OpenAiChat {
     }
 
     private static void addMessage(final TextSlots slots, final JsonObject message) {
-        slots.addString(message, "content");
-        if (message.get("content") instanceof JsonArray parts) {
-            for (final JsonElement part : parts) {
-                if (part instanceof JsonObject object) {
-                    // text, input_text, and output_text parts all carry a "text" string. Images and audio are not
-                    // redacted.
-                    slots.addString(object, "text");
-                }
-            }
-        }
+        addContent(slots, message);
         slots.addString(message, "refusal");
+        // Reasoning from OpenAI-compatible servers (vLLM, DeepSeek, Ollama, OpenRouter).
+        slots.addString(message, "reasoning_content");
+        slots.addString(message, "reasoning");
         if (message.get("tool_calls") instanceof JsonArray toolCalls) {
             for (final JsonElement call : toolCalls) {
                 if (call instanceof JsonObject object && object.get("function") instanceof JsonObject function) {
@@ -96,6 +94,21 @@ public final class OpenAiChat {
         }
         if (message.get("function_call") instanceof JsonObject functionCall) {
             slots.addJsonString(functionCall, "arguments");
+        }
+    }
+
+    /** {@code object.content}: a string, or parts whose text is in {@code text} (or {@code refusal}). */
+    private static void addContent(final TextSlots slots, final JsonObject object) {
+        slots.addString(object, "content");
+        if (object.get("content") instanceof JsonArray parts) {
+            for (final JsonElement part : parts) {
+                if (part instanceof JsonObject p) {
+                    // text, input_text, and output_text parts carry "text"; refusal parts carry "refusal". Images and
+                    // audio are not redacted.
+                    slots.addString(p, "text");
+                    slots.addString(p, "refusal");
+                }
+            }
         }
     }
 

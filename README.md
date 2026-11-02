@@ -16,6 +16,7 @@ The proxy does redaction and the audit trail that goes with it. Three boundaries
 
 - **It is not an AI gateway.** Routing, failover, token quotas, and per-tenant billing belong to a gateway such as LiteLLM, Portkey, or Kong AI Gateway. The proxy is designed to run alongside one, redacting on the last hop before traffic leaves your network. See [Using with an AI Gateway](https://philterd.github.io/philter-ai-proxy/ai-gateway/).
 - **It handles text conversations only.** The proxy accepts JSON request bodies and does not parse `multipart/form-data`, so file uploads, audio, and image edits are rejected with `400 invalid_request` / `unsupported_content_type` and should be routed directly to the provider. Audio support is tracked in [#40](https://github.com/philterd/philter-ai-proxy/issues/40); image edits and file uploads are not planned.
+- **It refuses what it cannot redact.** A request with a body to an endpoint the proxy does not know how to redact (such as `/v1/batches` or `/v1/threads/{id}/messages`) is refused with `400 invalid_request` / `unsupported_endpoint` unless `unsupported-endpoints: forward` is set for it.
 - **It redacts text only.** A JSON request carrying images, audio, video, or files (such as image and audio content parts) is refused by default with `400 invalid_request` / `media_not_allowed`. Setting `media: forward` forwards such requests with the media unchanged and uninspected. Media in responses is returned unscanned. See [Images, audio, and files are not redacted](https://philterd.github.io/philter-ai-proxy/api/#images-audio-and-files-are-not-redacted).
 
 ## Running the Proxy
@@ -25,7 +26,7 @@ export ENCRYPTION_KEY="$(openssl rand -hex 32)"      # keep a copy: the database
 export BOOTSTRAP_API_KEY="$(openssl rand -hex 32)"
 
 docker run -d --name philter-ai-proxy \
-  -p 8080:8080 -p 9090:9090 \
+  -p 8080:8080 -p 127.0.0.1:9090:9090 \
   -v philter-ai-proxy-data:/var/lib/philter-ai-proxy \
   -e PHILTER_AI_PROXY_ENCRYPTION_KEY="$ENCRYPTION_KEY" \
   -e PHILTER_AI_PROXY_BOOTSTRAP_API_KEY="$BOOTSTRAP_API_KEY" \

@@ -17,16 +17,16 @@ export ENCRYPTION_KEY="$(openssl rand -hex 32)"
 export BOOTSTRAP_API_KEY="$(openssl rand -hex 32)"
 
 docker run -d --name philter-ai-proxy \
-  -p 8080:8080 -p 9090:9090 \
+  -p 8080:8080 -p 127.0.0.1:9090:9090 \
   -v philter-ai-proxy-data:/var/lib/philter-ai-proxy \
   -e PHILTER_AI_PROXY_ENCRYPTION_KEY="$ENCRYPTION_KEY" \
   -e PHILTER_AI_PROXY_BOOTSTRAP_API_KEY="$BOOTSTRAP_API_KEY" \
   philterd/philter-ai-proxy:2.0.0
 ```
 
-- `PHILTER_AI_PROXY_ENCRYPTION_KEY` encrypts the values the database stores, such as the original values a context keeps: 32 bytes as 64 hex characters or base64.
+- `PHILTER_AI_PROXY_ENCRYPTION_KEY` encrypts the policies and context replacements the database stores: 32 bytes as 64 hex characters or base64.
 - `PHILTER_AI_PROXY_BOOTSTRAP_API_KEY` becomes an admin key on first start, while no API key exists. It must be at least 32 characters.
-- Port 8080 serves provider traffic and the admin API. Port 9090 serves Prometheus metrics; keep it off the internet.
+- Port 8080 serves provider traffic and the admin API. Port 9090 serves Prometheus metrics, unauthenticated; the examples publish it on the host's loopback address only. Keep it off the internet.
 
 The proxy serves HTTPS with a self-signed certificate it generates at startup, so `curl` needs `-k`. See [Certificates](#certificates) to use your own, or to serve plain HTTP behind a load balancer.
 
@@ -77,7 +77,7 @@ Settings come from `application.yaml` and environment variables; see [Configurat
 
 ```bash
 docker run -d --name philter-ai-proxy \
-  -p 8080:8080 -p 9090:9090 \
+  -p 8080:8080 -p 127.0.0.1:9090:9090 \
   -v philter-ai-proxy-data:/var/lib/philter-ai-proxy \
   -v "$PWD/application.yaml:/etc/philter-ai-proxy/application.yaml:ro" \
   -e SPRING_CONFIG_ADDITIONAL_LOCATION=file:/etc/philter-ai-proxy/application.yaml \
@@ -145,7 +145,7 @@ To serve your own certificate, give it and its private key in PEM form:
 
 ```bash
 docker run -d --name philter-ai-proxy \
-  -p 8080:8080 -p 9090:9090 \
+  -p 8080:8080 -p 127.0.0.1:9090:9090 \
   -v philter-ai-proxy-data:/var/lib/philter-ai-proxy \
   -v "$PWD/tls:/etc/philter-ai-proxy/tls:ro" \
   -e SERVER_SSL_CERTIFICATE=/etc/philter-ai-proxy/tls/tls.crt \

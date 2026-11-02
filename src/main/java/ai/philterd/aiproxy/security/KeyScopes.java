@@ -76,7 +76,9 @@ public record KeyScopes(Set<Role> roles, List<String> providers, List<String> mo
             return true;
         }
         if (alwaysPrefix) {
-            return value.startsWith(entry);
+            // A path scope covers its own segments: /v1/messages covers /v1/messages/count_tokens, not /v1/messagesx.
+            return value.startsWith(entry) && (entry.endsWith("/") || value.charAt(entry.length()) == '/'
+                    || value.charAt(entry.length()) == ':');
         }
         return entry.endsWith("*") && value.startsWith(entry.substring(0, entry.length() - 1));
     }

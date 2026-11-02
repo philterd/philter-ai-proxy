@@ -34,26 +34,103 @@ import java.util.Locale;
 import java.util.Map;
 
 /**
- * Google Gemini and Vertex AI ({@code generateContent} and {@code streamGenerateContent}).
+ * Google Gemini and Vertex AI: {@code generateContent}, {@code streamGenerateContent}, {@code countTokens},
+ * {@code embedContent}, and {@code batchEmbedContents}.
  *
  * <p>Requests: the text of each part of {@code contents} and {@code systemInstruction}, the arguments of
- * {@code functionCall} parts, and the strings in {@code functionResponse.response}. Responses: each candidate's
- * text parts (including thought summaries) and function-call arguments. Inline and file data are not redacted.
- * A {@code streamGenerateContent} response without {@code alt=sse} is a JSON array; it is read whole and scanned
- * as one response.</p>
+ * {@code functionCall} parts, and the strings in {@code functionResponse.response}; for {@code countTokens}, also
+ * those of a wrapped {@code generateContentRequest}; for embeddings, each request's {@code content} parts and
+ * {@code title}. Responses: each candidate's text parts (including thought summaries) and function-call arguments;
+ * token counts and embeddings carry no text. Inline and file data are not redacted. A
+ * {@code streamGenerateContent} response without {@code alt=sse} is a JSON array; it is read whole and scanned as
+ * one response.</p>
  */
 public final class GeminiDialect implements ProviderDialect {
+
+    enum Method {
+        GENERATE, STREAM_GENERATE, COUNT_TOKENS, EMBED, BATCH_EMBED
+    }
+
+    /** The method a path names after its last colon, such as {@code models/gemini-2.5-flash:countTokens}, or null. */
+    static Method method(final String path) {
+        final int colon = path.lastIndexOf(':');
+        if (colon == -1 || path.indexOf('/', colon) != -1) {
+            return null;
+        }
+        return switch (path.substring(colon + 1).toLowerCase(Locale.ROOT)) {
+            case "generatecontent" -> Method.GENERATE;
+            case "streamgeneratecontent" -> Method.STREAM_GENERATE;
+            case "counttokens" -> Method.COUNT_TOKENS;
+            case "embedcontent" -> Method.EMBED;
+            case "batchembedcontents" -> Method.BATCH_EMBED;
+            default -> null;
+        };
+    }
+
+    /** Whether the path names one of the methods the dialect reads. */
+    public static boolean isMethodPath(final String path) {
+        return method(path) != null;
+    }
+
+    private static boolean isEmbed(final Method method) {
+        return method == Method.EMBED || method == Method.BATCH_EMBED;
+    }
+
+    /**
+     * The request bodies in a body: the body itself; for countTokens, also its wrapped generateContentRequest; for
+     * batchEmbedContents, each of its requests.
+     */
+    private static java.util.List<JsonObject> requests(final Method method, final JsonObject body) {
+        if (method == Method.BATCH_EMBED) {
+            return Json.objects(body, "requests");
+        }
+        final java.util.List<JsonObject> requests = new java.util.ArrayList<>(java.util.List.of(body));
+        if (method == Method.COUNT_TOKENS) {
+            for (final String member : new String[]{"generateContentRequest", "generate_content_request"}) {
+                final JsonObject wrapped = Json.object(body, member);
+                if (wrapped != null) {
+                    requests.add(wrapped);
+                }
+            }
+        }
+        return requests;
+    }
+
+    /** The contents of a request: {@code contents} and {@code systemInstruction}, or an embedding's {@code content}. */
+    private static java.util.List<JsonObject> contents(final Method method, final JsonObject request) {
+        final java.util.List<JsonObject> contents = new java.util.ArrayList<>();
+        if (isEmbed(method)) {
+            final JsonObject content = Json.object(request, "content");
+            if (content != null) {
+                contents.add(content);
+            }
+            return contents;
+        }
+        contents.addAll(Json.objects(request, "contents"));
+        for (final String member : new String[]{"systemInstruction", "system_instruction"}) {
+            final JsonObject instruction = Json.object(request, member);
+            if (instruction != null) {
+                contents.add(instruction);
+            }
+        }
+        return contents;
+    }
 
     @Override
     public TextSlots requestText(final String path, final JsonObject body) {
         final TextSlots slots = new TextSlots();
-        for (final JsonObject content : Json.objects(body, "contents")) {
-            addParts(slots, content);
-        }
-        for (final String member : new String[]{"systemInstruction", "system_instruction"}) {
-            final JsonObject instruction = Json.object(body, member);
-            if (instruction != null) {
-                addParts(slots, instruction);
+        final Method method = method(path);
+        for (final JsonObject request : requests(method, body)) {
+            for (final JsonObject content : contents(method, request)) {
+                addParts(slots, content);
+            }
+            if (isEmbed(method)) {
+                // A document's title, sent with RETRIEVAL_DOCUMENT embeddings.
+                slots.addString(request, "title");
+            }
+            if (method == Method.COUNT_TOKENS && request.get("instances") instanceof com.google.gson.JsonArray instances) {
+                // Vertex AI's countTokens also takes instances in the model's own prediction schema: every string.
+                slots.addAllStrings(instances);
             }
         }
         return slots;
@@ -61,14 +138,26 @@ public final class GeminiDialect implements ProviderDialect {
 
     private static final String[] MEDIA_PARTS = {"inlineData", "inline_data", "fileData", "file_data"};
 
+    /**
+     * generateContent, streamGenerateContent, and countTokens; and on the Gemini API, embedContent and
+     * batchEmbedContents. Vertex AI's embedding requests are not read, since their bodies are not known to match.
+     */
+    @Override
+    public boolean supports(final String method, final String path) {
+        final Method gemini = method(path);
+        return "POST".equals(method) && gemini != null && !(isEmbed(gemini) && isVertex(path));
+    }
+
+    private static boolean isVertex(final String path) {
+        return path.startsWith("/v1/projects/") || path.startsWith("/v1beta1/projects/");
+    }
+
     @Override
     public String mediaPart(final String path, final JsonObject body) {
-        final java.util.List<JsonObject> contents = new java.util.ArrayList<>(Json.objects(body, "contents"));
-        for (final String member : new String[]{"systemInstruction", "system_instruction", "content"}) {
-            final JsonObject content = Json.object(body, member);
-            if (content != null) {
-                contents.add(content);
-            }
+        final Method method = method(path);
+        final java.util.List<JsonObject> contents = new java.util.ArrayList<>();
+        for (final JsonObject request : requests(method, body)) {
+            contents.addAll(contents(method, request));
         }
         for (final JsonObject content : contents) {
             final String found = mediaIn(Json.objects(content, "parts"));
@@ -101,6 +190,13 @@ public final class GeminiDialect implements ProviderDialect {
     private static void addParts(final TextSlots slots, final JsonObject content) {
         for (final JsonObject part : Json.objects(content, "parts")) {
             slots.addString(part, "text");
+            for (final String[] member : new String[][]{{"executableCode", "code"}, {"executable_code", "code"},
+                    {"codeExecutionResult", "output"}, {"code_execution_result", "output"}}) {
+                final JsonObject holder = Json.object(part, member[0]);
+                if (holder != null) {
+                    slots.addString(holder, member[1]);
+                }
+            }
             for (final String call : new String[]{"functionCall", "function_call"}) {
                 final JsonObject functionCall = Json.object(part, call);
                 if (functionCall != null && functionCall.get("args") instanceof JsonObject args) {
@@ -130,9 +226,41 @@ public final class GeminiDialect implements ProviderDialect {
         return slots;
     }
 
+    /** Removes each candidate's {@code logprobsResult}, whose tokens spell out the unredacted text. */
+    @Override
+    public boolean removeRevealingData(final String path, final JsonElement body) {
+        boolean removed = false;
+        for (final JsonObject response : Json.each(body)) {
+            for (final JsonObject candidate : Json.objects(response, "candidates")) {
+                removed |= candidate.remove("logprobsResult") != null;
+            }
+        }
+        return removed;
+    }
+
+    /**
+     * The model in the path. countTokens and batchEmbedContents bodies can name a model per request: they have a
+     * model only when every one names the path's model or none, so a model scope cannot be passed by naming an
+     * allowed model in the path and another in the body.
+     */
     @Override
     public String model(final String path, final JsonObject body) {
-        return ProviderDialect.modelFromPath(path);
+        final String model = ProviderDialect.modelFromPath(path);
+        final Method method = method(path);
+        if (model == null || (method != Method.COUNT_TOKENS && method != Method.BATCH_EMBED)) {
+            return model;
+        }
+        for (final JsonObject request : requests(method, body)) {
+            final JsonElement named = request.get("model");
+            if (named == null) {
+                continue;
+            }
+            final String value = named.isJsonPrimitive() ? named.getAsString() : null;
+            if (value == null || !(value.equals(model) || value.endsWith("/models/" + model) || value.equals("models/" + model))) {
+                return null;
+            }
+        }
+        return model;
     }
 
     @Override
@@ -169,6 +297,9 @@ public final class GeminiDialect implements ProviderDialect {
                     continue;
                 }
                 final String group = ProviderDialect.group(Json.integer(candidate, "index", 0));
+                if (scanner.action() != ai.philterd.aiproxy.config.ProxyProperties.Action.FLAG) {
+                    candidate.remove("logprobsResult");
+                }
                 templates.put(group, json);
                 final JsonObject content = Json.object(candidate, "content");
                 if (content != null && content.get("parts") instanceof JsonArray parts) {

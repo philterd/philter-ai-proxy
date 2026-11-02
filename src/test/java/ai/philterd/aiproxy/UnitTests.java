@@ -112,6 +112,14 @@ class UnitTests {
         assertEquals("scope_denied_model", scopes.check("openai", null, "/v1/chat/completions").code());
         assertEquals("scope_denied_provider", scopes.check("anthropic", "gpt-4o", "/v1/chat/completions").code());
         assertEquals("scope_denied_path", scopes.check("openai", "gpt-4o", "/v1/embeddings").code());
+        assertEquals("scope_denied_path", scopes.check("openai", "gpt-4o", "/v1/chatx/completions").code());
+        final KeyScopes messages = new KeyScopes(null, null, null, List.of("/v1/messages", "/v1beta/models/gemini-2.5-flash", "/x/"), null);
+        assertNull(messages.check("anthropic", null, "/v1/messages"));
+        assertNull(messages.check("anthropic", null, "/v1/messages/count_tokens"));
+        assertEquals("scope_denied_path", messages.check("anthropic", null, "/v1/messagesx").code());
+        assertNull(messages.check("gemini", null, "/v1beta/models/gemini-2.5-flash:generateContent"));
+        assertEquals("scope_denied_path", messages.check("gemini", null, "/v1beta/models/gemini-2.5-flash-lite:generateContent").code());
+        assertNull(messages.check("openai", null, "/x/y"));
         assertNull(new KeyScopes(null, null, null, null, " ").check("x", null, "/"));
         assertNull(new KeyScopes(null, null, null, null, " ").policy());
     }
@@ -123,7 +131,7 @@ class UnitTests {
                 new ProxyProperties.Defaults("base", "ctx", null),
                 List.of(new ProxyProperties.Route(new ProxyProperties.Match(null, "gpt-4o", "x-team", "a"), "team-a", null, redact),
                         new ProxyProperties.Route(new ProxyProperties.Match("/v1/chat/completions", null, null, null), null, "other", null,
-                                ProxyProperties.Media.FORWARD)),
+                                ProxyProperties.Mode.FORWARD, ProxyProperties.Mode.FORWARD)),
                 null, null);
         final Map<String, String> headers = Map.of("x-team", "a");
         final Routes.Resolved first = Routes.resolve(p, "/v1/chat/completions", "gpt-4o", headers::get);
@@ -134,12 +142,15 @@ class UnitTests {
         assertEquals("base", second.policy());
         assertEquals("other", second.context());
         assertFalse(second.outbound().enabled());
-        assertEquals(ProxyProperties.Media.REJECT, first.media());
-        assertEquals(ProxyProperties.Media.FORWARD, second.media());
+        assertEquals(ProxyProperties.Mode.REJECT, first.media());
+        assertEquals(ProxyProperties.Mode.FORWARD, second.media());
+        assertEquals(ProxyProperties.Mode.REJECT, first.unsupportedEndpoints());
+        assertEquals(ProxyProperties.Mode.FORWARD, second.unsupportedEndpoints());
         final Routes.Resolved none = Routes.resolve(p, "/v1/embeddings", "o3", h -> null);
         assertEquals("base", none.policy());
         assertEquals(ProxyProperties.Outbound.DISABLED, none.outbound());
-        assertEquals(ProxyProperties.Media.REJECT, none.media());
+        assertEquals(ProxyProperties.Mode.REJECT, none.media());
+        assertEquals(ProxyProperties.Mode.REJECT, none.unsupportedEndpoints());
     }
 
     @Test
@@ -148,6 +159,10 @@ class UnitTests {
         assertEquals("default", p.defaults().policy());
         assertEquals("x-philter-proxy-key", p.security().proxyKeyHeader());
         assertEquals(10L * 1024 * 1024, p.limits().maxRequestBodyBytes());
+        assertEquals(200, p.limits().maxConcurrentRequests());
+        assertEquals(0, new ProxyProperties.Limits(0, -1).maxConcurrentRequests());
+        assertEquals(30_000, p.limits().redactionTimeoutMs());
+        assertEquals(32L * 1024 * 1024, p.limits().maxResponseBodyBytes());
         assertEquals(256, p.streaming().holdbackCharacters());
         assertEquals("https://api.openai.com", p.providers().openai().target());
         assertFalse(p.defaults().outbound().enabled());
@@ -193,6 +208,26 @@ class UnitTests {
     }
 
     @Test
+    void encryptsPoliciesStoredInPlaintext(@TempDir final Path dir) throws Exception {
+        final ProxyProperties properties = properties(dir.resolve("p.db"), KEY);
+        try (Database database = new Database(properties)) {
+            try (Connection c = database.connect(); Statement st = c.createStatement()) {
+                st.executeUpdate("INSERT INTO policies (name, policy, revision, created_at, updated_at) VALUES "
+                        + "('old', '{\"identifiers\":{}}', 0, '2026-11-01T00:00:00Z', '2026-11-01T00:00:00Z')");
+            }
+            final ai.philterd.aiproxy.storage.Encryptor encryptor = new ai.philterd.aiproxy.storage.Encryptor(properties);
+            final ai.philterd.aiproxy.storage.PolicyStore policies = new ai.philterd.aiproxy.storage.PolicyStore(database, encryptor,
+                    new ai.philterd.aiproxy.storage.KeyCheck(database, encryptor));
+            try (Connection c = database.connect(); Statement st = c.createStatement();
+                 ResultSet rs = st.executeQuery("SELECT policy FROM policies WHERE name = 'old'")) {
+                rs.next();
+                assertFalse(rs.getString(1).contains("identifiers"));
+            }
+            assertEquals("{\"identifiers\":{}}", policies.find("old").orElseThrow().policy());
+        }
+    }
+
+    @Test
     void createsTheDatabaseOwnerOnlyAndRefusesASecondInstance(@TempDir final Path dir) throws Exception {
         final Path db = dir.resolve("data").resolve("proxy.db");
         try (Database database = new Database(properties(db, KEY))) {
@@ -202,7 +237,7 @@ class UnitTests {
             try (Connection c = database.connect(); Statement s = c.createStatement();
                  ResultSet rs = s.executeQuery("SELECT MAX(version) FROM schema_version")) {
                 rs.next();
-                assertEquals(2, rs.getInt(1));
+                assertEquals(3, rs.getInt(1));
             }
         }
         // Reopening applies no migration twice.

@@ -54,7 +54,22 @@ public class Redactor {
     private record CompiledPolicy(int revision, Policy policy) {
     }
 
+    /** How long one call to {@link Session#redact(List)} may take. */
+    private final java.time.Duration timeout;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public Redactor(final PolicyStore policies, final ContextStore contexts, final PolicyCompiler compiler,
+                    final ai.philterd.aiproxy.config.ProxyProperties properties) {
+        this(policies, contexts, compiler, java.time.Duration.ofMillis(properties.limits().redactionTimeoutMs()));
+    }
+
     public Redactor(final PolicyStore policies, final ContextStore contexts, final PolicyCompiler compiler) {
+        this(policies, contexts, compiler, java.time.Duration.ofSeconds(30));
+    }
+
+    public Redactor(final PolicyStore policies, final ContextStore contexts, final PolicyCompiler compiler,
+                    final java.time.Duration timeout) {
+        this.timeout = timeout;
         this.policies = policies;
         this.contexts = contexts;
         this.compiler = compiler;
@@ -107,28 +122,34 @@ public class Redactor {
             this.contextName = contextName;
         }
 
+        /** Redacts one text, within the timeout. */
         public Redaction redact(final String text) throws RedactionException {
-            return filter(policy, contextService, contextName, text);
+            return redact(java.util.Collections.singletonList(text)).getFirst();
         }
 
-        /** Redacts the texts concurrently. One redaction per text, in order. */
+        /**
+         * Redacts the texts concurrently. One redaction per text, in order. Gives up when the whole call takes longer
+         * than the timeout, so a slow policy (such as a regular expression that backtracks) cannot hold a request open
+         * indefinitely; the abandoned work is interrupted but may run on until it ends.
+         */
         public List<Redaction> redact(final List<String> texts) throws RedactionException {
             if (texts.isEmpty()) {
                 return List.of();
             }
-            if (texts.size() == 1) {
-                return List.of(redact(texts.getFirst()));
-            }
-            try (ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor()) {
+            final ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor();
+            try {
                 final List<Future<Redaction>> futures = new ArrayList<>(texts.size());
                 for (final String text : texts) {
-                    futures.add(executor.submit(() -> redact(text)));
+                    futures.add(executor.submit(() -> filter(policy, contextService, contextName, text)));
                 }
+                final long deadline = System.nanoTime() + timeout.toNanos();
                 final List<Redaction> results = new ArrayList<>(texts.size());
                 for (final Future<Redaction> future : futures) {
-                    results.add(future.get());
+                    results.add(future.get(Math.max(0, deadline - System.nanoTime()), java.util.concurrent.TimeUnit.NANOSECONDS));
                 }
                 return results;
+            } catch (final java.util.concurrent.TimeoutException e) {
+                throw new RedactionTimeoutException(timeout);
             } catch (final InterruptedException e) {
                 Thread.currentThread().interrupt();
                 throw new RedactionException("Redaction was interrupted.", e);
@@ -137,6 +158,9 @@ public class Redactor {
                     throw re;
                 }
                 throw new RedactionException("Redaction failed.", e.getCause());
+            } finally {
+                // Not close(): it would wait for work that has timed out.
+                executor.shutdownNow();
             }
         }
 

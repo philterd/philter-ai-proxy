@@ -38,9 +38,45 @@ public class PolicyStore {
     public static final String DEFAULT_POLICY_NAME = "default";
 
     private final Database database;
+    private final Encryptor encryptor;
 
-    public PolicyStore(final Database database) {
+    /**
+     * Policies are stored encrypted, since one can hold a literal encryption key or a dictionary of sensitive terms.
+     * A policy stored in plaintext, by a build before this, is encrypted at startup.
+     * @param keyCheck Taken so the encryption key is checked against the database before anything is encrypted.
+     */
+    public PolicyStore(final Database database, final Encryptor encryptor, final KeyCheck keyCheck) {
         this.database = database;
+        this.encryptor = encryptor;
+        encryptPlaintextPolicies();
+    }
+
+    private void encryptPlaintextPolicies() {
+        try (Connection c = database.connect()) {
+            final java.util.Map<String, String> plaintext = new java.util.LinkedHashMap<>();
+            try (PreparedStatement ps = c.prepareStatement("SELECT name, policy FROM policies"); ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    if (isPlaintext(rs.getString(2))) {
+                        plaintext.put(rs.getString(1), rs.getString(2));
+                    }
+                }
+            }
+            for (final java.util.Map.Entry<String, String> entry : plaintext.entrySet()) {
+                try (PreparedStatement ps = c.prepareStatement("UPDATE policies SET policy = ? WHERE name = ? AND policy = ?")) {
+                    ps.setString(1, encryptor.encrypt(entry.getValue()));
+                    ps.setString(2, entry.getKey());
+                    ps.setString(3, entry.getValue());
+                    ps.executeUpdate();
+                }
+            }
+        } catch (final SQLException e) {
+            throw new StorageException("Unable to encrypt the stored policies.", e);
+        }
+    }
+
+    /** Policy JSON is an object; an encrypted policy is base64, which never starts with a brace. */
+    private static boolean isPlaintext(final String stored) {
+        return stored.stripLeading().startsWith("{");
     }
 
     public record StoredPolicy(String name, String policy, int revision, String description, String notes,
@@ -126,7 +162,7 @@ public class PolicyStore {
              PreparedStatement ps = c.prepareStatement("INSERT INTO policies (name, policy, revision, description, notes, "
                      + "created_at, updated_at) VALUES (?, ?, 0, ?, ?, ?, ?) ON CONFLICT (name) DO NOTHING")) {
             ps.setString(1, name);
-            ps.setString(2, policyJson);
+            ps.setString(2, encryptor.encrypt(policyJson));
             ps.setString(3, description == null ? "" : description);
             ps.setString(4, notes == null ? "" : notes);
             ps.setString(5, now.toString());
@@ -160,7 +196,7 @@ public class PolicyStore {
                 }
                 try (PreparedStatement ps = c.prepareStatement(
                         "UPDATE policies SET policy = ?, revision = revision + 1, updated_at = ? WHERE name = ? AND revision = ?")) {
-                    ps.setString(1, policyJson);
+                    ps.setString(1, encryptor.encrypt(policyJson));
                     ps.setString(2, Instant.now().toString());
                     ps.setString(3, name);
                     ps.setInt(4, current.revision());
@@ -191,7 +227,7 @@ public class PolicyStore {
         }
     }
 
-    private static StoredPolicy findIn(final Connection c, final String name) throws SQLException {
+    private StoredPolicy findIn(final Connection c, final String name) throws SQLException {
         try (PreparedStatement ps = c.prepareStatement("SELECT * FROM policies WHERE name = ?")) {
             ps.setString(1, name);
             try (ResultSet rs = ps.executeQuery()) {
@@ -200,8 +236,9 @@ public class PolicyStore {
         }
     }
 
-    private static StoredPolicy read(final ResultSet rs) throws SQLException {
-        return new StoredPolicy(rs.getString("name"), rs.getString("policy"), rs.getInt("revision"),
+    private StoredPolicy read(final ResultSet rs) throws SQLException {
+        final String stored = rs.getString("policy");
+        return new StoredPolicy(rs.getString("name"), isPlaintext(stored) ? stored : encryptor.decrypt(stored), rs.getInt("revision"),
                 rs.getString("description"), rs.getString("notes"),
                 Instant.parse(rs.getString("created_at")), Instant.parse(rs.getString("updated_at")));
     }

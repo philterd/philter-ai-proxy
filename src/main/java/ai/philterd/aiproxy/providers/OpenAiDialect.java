@@ -64,7 +64,12 @@ public final class OpenAiDialect implements ProviderDialect {
             case CHAT -> OpenAiChat.requestText(body);
             case RESPONSES -> responsesRequest(body);
             case EMBEDDINGS, MODERATIONS, AUDIO_SPEECH -> strings(body, "input");
-            case IMAGE_GENERATIONS, COMPLETIONS -> strings(body, "prompt");
+            case IMAGE_GENERATIONS -> strings(body, "prompt");
+            case COMPLETIONS -> {
+                final TextSlots slots = strings(body, "prompt");
+                slots.addString(body, "suffix");
+                yield slots;
+            }
             case OTHER -> new TextSlots();
         };
     }
@@ -74,6 +79,22 @@ public final class OpenAiDialect implements ProviderDialect {
 
     /** Responses API types that carry media, wherever they appear in {@code input}. */
     private static final java.util.Set<String> RESPONSES_MEDIA = java.util.Set.of("input_image", "input_file", "input_audio", "computer_screenshot");
+
+    /** Speech is returned as audio. */
+    @Override
+    public boolean binaryResponse(final String path) {
+        return endpoint(path) == Endpoint.AUDIO_SPEECH;
+    }
+
+    @Override
+    public boolean caseInsensitiveFields() {
+        return true;
+    }
+
+    @Override
+    public boolean supports(final String method, final String path) {
+        return "POST".equals(method) && endpoint(path) != Endpoint.OTHER;
+    }
 
     @Override
     public String mediaPart(final String path, final JsonObject body) {
@@ -89,7 +110,10 @@ public final class OpenAiDialect implements ProviderDialect {
                 }
                 yield null;
             }
-            case RESPONSES -> findType(body.get("input"), RESPONSES_MEDIA);
+            case RESPONSES -> {
+                final String found = findType(body.get("input"), RESPONSES_MEDIA);
+                yield found != null ? found : findType(Json.object(Json.object(body, "prompt"), "variables"), RESPONSES_MEDIA);
+            }
             case MODERATIONS -> {
                 for (final JsonObject input : Json.objects(body, "input")) {
                     final String type = Json.string(input, "type");
@@ -147,7 +171,25 @@ public final class OpenAiDialect implements ProviderDialect {
         for (final JsonObject item : Json.objects(body, "input")) {
             addResponsesItem(slots, item);
         }
+        // A stored prompt's variables: strings, or input_text parts. Images and files among them are media.
+        final JsonObject variables = Json.object(Json.object(body, "prompt"), "variables");
+        if (variables != null) {
+            for (final String name : variables.keySet()) {
+                slots.addString(variables, name);
+                if (variables.get(name) instanceof JsonObject part) {
+                    slots.addString(part, "text");
+                }
+            }
+        }
         return slots;
+    }
+
+    /** A tool output: a string (JSON or text), or parts whose text is in {@code text}. */
+    private static void addOutput(final TextSlots slots, final JsonObject item, final String member) {
+        slots.addJsonString(item, member);
+        for (final JsonObject part : Json.objects(item, member)) {
+            slots.addString(part, "text");
+        }
     }
 
     /** An input or output item of the Responses API. */
@@ -164,10 +206,23 @@ public final class OpenAiDialect implements ProviderDialect {
             slots.addJsonString(item, "arguments");
             slots.addString(item, "input");
         } else if (type.equals("function_call_output") || type.equals("custom_tool_call_output")) {
-            slots.addJsonString(item, "output");
+            addOutput(slots, item, "output");
+        } else if (type.equals("mcp_call")) {
+            slots.addJsonString(item, "arguments");
+            addOutput(slots, item, "output");
+            slots.addString(item, "error");
+        } else if (type.equals("local_shell_call_output") || type.equals("shell_call_output")) {
+            addOutput(slots, item, "output");
+            for (final JsonObject result : Json.objects(item, "output")) {
+                slots.addString(result, "stdout");
+                slots.addString(result, "stderr");
+            }
         } else if (type.equals("reasoning")) {
             for (final JsonObject summary : Json.objects(item, "summary")) {
                 slots.addString(summary, "text");
+            }
+            for (final JsonObject part : Json.objects(item, "content")) {
+                slots.addString(part, "text");
             }
         }
     }
@@ -224,6 +279,12 @@ public final class OpenAiDialect implements ProviderDialect {
 
     @Override
     public String model(final String path, final JsonObject body) {
+        // Azure OpenAI uses the deployment named in the path, whatever the body says.
+        if (path.startsWith("/openai/deployments/")) {
+            final String rest = path.substring("/openai/deployments/".length());
+            final int slash = rest.indexOf('/');
+            return slash > 0 ? rest.substring(0, slash) : null;
+        }
         return ProviderDialect.modelMember(body);
     }
 

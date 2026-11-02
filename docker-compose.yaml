@@ -13,7 +13,8 @@ services:
       dockerfile: Dockerfile
     ports:
       - "8080:8080"
-      - "9090:9090"
+      # Metrics: published on this host only. Keep the port off the internet.
+      - "127.0.0.1:9090:9090"
     volumes:
       - philter-ai-proxy-data:/var/lib/philter-ai-proxy
       - ./application.yaml:/etc/philter-ai-proxy/application.yaml:ro

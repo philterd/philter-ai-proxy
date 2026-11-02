@@ -34,6 +34,7 @@ spec:
         {{- end }}
     spec:
       serviceAccountName: {{ include "philter-ai-proxy.serviceAccountName" . }}
+      automountServiceAccountToken: {{ .Values.serviceAccount.automountToken }}
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
@@ -90,19 +91,37 @@ spec:
           {{- with .Values.startupProbe }}
           startupProbe:
             {{- $probe := deepCopy . }}
+            {{- if $.Values.mtls.enabled }}
+            {{- /* The kubelet presents no client certificate, so under mTLS an HTTPS probe cannot connect. */}}
+            {{- $_ := set $probe "tcpSocket" (dict "port" $probe.httpGet.port) }}
+            {{- $_ := unset $probe "httpGet" }}
+            {{- else }}
             {{- $_ := set $probe.httpGet "scheme" (include "philter-ai-proxy.scheme" $) }}
+            {{- end }}
             {{- toYaml $probe | nindent 12 }}
           {{- end }}
           {{- with .Values.livenessProbe }}
           livenessProbe:
             {{- $probe := deepCopy . }}
+            {{- if $.Values.mtls.enabled }}
+            {{- /* The kubelet presents no client certificate, so under mTLS an HTTPS probe cannot connect. */}}
+            {{- $_ := set $probe "tcpSocket" (dict "port" $probe.httpGet.port) }}
+            {{- $_ := unset $probe "httpGet" }}
+            {{- else }}
             {{- $_ := set $probe.httpGet "scheme" (include "philter-ai-proxy.scheme" $) }}
+            {{- end }}
             {{- toYaml $probe | nindent 12 }}
           {{- end }}
           {{- with .Values.readinessProbe }}
           readinessProbe:
             {{- $probe := deepCopy . }}
+            {{- if $.Values.mtls.enabled }}
+            {{- /* The kubelet presents no client certificate, so under mTLS an HTTPS probe cannot connect. */}}
+            {{- $_ := set $probe "tcpSocket" (dict "port" $probe.httpGet.port) }}
+            {{- $_ := unset $probe "httpGet" }}
+            {{- else }}
             {{- $_ := set $probe.httpGet "scheme" (include "philter-ai-proxy.scheme" $) }}
+            {{- end }}
             {{- toYaml $probe | nindent 12 }}
           {{- end }}
           resources:

@@ -1,0 +1,43 @@
+# The proxy's settings for the contract tests: every provider points at the simulator, which records each
+# request and passes /ollama to a real Ollama server.
+proxy:
+  providers:
+    openai:
+      target: http://sim:8000/openai
+    anthropic:
+      target: http://sim:8000/anthropic
+    gemini:
+      target: http://sim:8000/gemini
+    ollama:
+      target: http://sim:8000/ollama
+    azure:
+      target: http://sim:8000/azure
+      api-version: "2024-10-21"
+    bedrock:
+      region: us-east-1
+      target: http://sim:8000/bedrock
+    openai-compatible:
+      # Ollama's OpenAI-compatible API, a real OpenAI-compatible server.
+      local:
+        target: http://sim:8000/ollama
+  defaults:
+    outbound:
+      enabled: true
+      action: redact
+  routes:
+    # Listing models: nothing to redact, and nothing to scan.
+    - match:
+        path: /v1/models
+    - match:
+        path: /api/tags
+    # Ollama model management, opted into as documented. Scanning stays on to check that forwarded responses are
+    # returned unscanned.
+    - match:
+        path: /api/pull
+      unsupported-endpoints: forward
+      outbound:
+        enabled: true
+        action: redact
+    - match:
+        path: /api/delete
+      unsupported-endpoints: forward

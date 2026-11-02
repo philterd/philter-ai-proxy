@@ -2,7 +2,7 @@
 
 A policy says what to find and what to replace it with. Policies are native [Phileas policies](https://philterd.github.io/phileas/filter_policies/filter_policies/), the same JSON Philter uses, so a policy written for one works in the other. See [Filters](https://philterd.github.io/phileas/filter_policies/filters/) and [Filter Strategies](https://philterd.github.io/phileas/filter_policies/filter_strategies/) in the Phileas documentation for everything a policy can contain.
 
-Policies are stored in the proxy's database and managed with the [admin API](api.md#policies).
+Policies are stored in the proxy's database, encrypted with the encryption key, and managed with the [admin API](api.md#policies).
 
 ## The default policy
 
@@ -100,7 +100,7 @@ These rules are stricter than Philter's, which can call a PhEye service. A polic
 A context keeps the replacement chosen for each value, so the same value is replaced the same way every time. That matters for strategies that choose a replacement, such as `RANDOM_REPLACE`: with a context, a name replaced by a fake name stays the same fake name across a conversation.
 
 - **Within one request and its response**, the proxy always uses a context of its own, so a value is replaced the same way in every message of the request, in the response, and throughout a streamed response.
-- **Across requests**, set `context` on a route or in `proxy.defaults` to a name of your choosing. Its replacements are stored in the proxy's database, the original values encrypted with the encryption key.
+- **Across requests**, set `context` on a route or in `proxy.defaults` to a name of your choosing. Its replacements are stored in the proxy's database, encrypted with the encryption key, and found by a keyed hash of each original value; the originals themselves are not stored.
 
 Either way, a strategy reuses replacements only when it sets `"replacementScope": "CONTEXT"`:
 

@@ -58,19 +58,22 @@ public final class OpenAiResponsesStream implements StreamDialect {
             OpenAiDialect.nullOut(json, "logprobs");
         }
         switch (type) {
-            case "response.output_text.delta", "response.refusal.delta", "response.reasoning_summary_text.delta" -> {
+            case "response.output_text.delta", "response.refusal.delta", "response.reasoning_summary_text.delta",
+                 "response.reasoning_text.delta" -> {
                 final String group = group(json);
                 templates.put(group, json);
                 scanner.appendText(new Key(group, type), Json.string(json, "delta"));
                 return null;
             }
-            case "response.function_call_arguments.delta", "response.custom_tool_call_input.delta" -> {
+            case "response.function_call_arguments.delta", "response.custom_tool_call_input.delta",
+                 "response.mcp_call_arguments.delta" -> {
                 final String group = group(json);
                 templates.put(group, json);
                 scanner.appendArguments(new Key(group, type), Json.string(json, "delta"));
                 return null;
             }
-            case "response.output_text.done", "response.refusal.done", "response.reasoning_summary_text.done" -> {
+            case "response.output_text.done", "response.refusal.done", "response.reasoning_summary_text.done",
+                 "response.reasoning_text.done" -> {
                 scanner.finish(group(json));
                 final TextSlots slots = new TextSlots();
                 slots.addString(json, "text");
@@ -78,7 +81,8 @@ public final class OpenAiResponsesStream implements StreamDialect {
                 scanner.scanWhole(slots);
                 return event;
             }
-            case "response.function_call_arguments.done", "response.custom_tool_call_input.done" -> {
+            case "response.function_call_arguments.done", "response.custom_tool_call_input.done",
+                 "response.mcp_call_arguments.done" -> {
                 scanner.finish(group(json));
                 final TextSlots slots = new TextSlots();
                 slots.addJsonString(json, "arguments");
@@ -86,7 +90,8 @@ public final class OpenAiResponsesStream implements StreamDialect {
                 scanner.scanWhole(slots);
                 return event;
             }
-            case "response.content_part.added", "response.content_part.done" -> {
+            case "response.content_part.added", "response.content_part.done",
+                 "response.reasoning_summary_part.added", "response.reasoning_summary_part.done" -> {
                 if (type.endsWith(".done")) {
                     scanner.finish(group(json));
                 }

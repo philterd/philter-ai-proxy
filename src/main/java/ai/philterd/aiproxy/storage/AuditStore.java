@@ -64,6 +64,29 @@ public class AuditStore {
                     java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.APPEND);
             LOGGER.info("Writing the audit log to {}", p);
         }
+        final int retentionDays = properties.audit().retentionDays();
+        if (retentionDays > 0) {
+            final java.util.concurrent.ScheduledExecutorService pruner = java.util.concurrent.Executors.newSingleThreadScheduledExecutor(
+                    Thread.ofVirtual().name("audit-pruner").factory());
+            pruner.scheduleAtFixedRate(() -> prune(Instant.now().minus(java.time.Duration.ofDays(retentionDays))),
+                    0, 1, java.util.concurrent.TimeUnit.DAYS);
+        }
+    }
+
+    /** Deletes the entries stored before the time. */
+    public int prune(final Instant before) {
+        try (Connection c = database.connect();
+             PreparedStatement ps = c.prepareStatement("DELETE FROM audit_log WHERE timestamp < ?")) {
+            ps.setString(1, before.toString());
+            final int deleted = ps.executeUpdate();
+            if (deleted > 0) {
+                LOGGER.info("Deleted {} audit entries older than {}", deleted, before);
+            }
+            return deleted;
+        } catch (final SQLException e) {
+            LOGGER.error("Unable to prune the audit log", e);
+            return 0;
+        }
     }
 
     public record Entry(long id, Instant timestamp, String requestId, String event, JsonObject details) {

@@ -1,0 +1,61 @@
+# Contract tests: each provider's official SDK talks to the proxy, which talks to the simulator.
+#
+#   ./run.sh
+#
+# Nothing here reaches a real provider. The credentials are invented.
+
+services:
+
+  ollama:
+    image: ollama/ollama:0.32.6
+    volumes:
+      - ollama-models:/root/.ollama
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 2s
+      retries: 30
+
+  ollama-pull:
+    image: ollama/ollama:0.32.6
+    depends_on:
+      ollama:
+        condition: service_healthy
+    environment:
+      - OLLAMA_HOST=ollama:11434
+    entrypoint: ["sh", "-c", "ollama pull qwen2.5:0.5b && ollama pull all-minilm:22m"]
+
+  sim:
+    build: ./simulator
+    environment:
+      - OLLAMA_URL=http://ollama:11434
+      - AWS_ACCESS_KEY_ID=AKIDCONTRACTTEST
+      - AWS_SECRET_ACCESS_KEY=contract-test-secret-not-a-real-key
+
+  proxy:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    depends_on:
+      - sim
+    volumes:
+      - ./proxy.yaml:/etc/philter-ai-proxy/contract.yaml:ro
+    environment:
+      - SPRING_CONFIG_ADDITIONAL_LOCATION=file:/etc/philter-ai-proxy/contract.yaml
+      - PROXY_TLS_DEVSELFSIGNEDCERT=false
+      - PHILTER_AI_PROXY_ENCRYPTION_KEY=00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff
+      - PHILTER_AI_PROXY_BOOTSTRAP_API_KEY=contract-test-bootstrap-key-0123456789abcdef
+      - AWS_ACCESS_KEY_ID=AKIDCONTRACTTEST
+      - AWS_SECRET_ACCESS_KEY=contract-test-secret-not-a-real-key
+      - AWS_EC2_METADATA_DISABLED=true
+
+  clients:
+    build: ./clients
+    environment:
+      - PROXY_URL=http://proxy:8080
+      - SIM_URL=http://sim:8000
+      - BOOTSTRAP_API_KEY=contract-test-bootstrap-key-0123456789abcdef
+      - OLLAMA_MODEL=qwen2.5:0.5b
+      - OLLAMA_EMBED_MODEL=all-minilm:22m
+
+volumes:
+  ollama-models:

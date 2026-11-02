@@ -58,12 +58,13 @@ proxy:
 
 | Setting | Default | Meaning |
 |---|---|---|
-| `proxy.security.encryption-key` | (required) | Encrypts values stored at rest, such as the original values a context keeps. 32 random bytes as 64 hex characters or base64: `openssl rand -hex 32`. The proxy refuses to start with a key other than the one its database was created with. |
+| `proxy.security.encryption-key` | (required) | Encrypts values stored at rest: policies, and each context's replacements. 32 random bytes as 64 hex characters or base64: `openssl rand -hex 32`. The proxy refuses to start with a key other than the one its database was created with. |
 | `proxy.security.bootstrap-api-key` | | An admin key created on first start, while no API key exists. At least 32 characters. |
 | `proxy.security.proxy-key-header` | `x-philter-proxy-key` | The request header that carries the proxy key on provider traffic. It is never forwarded. |
 | `proxy.security.trusted-proxies` | none | Load balancers and proxies (IP addresses or CIDR ranges) whose `X-Forwarded-For` is believed for the client address in the audit log. The header is read from the right, skipping trusted proxies. |
 | `proxy.storage.sqlite-path` | `/var/lib/philter-ai-proxy/philter-ai-proxy.db` | The SQLite database: policies, API keys, contexts, and the audit log. Created readable only by the proxy's user. One instance per file. |
 | `proxy.audit.file` | | A file each audit entry is also appended to, as one JSON line. See [Audit log](monitoring.md#audit-log). |
+| `proxy.audit.retention-days` | `0` (kept) | Entries older than this are deleted from the database, once a day. Standard output and the audit file are not pruned. |
 
 ### Policies and models
 
@@ -81,6 +82,7 @@ proxy:
 | `proxy.defaults.context` | none | The context for a request no route matches. See [Contexts](policies.md#contexts). |
 | `proxy.defaults.outbound.enabled` | `false` | Whether responses to requests no route matches are scanned. |
 | `proxy.defaults.outbound.action` | `redact` | `redact`, `block`, or `flag`. See [Actions](api.md#actions). |
+| `proxy.defaults.unsupported-endpoints` | `reject` | `reject` refuses a request with a body to an endpoint the proxy cannot redact; when response scanning is on, a request to an endpoint whose response it cannot scan; and any request to such an endpoint of a provider the proxy authenticates to itself (Vertex AI, Bedrock, and Azure OpenAI with Entra ID). `forward` sends such requests on unredacted, with responses unscanned. See [Supported request types](api.md#supported-request-types). |
 | `proxy.defaults.media` | `reject` | `reject` refuses a request carrying images, audio, video, or files, which the proxy does not redact; `forward` sends it on with the media unchanged. See [Images, audio, and files are not redacted](api.md#images-audio-and-files-are-not-redacted). |
 | `proxy.routes` | none | Routes, in order; see [Routes](#routes). |
 
@@ -89,7 +91,9 @@ proxy:
 | Setting | Default | Meaning |
 |---|---|---|
 | `proxy.limits.max-request-body-bytes` | `10485760` (10 MiB) | Larger request bodies are refused with `413`. |
-| `proxy.limits.max-concurrent-requests` | `0` (no limit) | Requests handled at once; more are refused with `503` and `Retry-After: 1`. |
+| `proxy.limits.max-concurrent-requests` | `200` | Requests handled at once; more are refused with `503` and `Retry-After: 1`. A negative value removes the limit. |
+| `proxy.limits.redaction-timeout-ms` | `30000` | How long redacting one request, or scanning one response or stream window, may take. A request that takes longer is refused with `503` `redaction_timeout`; a stream is ended with an error. |
+| `proxy.limits.max-response-body-bytes` | `33554432` (32 MiB) | The largest response read to scan it. A larger one is refused with `502` `response_too_large`. Applies only when response scanning is on; streams are bounded per line, event, and held text instead. |
 | `proxy.streaming.holdback-characters` | `256` | How much of a streamed response is held back so a value split across fragments is scanned whole. See [Streamed responses](api.md#streamed-responses). |
 
 ### Server and TLS
@@ -102,7 +106,7 @@ proxy:
 | `server.ssl.certificate`, `server.ssl.certificate-private-key` | | Your certificate and key in PEM form, to serve HTTPS. |
 | `server.ssl.enabled-protocols` | | Limit the TLS versions, such as `TLSv1.3,TLSv1.2`. Setting it turns TLS on. |
 | `server.ssl.trust-certificate`, `server.ssl.client-auth` | | For mutual TLS: the PEM file of the CA that signs client certificates, and `need`. |
-| `server.tomcat.connection-timeout` | `10s` | How long a connection may take to send its request. |
+| `server.tomcat.connection-timeout` | `10s` | How long the proxy waits for a request to start, and between reads of it. Not a deadline for the whole request; see [Kubernetes](kubernetes.md#tls). |
 | `server.max-http-request-header-size` | `1MB` | Larger request headers are refused. |
 
 The proxy does not limit how many TLS handshakes run at once. Put a load balancer or ingress in front of it to absorb a flood of handshakes or connections.
@@ -157,7 +161,7 @@ proxy:
       location: us-central1
 ```
 
-Requests go to `https://<location>-aiplatform.googleapis.com` unless `target` is set. The proxy authenticates with Google application default credentials (a service account key named in `GOOGLE_APPLICATION_CREDENTIALS`, workload identity, or the metadata server), replacing any `Authorization` the client sends.
+Requests go to `https://<location>-aiplatform.googleapis.com` unless `target` is set. A request whose path names another project, or another location when `location` is set, is refused with `403` `vertex_project_denied`, since the proxy's credential is used for it. The proxy authenticates with Google application default credentials (a service account key named in `GOOGLE_APPLICATION_CREDENTIALS`, workload identity, or the metadata server), replacing any `Authorization` the client sends.
 
 ### Amazon Bedrock
 
@@ -169,7 +173,7 @@ proxy:
       role-arn: arn:aws:iam::123456789012:role/philter-ai-proxy
 ```
 
-Requests go to `https://bedrock-runtime.<region>.amazonaws.com` unless `target` is set. The proxy signs each request with SigV4, with credentials from the AWS default chain (environment variables, a profile, web identity, or instance and container roles), assuming `role-arn` when it is set. Only `Content-Type` and the signature are forwarded; the client's headers are not.
+Requests go to `https://bedrock-runtime.<region>.amazonaws.com` unless `target` is set. The proxy signs each request with SigV4, with credentials from the AWS default chain (environment variables, a profile, web identity, or instance and container roles), assuming `role-arn` when it is set. Only `Content-Type`, the client's `X-Amzn-Bedrock-*` headers (guardrail, trace, latency tier, and service tier settings), and the signature are forwarded; the client's other headers are not.
 
 ### OpenAI-compatible providers
 
@@ -198,6 +202,7 @@ A route chooses the policy, context, and response scanning for the requests it m
 | `context` | The context to keep replacements in. Without one, `proxy.defaults.context`. |
 | `outbound.enabled`, `outbound.action` | Response scanning for the route. A route without `outbound` does not scan responses. |
 | `media` | `reject` or `forward` for requests carrying images, audio, video, or files. Without one, `proxy.defaults.media`. |
+| `unsupported-endpoints` | `reject` or `forward` for requests the proxy cannot redact or scan. Without one, `proxy.defaults.unsupported-endpoints`. Pair `forward` with `match.path` to allow one endpoint. |
 
 A key created with a `policy` overrides the route's policy. See [Choosing the policy for a request](policies.md#choosing-the-policy-for-a-request).
 
@@ -218,6 +223,9 @@ proxy:
         header: x-team
         value: vision
       media: forward
+    - match:
+        path: /v1/batches
+      unsupported-endpoints: forward
 ```
 
-A header match is only as trustworthy as whoever sets the header. When clients can set it themselves, they can choose their route; bind a policy to their keys instead.
+A header match is only as trustworthy as whoever sets the header. When clients can set it themselves, they can choose their route, including one that forwards media or turns off response scanning. A key with a bound policy skips every route that matches on a header: its requests use only routes that match on path and model, then `proxy.defaults`. Bind a policy to the keys of clients that must not choose.

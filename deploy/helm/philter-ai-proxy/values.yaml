@@ -15,6 +15,17 @@ serviceAccount:
   create: true
   name: ""
   annotations: {}
+  # The proxy does not call the Kubernetes API. Workload identity for Bedrock or Vertex AI (IRSA, EKS Pod
+  # Identity, GKE Workload Identity, Azure Workload Identity) works without the service account token.
+  automountToken: false
+
+# A NetworkPolicy for the proxy's pods. Egress is not restricted, since the proxy reaches the providers.
+networkPolicy:
+  enabled: false
+  # Peers (podSelector, namespaceSelector, ipBlock) allowed to reach port 8080. Empty: any.
+  proxyFrom: []
+  # Peers allowed to reach the metrics port (9090), such as Prometheus. Empty: none.
+  metricsFrom: []
 
 podAnnotations: {}
 podLabels: {}
@@ -155,4 +166,6 @@ config:
         action: redact
       # reject: refuse requests carrying images, audio, video, or files, which are not redacted. forward: send them on.
       media: reject
+      # reject: refuse requests the proxy cannot redact, or whose responses it cannot scan when scanning is on.
+      unsupported-endpoints: reject
     routes: []

@@ -37,9 +37,9 @@ import java.util.regex.Pattern;
 /**
  * The configured providers, and which one a request path goes to. Paths are resolved in the order earlier versions
  * used: an OpenAI-compatible prefix ({@code /<name>/...}), Anthropic ({@code /v1/messages}), Vertex AI
- * ({@code /v1/projects/...:generateContent}), Gemini (any other {@code generateContent} path, or {@code /v1beta/}),
- * Ollama ({@code /api/generate}, {@code /api/chat}), Azure OpenAI ({@code /openai/deployments/}), Bedrock
- * ({@code /model/<id>/converse}), and otherwise OpenAI.
+ * ({@code /v1/projects/...}), Gemini ({@code /v1beta/}, or a path naming a Gemini method such as {@code :generateContent}),
+ * Ollama ({@code /api/...}), Azure OpenAI ({@code /openai/deployments/}), Bedrock
+ * ({@code /model/<id>/...}), and otherwise OpenAI.
  */
 @Component
 public class ProviderRegistry {
@@ -62,6 +62,8 @@ public class ProviderRegistry {
 
     private final Upstream openai;
     private final Upstream anthropic;
+    private final String vertexProject;
+    private final String vertexLocation;
     private final Upstream gemini;
     private final Upstream ollama;
     private final Upstream azure;
@@ -85,6 +87,8 @@ public class ProviderRegistry {
                 } : null));
 
         final ProxyProperties.Provider vx = p.vertex();
+        this.vertexProject = vx.project();
+        this.vertexLocation = vx.location();
         if (vx.project() == null || vx.isDisabled()) {
             this.vertex = null;
         } else {
@@ -176,23 +180,38 @@ public class ProviderRegistry {
                 return new Route(named, path.substring(second));
             }
         }
-        final String lower = path.toLowerCase(Locale.ROOT);
         if (path.startsWith("/v1/messages")) {
             return route(anthropic, "anthropic", path);
         }
-        if (path.startsWith("/v1/projects/") && (lower.contains(":generatecontent") || lower.contains(":streamgeneratecontent"))) {
-            return route(vertex, "vertex", path);
+        // Every Vertex AI project path goes to Vertex AI, checked against the configured project; the methods the
+        // proxy cannot redact are then refused rather than sent to another provider.
+        if (path.startsWith("/v1/projects/") || path.startsWith("/v1beta1/projects/")) {
+            final Route route = route(vertex, "vertex", path);
+            // The proxy's Google credential is for the configured project; a path naming another is refused.
+            final String[] segments = path.split("/");
+            final boolean projectMatches = segments.length > 3 && segments[3].equals(vertexProject);
+            final boolean locationMatches = vertexLocation == null
+                    || segments.length > 5 && segments[4].equals("locations") && segments[5].equals(vertexLocation);
+            if (!projectMatches || !locationMatches) {
+                throw new ProxyError(403, "forbidden", "vertex_project_denied",
+                        "the path names a project or location other than the configured Vertex AI project");
+            }
+            return route;
         }
-        if (lower.contains("generatecontent") || path.startsWith("/v1beta/")) {
+        if (path.startsWith("/v1beta/") || GeminiDialect.isMethodPath(path) || path.toLowerCase(Locale.ROOT).contains("generatecontent")) {
             return route(gemini, "gemini", path);
         }
-        if (path.equals("/api/generate") || path.equals("/api/chat")) {
+        // Every Ollama API path goes to Ollama: chat and generate are redacted, and the rest (/api/tags, /api/show,
+        // ...) are handled as endpoints the proxy cannot redact, rather than sent to another provider.
+        if (path.startsWith("/api/")) {
             return route(ollama, "ollama", path);
         }
         if (path.startsWith("/openai/deployments/")) {
             return route(azure, "azure", path);
         }
-        if (BedrockDialect.isConversePath(path)) {
+        // Every Bedrock runtime model path goes to Bedrock, so an operation the proxy cannot redact is refused rather
+        // than sent to another provider.
+        if (BedrockDialect.isModelPath(path)) {
             return route(bedrock, "bedrock", path);
         }
         return route(openai, "openai", path);
@@ -210,7 +229,7 @@ public class ProviderRegistry {
         try {
             return resolve(path).upstream().name();
         } catch (final ProxyError e) {
-            return e.code().replace("_disabled", "");
+            return e.code().replace("_disabled", "").replace("_project_denied", "");
         }
     }
 

@@ -105,10 +105,8 @@ public class ProxyController {
         boolean acquired = false;
         active.incrementAndGet();
         try {
-            final String path = request.getRequestURI();
-            if (!isCanonical(path)) {
-                throw new ProxyError(400, "invalid_request", "path_not_canonical", "request path is not in canonical form");
-            }
+            final String rawPath = request.getRequestURI();
+            final String path = decodePath(rawPath);
             exchange.provider = providers.providerName(path);
             final ApiKey key = authenticate(request, exchange);
             if (concurrency != null) {
@@ -119,7 +117,11 @@ public class ProxyController {
                 }
                 acquired = true;
             }
-            handle(request, response, exchange, key, providers.resolve(path));
+            final ProviderRegistry.Route route = providers.resolve(path);
+            // The provider receives the client's own encoding of the path. An OpenAI-compatible prefix is one segment,
+            // and an encoded slash is refused, so the first raw slash after it marks the same boundary.
+            final String forwardPath = route.path().equals(path) ? rawPath : rawPath.substring(rawPath.indexOf('/', 1));
+            handle(request, response, exchange, key, route, forwardPath, path);
         } catch (final ProxyError e) {
             fail(response, exchange, e);
         } catch (final RuntimeException e) {
@@ -139,6 +141,87 @@ public class ProxyController {
         final io.micrometer.tracing.Tracer t = tracer.getIfAvailable();
         final io.micrometer.tracing.Span span = t == null ? null : t.currentSpan();
         return span == null || !Boolean.TRUE.equals(span.context().sampled()) ? null : span.context().traceId();
+    }
+
+    /** The field names the OpenAI and Ollama dialects read text, media, or the model from. */
+    private static final java.util.Set<String> READ_FIELDS = java.util.Set.of("model", "name", "messages", "content", "prompt", "system",
+            "suffix", "template", "images", "text", "input", "instructions", "refusal", "thinking", "tool_calls",
+            "function", "arguments", "function_call", "prediction", "output", "reasoning", "reasoning_content",
+            "variables", "type", "summary", "error", "stdout", "stderr");
+
+    /**
+     * Members whose contents are the application's own, such as tool schemas, structured-output schemas, and tool
+     * arguments: their keys are not checked, so a schema property named {@code Content} is not refused.
+     */
+    private static final java.util.Set<String> APPLICATION_MEMBERS = java.util.Set.of("tools", "functions",
+            "response_format", "metadata", "format", "options", "arguments", "parameters", "schema", "json_schema", "text");
+
+    /** The first object key, at any depth, that is a read field in another case, or null. */
+    static String miscasedField(final JsonElement element) {
+        if (element instanceof JsonObject object) {
+            for (final Map.Entry<String, JsonElement> member : object.entrySet()) {
+                // Go's encoding/json also folds the long s and the Kelvin sign to s and k.
+                final String lower = member.getKey().replace('\u017F', 's').replace('\u212A', 'k').toLowerCase(Locale.ROOT);
+                if (!lower.equals(member.getKey()) && READ_FIELDS.contains(lower)) {
+                    return member.getKey();
+                }
+                final String nested = APPLICATION_MEMBERS.contains(member.getKey()) ? null : miscasedField(member.getValue());
+                if (nested != null) {
+                    return nested;
+                }
+            }
+        } else if (element instanceof com.google.gson.JsonArray array) {
+            for (final JsonElement item : array) {
+                final String nested = miscasedField(item);
+                if (nested != null) {
+                    return nested;
+                }
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Decodes the request path once, so routing, scopes, and endpoint classification see what the provider will see
+     * when it decodes the same path. Refuses malformed escapes, escapes that would change the path's structure or
+     * be decoded twice ({@code /}, {@code \}, {@code %}, {@code ?}, {@code #}), control characters, invalid UTF-8,
+     * and a decoded path that is not canonical.
+     */
+    static String decodePath(final String raw) throws ProxyError {
+        final ProxyError invalid = new ProxyError(400, "invalid_request", "path_not_canonical", "request path is not in canonical form");
+        if (raw == null) {
+            throw invalid;
+        }
+        final java.io.ByteArrayOutputStream bytes = new java.io.ByteArrayOutputStream();
+        for (int i = 0; i < raw.length(); i++) {
+            final char c = raw.charAt(i);
+            if (c == '%') {
+                if (i + 2 >= raw.length() || Character.digit(raw.charAt(i + 1), 16) < 0 || Character.digit(raw.charAt(i + 2), 16) < 0) {
+                    throw invalid;
+                }
+                final int b = Integer.parseInt(raw.substring(i + 1, i + 3), 16);
+                if (b == '/' || b == '\\' || b == '%' || b == '?' || b == '#') {
+                    throw invalid;
+                }
+                bytes.write(b);
+                i += 2;
+            } else {
+                bytes.writeBytes(String.valueOf(c).getBytes(StandardCharsets.UTF_8));
+            }
+        }
+        final String decoded;
+        try {
+            decoded = StandardCharsets.UTF_8.newDecoder()
+                    .onMalformedInput(java.nio.charset.CodingErrorAction.REPORT)
+                    .onUnmappableCharacter(java.nio.charset.CodingErrorAction.REPORT)
+                    .decode(java.nio.ByteBuffer.wrap(bytes.toByteArray())).toString();
+        } catch (final java.nio.charset.CharacterCodingException e) {
+            throw invalid;
+        }
+        if (decoded.chars().anyMatch(ch -> ch < 0x20 || ch == 0x7f) || !isCanonical(decoded)) {
+            throw invalid;
+        }
+        return decoded;
     }
 
     /**
@@ -162,7 +245,8 @@ public class ProxyController {
     }
 
     private void handle(final HttpServletRequest request, final HttpServletResponse response, final Exchange exchange,
-                        final ApiKey key, final ProviderRegistry.Route route) throws ProxyError, IOException {
+                        final ApiKey key, final ProviderRegistry.Route route, final String forwardPath, final String scopePath)
+            throws ProxyError, IOException {
         final ProviderDialect dialect = route.upstream().dialect();
         final String path = route.path();
         exchange.provider = route.upstream().name();
@@ -177,13 +261,36 @@ public class ProxyController {
         final JsonObject body = raw.length == 0 ? null : parseObject(raw);
         exchange.model = body == null ? ProviderDialect.modelFromPath(path) : dialect.model(path, body);
 
-        final KeyScopes.ScopeDenial denial = key.scopes().check(exchange.provider, exchange.model, path);
+        // Path scopes see the path as sent, with any OpenAI-compatible provider's prefix, so a scope of
+        // /v1/chat/completions does not also admit every compatible provider.
+        final KeyScopes.ScopeDenial denial = key.scopes().check(exchange.provider, exchange.model, scopePath);
         if (denial != null) {
             throw new ProxyError(403, "forbidden", denial.code(), "request not permitted by API key scope");
         }
 
-        final Routes.Resolved resolved = Routes.resolve(properties, path, exchange.model, request::getHeader);
-        if (body != null && resolved.media() == ProxyProperties.Media.REJECT) {
+        if (body != null && dialect.caseInsensitiveFields()) {
+            final String field = miscasedField(body);
+            if (field != null) {
+                throw new ProxyError(400, "invalid_request", "ambiguous_field", "the field '" + field
+                        + "' differs only in case from a field the proxy redacts; use the provider's own spelling");
+            }
+        }
+        final Routes.Resolved resolved = Routes.resolve(properties, path, exchange.model, request::getHeader,
+                key.scopes().policy() != null);
+        final boolean supported = dialect.supports(request.getMethod(), path);
+        // A provider the proxy authenticates to with its own credential (Vertex AI, Bedrock, Azure with Entra ID)
+        // would otherwise act for any proxy key on any endpoint, such as listing or deleting resources.
+        final boolean ownCredential = route.upstream().client().usesOwnCredential();
+        if (resolved.unsupportedEndpoints() == ProxyProperties.Mode.REJECT && !supported
+                && (body != null || resolved.outbound().enabled() || ownCredential)) {
+            throw new ProxyError(400, "invalid_request", "unsupported_endpoint", body != null
+                    ? "the proxy cannot redact requests to this endpoint, and is configured to refuse them"
+                    : resolved.outbound().enabled()
+                    ? "the proxy cannot scan responses from this endpoint, and is configured to refuse them"
+                    : "the proxy authenticates to this provider with its own credential, and is configured to refuse "
+                    + "endpoints it does not redact");
+        }
+        if (body != null && resolved.media() == ProxyProperties.Mode.REJECT) {
             final String media = dialect.mediaPart(path, body);
             if (media != null) {
                 throw new ProxyError(400, "invalid_request", "media_not_allowed", "the request contains a '" + media
@@ -211,7 +318,7 @@ public class ProxyController {
             forward = body.toString().getBytes(StandardCharsets.UTF_8);
         }
 
-        final HttpResponse<InputStream> upstream = send(route, request, path, forward, exchange);
+        final HttpResponse<InputStream> upstream = send(route, request, forwardPath, forward, exchange);
         if (upstream.statusCode() >= 400) {
             metrics.upstreamError(exchange.provider, upstream.statusCode());
         }
@@ -221,7 +328,13 @@ public class ProxyController {
             final Framing framing = dialect.framing(responseType);
             final boolean success = upstream.statusCode() >= 200 && upstream.statusCode() < 300;
             exchange.streamed = framing != null;
-            if (!outbound.enabled() || !success) {
+            if (outbound.enabled() && upstream.statusCode() < 400 && !success) {
+                // A redirect or other non-error status the proxy does not follow: its body is not scanned.
+                throw unscannable();
+            }
+            // A response from an endpoint the proxy cannot scan, forwarded under unsupported-endpoints: forward, is
+            // returned unscanned, as documented, rather than read with a dialect that does not know its shape.
+            if (!outbound.enabled() || !success || !supported) {
                 passThrough(response, upstream, in, framing != null, exchange);
                 return;
             }
@@ -238,7 +351,11 @@ public class ProxyController {
                 }
                 scanStream(response, upstream, in, framing, streamDialect, session, outbound.action(), exchange);
             } else if (isBinary(responseType)) {
-                // Audio and images carry no text the proxy reads; they are documented as not scanned.
+                // Generated audio carries no text the proxy reads, and is documented as not scanned. A binary response
+                // from any other endpoint is not one the proxy expects, so it is not returned unscanned.
+                if (!dialect.binaryResponse(path)) {
+                    throw unscannable();
+                }
                 passThrough(response, upstream, in, false, exchange);
             } else {
                 scanBuffered(response, upstream, in, dialect, path, session, outbound.action(), exchange);
@@ -306,6 +423,10 @@ public class ProxyController {
     private List<Redaction> redact(final Redactor.Session session, final List<String> texts, final Exchange exchange) throws ProxyError {
         try {
             return session.redact(texts);
+        } catch (final ai.philterd.aiproxy.redaction.RedactionTimeoutException e) {
+            LOGGER.error("Redaction of request {} timed out", exchange.requestId);
+            metrics.redactionError(exchange.provider);
+            throw new ProxyError(503, "redaction_error", "redaction_timeout", "redaction took too long; the request was not forwarded");
         } catch (final RedactionException e) {
             LOGGER.error("Redaction failed", e);
             metrics.redactionError(exchange.provider);
@@ -322,7 +443,19 @@ public class ProxyController {
         final OutputStream out = response.getOutputStream();
         final byte[] buffer = new byte[8192];
         int n;
-        while ((n = in.read(buffer)) != -1) {
+        while (true) {
+            try {
+                n = in.read(buffer);
+            } catch (final IOException e) {
+                // The response is already under way, so the client sees it cut short; the audit log says why.
+                LOGGER.warn("The provider's response to request {} ended unexpectedly: {}", exchange.requestId, e.getMessage());
+                exchange.errorType = "provider_error";
+                exchange.errorCode = "stream_interrupted";
+                return;
+            }
+            if (n == -1) {
+                break;
+            }
             out.write(buffer, 0, n);
             if (streaming) {
                 out.flush();
@@ -334,7 +467,12 @@ public class ProxyController {
     private void scanBuffered(final HttpServletResponse response, final HttpResponse<InputStream> upstream, final InputStream in,
                               final ProviderDialect dialect, final String path, final Redactor.Session session,
                               final Action action, final Exchange exchange) throws IOException, ProxyError {
-        final byte[] raw = in.readAllBytes();
+        final long limit = properties.limits().maxResponseBodyBytes();
+        final byte[] raw = in.readNBytes((int) limit + 1);
+        if (raw.length > limit) {
+            throw new ProxyError(502, "provider_error", "response_too_large",
+                    "the provider's response is larger than the proxy will scan");
+        }
         final JsonElement json;
         try {
             json = JsonParser.parseString(new String(raw, StandardCharsets.UTF_8));
@@ -376,10 +514,16 @@ public class ProxyController {
         response.setStatus(upstream.statusCode());
         exchange.status = upstream.statusCode();
         final OutputStream out = response.getOutputStream();
+        final boolean[] clientGone = {false};
         final StreamScanner scanner = new StreamScanner(framing, streamDialect, session::redact, action,
                 properties.streaming().holdbackCharacters(), bytes -> {
-                    out.write(bytes);
-                    out.flush();
+                    try {
+                        out.write(bytes);
+                        out.flush();
+                    } catch (final IOException e) {
+                        clientGone[0] = true;
+                        throw e;
+                    }
                 });
         try {
             scanner.run(in);
@@ -388,6 +532,20 @@ public class ProxyController {
         } catch (final StreamScanner.UnscannableException e) {
             endStream(out, framing, exchange, "provider_error", "response_unscannable",
                     "the provider's response could not be scanned; the stream was ended");
+        } catch (final ai.philterd.aiproxy.stream.ResponseTooLargeException e) {
+            endStream(out, framing, exchange, "provider_error", "response_too_large",
+                    "the provider's response is larger than the proxy will scan; the stream was ended");
+        } catch (final IOException e) {
+            // Held text is discarded either way. Record why the stream ended, rather than a clean 200.
+            if (clientGone[0]) {
+                exchange.errorType = "client_error";
+                exchange.errorCode = "client_disconnected";
+            } else {
+                LOGGER.warn("The provider's stream for request {} ended unexpectedly: {}", exchange.requestId, e.getMessage());
+                metrics.upstreamError(exchange.provider, 502);
+                endStream(out, framing, exchange, "provider_error", "stream_interrupted",
+                        "the provider's stream ended unexpectedly");
+            }
         } catch (final RedactionException e) {
             LOGGER.error("Scanning the streamed response to request {} failed", exchange.requestId, e);
             metrics.redactionError(exchange.provider);
@@ -403,7 +561,7 @@ public class ProxyController {
         exchange.errorType = type;
         exchange.errorCode = code;
         final JsonObject error = JsonParser.parseString(errorJson(type, code, message, exchange.requestId)).getAsJsonObject();
-        out.write(framing.encode(new StreamEvent("error", error)));
+        out.write(framing.encodeError(code, error));
         out.flush();
     }
 
@@ -462,8 +620,15 @@ public class ProxyController {
         response.resetBuffer();
         response.setStatus(error.status());
         response.setContentType("application/json");
-        response.getOutputStream().write(errorJson(error.type(), error.code(), error.getMessage(), exchange.requestId)
-                .getBytes(StandardCharsets.UTF_8));
+        String body = errorJson(error.type(), error.code(), error.getMessage(), exchange.requestId);
+        if ("bedrock".equals(exchange.provider)) {
+            // AWS SDKs read an error's code from this header and its message from a top-level "message".
+            response.setHeader("x-amzn-ErrorType", error.code());
+            final JsonObject root = JsonParser.parseString(body).getAsJsonObject();
+            root.addProperty("message", error.code() + ": " + error.getMessage());
+            body = root.toString();
+        }
+        response.getOutputStream().write(body.getBytes(StandardCharsets.UTF_8));
     }
 
     static String errorJson(final String type, final String code, final String message, final String requestId) {

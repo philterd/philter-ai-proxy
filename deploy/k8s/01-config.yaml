@@ -9,7 +9,8 @@ metadata:
     app.kubernetes.io/instance: philter-ai-proxy
 data:
   application.yaml: "proxy:\n  defaults:\n    media: reject\n    outbound:\n     \
-    \ action: redact\n      enabled: false\n    policy: default\n  routes: []\n"
+    \ action: redact\n      enabled: false\n    policy: default\n    unsupported-endpoints:\
+    \ reject\n  routes: []\n"
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim

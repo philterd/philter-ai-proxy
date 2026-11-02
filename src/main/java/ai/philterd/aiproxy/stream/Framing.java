@@ -48,4 +48,9 @@ public interface Framing {
 
     byte[] encode(StreamEvent event);
 
+    /** An error that ends the stream, as clients of this framing expect one. */
+    default byte[] encodeError(final String code, final com.google.gson.JsonObject error) {
+        return encode(new StreamEvent("error", error));
+    }
+
 }

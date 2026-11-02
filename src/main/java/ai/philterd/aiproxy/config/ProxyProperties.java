@@ -45,11 +45,11 @@ public record ProxyProperties(
         models = models == null ? new Models(null) : models;
         policyFiles = policyFiles == null ? new PolicyFiles(null, null) : policyFiles;
         providers = providers == null ? new Providers(null, null, null, null, null, null, null, null) : providers;
-        defaults = defaults == null ? new Defaults(null, null, null, null) : defaults;
+        defaults = defaults == null ? new Defaults(null, null, null, null, null) : defaults;
         routes = routes == null ? List.of() : List.copyOf(routes);
         limits = limits == null ? new Limits(0, 0) : limits;
         streaming = streaming == null ? new Streaming(0) : streaming;
-        audit = audit == null ? new Audit(null) : audit;
+        audit = audit == null ? new Audit(null, 0) : audit;
         tls = tls == null ? new Tls(false) : tls;
     }
 
@@ -63,10 +63,18 @@ public record ProxyProperties(
     /**
      * @param file A file each audit entry is also appended to, one JSON line each. Entries are always stored in the
      *             database and written to the {@code philter-ai-proxy.audit} logger.
+     * @param retentionDays Entries older than this are deleted from the database, daily. Zero (the default): kept.
+     *                      The logger and the file are not pruned.
      */
-    public record Audit(String file) {
+    public record Audit(String file, int retentionDays) {
+        @org.springframework.boot.context.properties.bind.ConstructorBinding
         public Audit {
             file = blank(file) ? null : file.strip();
+            retentionDays = Math.max(0, retentionDays);
+        }
+
+        public Audit(final String file) {
+            this(file, 0);
         }
     }
 
@@ -203,26 +211,29 @@ public record ProxyProperties(
     /**
      * What applies to a request no route matches.
      * @param media Whether a request carrying images, audio, video, or files is refused (the default) or forwarded.
+     * @param unsupportedEndpoints Whether a request the proxy cannot redact, or whose response it cannot scan when
+     *                             scanning is on, is refused (the default) or forwarded.
      */
-    public record Defaults(String policy, String context, Outbound outbound, Media media) {
+    public record Defaults(String policy, String context, Outbound outbound, Mode media, Mode unsupportedEndpoints) {
         @org.springframework.boot.context.properties.bind.ConstructorBinding
         public Defaults {
             policy = blank(policy) ? "default" : policy.strip();
             context = blank(context) ? null : context.strip();
             outbound = outbound == null ? Outbound.DISABLED : outbound;
-            media = media == null ? Media.REJECT : media;
+            media = media == null ? Mode.REJECT : media;
+            unsupportedEndpoints = unsupportedEndpoints == null ? Mode.REJECT : unsupportedEndpoints;
         }
 
         public Defaults(final String policy, final String context, final Outbound outbound) {
-            this(policy, context, outbound, null);
+            this(policy, context, outbound, null, null);
         }
     }
 
     /**
-     * The first route whose every set condition matches applies. A route with no policy, context, or media
-     * setting uses the default's.
+     * The first route whose every set condition matches applies. A route with no policy, context, media, or
+     * unsupported-endpoints setting uses the default's.
      */
-    public record Route(Match match, String policy, String context, Outbound outbound, Media media) {
+    public record Route(Match match, String policy, String context, Outbound outbound, Mode media, Mode unsupportedEndpoints) {
         @org.springframework.boot.context.properties.bind.ConstructorBinding
         public Route {
             match = match == null ? new Match(null, null, null, null) : match;
@@ -231,16 +242,15 @@ public record ProxyProperties(
         }
 
         public Route(final Match match, final String policy, final String context, final Outbound outbound) {
-            this(match, policy, context, outbound, null);
+            this(match, policy, context, outbound, null, null);
         }
     }
 
     /**
-     * What happens to a request carrying images, audio, video, or files, which the proxy does not redact.
-     * {@code REJECT} refuses it with 400 {@code media_not_allowed}; {@code FORWARD} sends it on with the media
-     * unchanged.
+     * What happens to a request the proxy cannot fully handle: {@code REJECT} refuses it with a 400; {@code FORWARD}
+     * sends it on without the handling it lacks (media unchanged, or the body unredacted and the response unscanned).
      */
-    public enum Media {
+    public enum Mode {
         REJECT, FORWARD
     }
 
@@ -270,12 +280,25 @@ public record ProxyProperties(
 
     /**
      * @param maxRequestBodyBytes The largest request body accepted.
-     * @param maxConcurrentRequests Requests handled at once before the rest are refused with 503. Zero: no limit.
+     * @param maxConcurrentRequests Requests handled at once before the rest are refused with 503. Unset or zero: 200.
+     *                              Negative: no limit.
+     * @param maxResponseBodyBytes The largest response body read to scan it. A larger one is refused. Streams are
+     *                             bounded per line, event, and held text instead.
+     * @param redactionTimeoutMs How long the redaction of one request, or one scan of a response, may take before the
+     *                           request is refused. Unset or zero: 30 seconds.
      */
-    public record Limits(long maxRequestBodyBytes, int maxConcurrentRequests) {
+    public record Limits(long maxRequestBodyBytes, int maxConcurrentRequests, long maxResponseBodyBytes, long redactionTimeoutMs) {
+        @org.springframework.boot.context.properties.bind.ConstructorBinding
         public Limits {
             maxRequestBodyBytes = maxRequestBodyBytes <= 0 ? 10L * 1024 * 1024 : maxRequestBodyBytes;
-            maxConcurrentRequests = Math.max(0, maxConcurrentRequests);
+            // Internally zero means no limit.
+            maxConcurrentRequests = maxConcurrentRequests == 0 ? 200 : Math.max(0, maxConcurrentRequests);
+            maxResponseBodyBytes = maxResponseBodyBytes <= 0 ? 32L * 1024 * 1024 : Math.min(maxResponseBodyBytes, Integer.MAX_VALUE - 8);
+            redactionTimeoutMs = redactionTimeoutMs <= 0 ? 30_000 : redactionTimeoutMs;
+        }
+
+        public Limits(final long maxRequestBodyBytes, final int maxConcurrentRequests) {
+            this(maxRequestBodyBytes, maxConcurrentRequests, 0, 0);
         }
     }
 

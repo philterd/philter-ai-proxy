@@ -31,11 +31,36 @@ public interface ProviderDialect {
     TextSlots requestText(String path, JsonObject body);
 
     /**
+     * Whether the dialect knows where the text is in a request to this endpoint and in its responses. A request to
+     * any other endpoint cannot be redacted, and its response cannot be scanned.
+     * @param method The HTTP method.
+     * @param path The decoded path, after any OpenAI-compatible prefix is removed.
+     */
+    boolean supports(String method, String path);
+
+    /**
      * The type of the first image, audio, video, or file part in a request to the path, such as
      * {@code image_url}, or null when it has none. The proxy redacts text only, so these parts are forwarded
      * uninspected unless the request is refused.
      */
     String mediaPart(String path, JsonObject body);
+
+    /**
+     * Whether the provider, or servers that speak its API, may read JSON field names without regard to case (Go's
+     * encoding/json does: Ollama, and some OpenAI-compatible servers). A body naming a field the proxy reads in
+     * another case, such as {@code Messages}, would then reach the server unredacted, so it is refused.
+     */
+    default boolean caseInsensitiveFields() {
+        return false;
+    }
+
+    /**
+     * Whether a successful response from the path is binary (such as generated speech) and is returned unscanned. A
+     * binary response from any other path cannot be scanned and is refused when scanning is on.
+     */
+    default boolean binaryResponse(final String path) {
+        return false;
+    }
 
     /** The text to scan in a buffered response from the path (an object, or an array of them). */
     TextSlots responseText(String path, JsonElement body);

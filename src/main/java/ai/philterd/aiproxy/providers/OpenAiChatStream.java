@@ -34,14 +34,15 @@ import java.util.Map;
 
 /**
  * Streamed chat completions (and the legacy completions endpoint, with {@code text} in place of {@code delta}).
- * Each choice's {@code content} and {@code refusal} are held as text; tool-call arguments are held whole until the
+ * Each choice's {@code content}, {@code refusal}, and reasoning text are held as text; tool-call arguments are held whole until the
  * choice finishes. Under {@code redact} and {@code block}, {@code logprobs} are removed, since their tokens spell
  * out the text. The chunks that open a tool call (its id, type, and name) are forwarded at once, with empty
  * arguments.
  */
 public class OpenAiChatStream implements StreamDialect {
 
-    private static final List<String> TEXT_FIELDS = List.of("content", "refusal");
+    /** Held as text. {@code reasoning_content} and {@code reasoning} come from OpenAI-compatible servers. */
+    private static final List<String> TEXT_FIELDS = List.of("content", "refusal", "reasoning_content", "reasoning");
 
     private final Map<String, JsonObject> templates = new HashMap<>();
 
@@ -98,7 +99,8 @@ public class OpenAiChatStream implements StreamDialect {
     }
 
     /** Moves each tool call's argument fragment into the scanner, dropping deltas left empty. */
-    private static void holdToolArguments(final String group, final JsonObject delta, final StreamScanner scanner) {
+    private static void holdToolArguments(final String group, final JsonObject delta, final StreamScanner scanner)
+            throws IOException {
         if (!(delta.get("tool_calls") instanceof JsonArray calls)) {
             return;
         }

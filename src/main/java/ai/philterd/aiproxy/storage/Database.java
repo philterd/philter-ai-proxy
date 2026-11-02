@@ -89,6 +89,10 @@ public class Database implements AutoCloseable {
                 name TEXT PRIMARY KEY,
                 value TEXT NOT NULL
             );
+            """,
+            // Contexts no longer keep an encrypted copy of each original value: lookups use its keyed hash only.
+            """
+            UPDATE context_entries SET token = '';
             """
     );
 

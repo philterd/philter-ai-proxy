@@ -42,6 +42,7 @@ public final class ScriptedProvider implements AutoCloseable {
     public volatile int requests;
 
     private volatile int status = 200;
+    private volatile boolean abort;
     private volatile String contentType = "application/json";
     private volatile List<byte[]> chunks = List.of("{}".getBytes(StandardCharsets.UTF_8));
 
@@ -66,7 +67,17 @@ public final class ScriptedProvider implements AutoCloseable {
         lastHeaders = null;
         requests = 0;
         status = 200;
+        abort = false;
         reply("application/json", "{}");
+    }
+
+    public void status(final int status) {
+        this.status = status;
+    }
+
+    /** After the chunks, drop the connection instead of ending the response. */
+    public void abortAfterChunks() {
+        this.abort = true;
     }
 
     public void reply(final String type, final String body) {
@@ -92,6 +103,15 @@ public final class ScriptedProvider implements AutoCloseable {
         lastRaw = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
         exchange.getResponseHeaders().set("Content-Type", contentType);
         exchange.sendResponseHeaders(status, 0);
+        if (abort) {
+            final OutputStream out = exchange.getResponseBody();
+            for (final byte[] chunk : chunks) {
+                out.write(chunk);
+                out.flush();
+            }
+            // Closing the exchange's connection without the final chunk cuts the response short.
+            throw new IOException("aborted by the test");
+        }
         try (OutputStream out = exchange.getResponseBody()) {
             for (final byte[] chunk : chunks) {
                 out.write(chunk);

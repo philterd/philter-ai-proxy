@@ -32,29 +32,70 @@ import java.util.List;
 import java.util.Locale;
 
 /**
- * Ollama's {@code /api/generate} and {@code /api/chat}. Requests: {@code prompt} and {@code system}, or each
- * message's {@code content} and tool-call arguments. Responses: {@code response} and {@code thinking}, or the
- * message's {@code content}, {@code thinking}, and tool-call arguments. Images are not redacted. Ollama streams by
+ * Ollama's {@code /api/generate}, {@code /api/chat}, {@code /api/embed}, {@code /api/embeddings}, and
+ * {@code /api/show}. Requests: {@code prompt} and {@code system}, each message's {@code content} and tool-call
+ * arguments, or the text to embed ({@code input}, or {@code prompt} for the older {@code /api/embeddings}).
+ * Responses: {@code response} and {@code thinking}, or the message's {@code content}, {@code thinking}, and tool-call
+ * arguments; embeddings and model metadata carry no text to scan. Images are not redacted. Ollama streams by
  * default, as newline-delimited JSON.
  */
 public final class OllamaDialect implements ProviderDialect {
 
+    enum Endpoint {
+        GENERATE, CHAT, EMBED, EMBEDDINGS, SHOW
+    }
+
+    /** The endpoint at the path, or null when the dialect does not support it. */
+    static Endpoint endpoint(final String path) {
+        return switch (path) {
+            case "/api/generate" -> Endpoint.GENERATE;
+            case "/api/chat" -> Endpoint.CHAT;
+            case "/api/embed" -> Endpoint.EMBED;
+            case "/api/embeddings" -> Endpoint.EMBEDDINGS;
+            // Model metadata: the request names a model, and neither it nor the response carries conversation text.
+            case "/api/show" -> Endpoint.SHOW;
+            default -> null;
+        };
+    }
+
     private static boolean isChat(final String path) {
-        return path.endsWith("/api/chat");
+        return endpoint(path) == Endpoint.CHAT;
     }
 
     @Override
     public TextSlots requestText(final String path, final JsonObject body) {
         final TextSlots slots = new TextSlots();
-        if (isChat(path)) {
+        final Endpoint endpoint = endpoint(path);
+        if (endpoint == Endpoint.CHAT) {
             for (final JsonObject message : Json.objects(body, "messages")) {
                 addMessage(slots, message);
             }
-        } else {
+        } else if (endpoint == Endpoint.EMBED) {
+            // A string, or a list of strings.
+            if (body.get("input") instanceof com.google.gson.JsonArray input) {
+                slots.addAllStrings(input);
+            } else {
+                slots.addString(body, "input");
+            }
+        } else if (endpoint == Endpoint.EMBEDDINGS) {
+            slots.addString(body, "prompt");
+        } else if (endpoint == Endpoint.GENERATE) {
             slots.addString(body, "prompt");
             slots.addString(body, "system");
+            slots.addString(body, "suffix");
+            slots.addString(body, "template");
         }
         return slots;
+    }
+
+    @Override
+    public boolean caseInsensitiveFields() {
+        return true;
+    }
+
+    @Override
+    public boolean supports(final String method, final String path) {
+        return "POST".equals(method) && endpoint(path) != null;
     }
 
     @Override
@@ -100,6 +141,25 @@ public final class OllamaDialect implements ProviderDialect {
         return slots;
     }
 
+    /**
+     * Removes {@code context} (the conversation's token IDs, which decode to the unredacted text) and {@code logprobs}
+     * (whose tokens spell it out).
+     */
+    @Override
+    public boolean removeRevealingData(final String path, final JsonElement body) {
+        boolean removed = false;
+        for (final JsonObject response : Json.each(body)) {
+            removed |= removeRevealing(response);
+        }
+        return removed;
+    }
+
+    static boolean removeRevealing(final JsonObject response) {
+        boolean removed = response.remove("context") != null;
+        removed |= response.remove("logprobs") != null;
+        return removed;
+    }
+
     @Override
     public String model(final String path, final JsonObject body) {
         return ProviderDialect.modelMember(body);
@@ -130,6 +190,9 @@ public final class OllamaDialect implements ProviderDialect {
         public StreamEvent onEvent(final StreamEvent event, final StreamScanner scanner) throws IOException, RedactionException,
                 StreamScanner.BlockedException {
             final JsonObject json = event.json();
+            if (scanner.action() != ai.philterd.aiproxy.config.ProxyProperties.Action.FLAG) {
+                removeRevealing(json);
+            }
             template = json;
             final JsonObject holder = chat ? Json.object(json, "message") : json;
             boolean whole = false;

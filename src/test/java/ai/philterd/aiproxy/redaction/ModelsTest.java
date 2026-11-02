@@ -92,9 +92,10 @@ class ModelsTest {
                 new ProxyProperties.Security("00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff", null, null),
                 new ProxyProperties.Models(System.getenv("PHILTER_AI_PROXY_TEST_MODELS")), null, null, null, null, null, null);
         try (Database database = new Database(properties)) {
-            final PolicyStore policies = new PolicyStore(database);
+            final Encryptor encryptor = new Encryptor(properties);
+            final PolicyStore policies = new PolicyStore(database, encryptor, new ai.philterd.aiproxy.storage.KeyCheck(database, encryptor));
             policies.create("default", ai.philterd.aiproxy.FirstStartAccess.defaultPolicy(), "", "");
-            final Redactor redactor = new Redactor(policies, new ContextStore(database, new Encryptor(properties)),
+            final Redactor redactor = new Redactor(policies, new ContextStore(database, encryptor),
                     new PolicyCompiler(properties));
             final List<Redactor.Redaction> out = redactor.session("default", null)
                     .redact(List.of("George Washington was the first president.", "Write to jane.doe@example.com."));
