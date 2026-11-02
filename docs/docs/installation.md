@@ -21,7 +21,7 @@ docker run -d --name philter-ai-proxy \
   -v philter-ai-proxy-data:/var/lib/philter-ai-proxy \
   -e PHILTER_AI_PROXY_ENCRYPTION_KEY="$ENCRYPTION_KEY" \
   -e PHILTER_AI_PROXY_BOOTSTRAP_API_KEY="$BOOTSTRAP_API_KEY" \
-  philterd/philter-ai-proxy:2.0.0
+  philterd/philter-ai-proxy:1.0.0
 ```
 
 - `PHILTER_AI_PROXY_ENCRYPTION_KEY` encrypts the policies and context replacements the database stores: 32 bytes as 64 hex characters or base64.
@@ -82,7 +82,7 @@ docker run -d --name philter-ai-proxy \
   -v "$PWD/application.yaml:/etc/philter-ai-proxy/application.yaml:ro" \
   -e SPRING_CONFIG_ADDITIONAL_LOCATION=file:/etc/philter-ai-proxy/application.yaml \
   -e PHILTER_AI_PROXY_ENCRYPTION_KEY="$ENCRYPTION_KEY" \
-  philterd/philter-ai-proxy:2.0.0
+  philterd/philter-ai-proxy:1.0.0
 ```
 
 ## Docker Compose
@@ -122,7 +122,7 @@ java -jar target/philter-ai-proxy.jar --version
 ```
 
 ```
-philter-ai-proxy 2.0.0
+philter-ai-proxy 1.0.0
 ```
 
 ### Validating the configuration
@@ -130,7 +130,7 @@ philter-ai-proxy 2.0.0
 `--validate-config` checks the settings (providers, the encryption key, trusted proxies) and exits without serving requests. It does not open the database, so it can run beside a running proxy. It exits non-zero when the configuration is invalid.
 
 ```bash
-docker run --rm -e PHILTER_AI_PROXY_ENCRYPTION_KEY="$ENCRYPTION_KEY" philterd/philter-ai-proxy:2.0.0 --validate-config
+docker run --rm -e PHILTER_AI_PROXY_ENCRYPTION_KEY="$ENCRYPTION_KEY" philterd/philter-ai-proxy:1.0.0 --validate-config
 ```
 
 ```
@@ -152,7 +152,7 @@ docker run -d --name philter-ai-proxy \
   -e SERVER_SSL_CERTIFICATEPRIVATEKEY=/etc/philter-ai-proxy/tls/tls.key \
   -e SERVER_SSL_ENABLEDPROTOCOLS=TLSv1.3,TLSv1.2 \
   -e PHILTER_AI_PROXY_ENCRYPTION_KEY="$ENCRYPTION_KEY" \
-  philterd/philter-ai-proxy:2.0.0
+  philterd/philter-ai-proxy:1.0.0
 ```
 
 A configured certificate takes precedence over the self-signed one. To require client certificates (mutual TLS), also set `SERVER_SSL_TRUSTCERTIFICATE` to a PEM file of the CA that signs them and `SERVER_SSL_CLIENTAUTH=need`.

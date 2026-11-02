@@ -27,7 +27,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/** The request and response fields found in the 2.0 security review, each of which must be collected. */
+/** The request and response fields found in the 1.0 security review, each of which must be collected. */
 class DialectCoverageTest {
 
     static final String SECRET = "SSN 123-45-6789";

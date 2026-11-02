@@ -27,7 +27,8 @@ import java.util.function.Supplier;
 
 /**
  * Contexts: the replacement chosen for each original value, so the same value is replaced the same way across
- * requests (consistent pseudonymization). Original values are stored encrypted; lookups use a keyed hash.
+ * requests (consistent pseudonymization). Replacements are stored encrypted and found by a keyed hash of the original
+ * value, which is not stored.
  */
 @Component
 public class ContextStore {

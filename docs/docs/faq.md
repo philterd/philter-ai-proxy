@@ -23,7 +23,7 @@ Streaming and non-streaming requests are supported for all of them. See [Usage](
 
 ### Do I need a Philter instance?
 
-No. Version 2.0 redacts in-process with Phileas, the library under Philter, and needs no other service. Earlier versions (0.x) sent each text to a Philter instance. Policies are the same format in both, so a Philter policy works in the proxy, except that the proxy refuses a policy that names a PhEye endpoint, generators, or files and environment variables the deployment has not allowed. See [Policies](policies.md).
+No. Since version 1.0 the proxy redacts in-process with Phileas, the library under Philter, and needs no other service. Earlier versions (0.x) sent each text to a Philter instance. Policies are the same format in both, so a Philter policy works in the proxy, except that the proxy refuses a policy that names a PhEye endpoint, generators, or files and environment variables the deployment has not allowed. See [Policies](policies.md).
 
 ### Does it support streaming?
 

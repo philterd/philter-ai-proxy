@@ -212,7 +212,7 @@ curl -k https://localhost:8080/health
 ```
 
 ```json
-{"status":"UP","applicationVersion":"2.0.0"}
+{"status":"UP","applicationVersion":"1.0.0"}
 ```
 
 See [Health endpoints](monitoring.md#health-endpoints) for `/livez` and `/readyz`.

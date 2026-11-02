@@ -33,7 +33,7 @@ spec:
       terminationGracePeriodSeconds: 35
       containers:
       - name: philter-ai-proxy
-        image: philterd/philter-ai-proxy:2.0.0
+        image: philterd/philter-ai-proxy:1.0.0
         imagePullPolicy: IfNotPresent
         securityContext:
           allowPrivilegeEscalation: false

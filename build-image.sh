@@ -8,7 +8,7 @@ set -e
 # run and test locally. A multi-architecture image cannot be loaded into the
 # local Docker daemon, which is why the per-architecture tags exist at all.
 #
-#   ./build-image.sh 2.0.0     builds philterd/philter-ai-proxy:2.0.0-amd64 and -arm64
+#   ./build-image.sh 1.0.0     builds philterd/philter-ai-proxy:1.0.0-amd64 and -arm64
 #   ./build-image.sh           builds :latest-amd64 and :latest-arm64
 
 VERSION=${1:-latest}

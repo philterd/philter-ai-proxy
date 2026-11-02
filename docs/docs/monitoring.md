@@ -37,7 +37,7 @@ All three are served on port 8080 without authentication.
 |---|---|---|
 | `/livez` | While the process runs | The liveness probe. |
 | `/readyz` | Once the proxy has finished loading the policies the configuration names (the default and each route's) and their models, and while the database is usable; `503` otherwise | The readiness probe. Loading the bundled model takes several seconds after start. A policy that cannot be loaded, such as one whose model is missing, is logged and does not hold readiness back; requests that use it are refused with `policy_invalid`. |
-| `/health` | While the database is usable; `503` otherwise | Monitoring. It answers with the standard Philterd health response, `{"status": "UP", "applicationVersion": "2.0.0"}`. |
+| `/health` | While the database is usable; `503` otherwise | Monitoring. It answers with the standard Philterd health response, `{"status": "UP", "applicationVersion": "1.0.0"}`. |
 
 ## Audit log
 

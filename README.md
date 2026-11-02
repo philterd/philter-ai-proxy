@@ -30,7 +30,7 @@ docker run -d --name philter-ai-proxy \
   -v philter-ai-proxy-data:/var/lib/philter-ai-proxy \
   -e PHILTER_AI_PROXY_ENCRYPTION_KEY="$ENCRYPTION_KEY" \
   -e PHILTER_AI_PROXY_BOOTSTRAP_API_KEY="$BOOTSTRAP_API_KEY" \
-  philterd/philter-ai-proxy:2.0.0
+  philterd/philter-ai-proxy:1.0.0
 ```
 
 Create a key for your application, then send it requests as you would send them to the provider, with the key in `x-philter-proxy-key`:
