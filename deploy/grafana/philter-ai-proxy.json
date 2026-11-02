@@ -138,7 +138,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "sum(rate(philter_proxy_requests_total{status_code=~\"5..\"}[5m])) / clamp_min(sum(rate(philter_proxy_requests_total[5m])), 1)"
+          "expr": "sum(rate(philter_proxy_requests_total{status=~\"5..\"}[5m])) / clamp_min(sum(rate(philter_proxy_requests_total[5m])), 1)"
         }
       ]
     },
@@ -180,7 +180,7 @@
     {
       "id": 6,
       "type": "timeseries",
-      "title": "Concurrency sheds by scope (503 rejections)",
+      "title": "Concurrency sheds (503 rejections)",
       "datasource": {"type": "prometheus", "uid": "${datasource}"},
       "gridPos": {"h": 4, "w": 12, "x": 0, "y": 20},
       "fieldConfig": {"defaults": {"unit": "reqps", "custom": {"drawStyle": "line", "lineWidth": 1, "fillOpacity": 10}}},
@@ -204,8 +204,8 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "sum by (provider, status_code) (rate(philter_proxy_upstream_errors_total{provider=~\"$provider\"}[5m]))",
-          "legendFormat": "{{provider}} {{status_code}}"
+          "expr": "sum by (provider, status) (rate(philter_proxy_upstream_errors_total{provider=~\"$provider\"}[5m]))",
+          "legendFormat": "{{provider}} {{status}}"
         }
       ]
     }

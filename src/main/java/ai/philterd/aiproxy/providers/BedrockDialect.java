@@ -355,20 +355,22 @@ public final class BedrockDialect implements ProviderDialect {
         @Override
         public StreamEvent onEvent(final StreamEvent event, final StreamScanner scanner) throws IOException, RedactionException,
                 StreamScanner.BlockedException, StreamScanner.UnscannableException {
+            // Under flag, nothing is changed or refused: what cannot be read is forwarded as it came.
+            final boolean flag = scanner.action() == ai.philterd.aiproxy.config.ProxyProperties.Action.FLAG;
             final String bytes = Json.string(event.json(), "bytes");
             if (!"chunk".equals(event.type()) || bytes == null) {
-                throw new StreamScanner.UnscannableException();
+                return unreadable(event, flag);
             }
             final JsonObject decoded;
             try {
                 decoded = com.google.gson.JsonParser.parseString(new String(java.util.Base64.getDecoder().decode(bytes),
                         java.nio.charset.StandardCharsets.UTF_8)).getAsJsonObject();
             } catch (final RuntimeException e) {
-                throw new StreamScanner.UnscannableException();
+                return unreadable(event, flag);
             }
             if (Json.string(decoded, "type") == null) {
                 // Not a Messages stream event, such as a legacy Text Completions chunk: its text cannot be scanned.
-                throw new StreamScanner.UnscannableException();
+                return unreadable(event, flag);
             }
             if (scanner.action() != ai.philterd.aiproxy.config.ProxyProperties.Action.FLAG) {
                 // The last chunk carries a guardrail trace when tracing is on.
@@ -381,6 +383,13 @@ public final class BedrockDialect implements ProviderDialect {
             // Other members of the chunk, such as Bedrock's padding, are kept.
             event.json().addProperty("bytes", encode(out.json()));
             return event;
+        }
+
+        private static StreamEvent unreadable(final StreamEvent event, final boolean flag) throws StreamScanner.UnscannableException {
+            if (flag) {
+                return event;
+            }
+            throw new StreamScanner.UnscannableException();
         }
 
         @Override

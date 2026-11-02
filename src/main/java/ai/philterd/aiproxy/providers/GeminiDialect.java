@@ -221,9 +221,47 @@ public final class GeminiDialect implements ProviderDialect {
                 if (content != null) {
                     addParts(slots, content);
                 }
+                addGrounding(slots, candidate);
             }
         }
         return slots;
+    }
+
+    /**
+     * A candidate's grounding metadata: the answer passages each citation quotes, the search queries the model
+     * wrote, the search suggestions rendered from them, and the titles and text of retrieved documents (Vertex AI
+     * Search returns the customer's own documents). Its offsets into the answer are left alone; once the answer is
+     * redacted they are approximate.
+     */
+    static void addGrounding(final TextSlots slots, final JsonObject candidate) {
+        final JsonObject grounding = Json.object(candidate, "groundingMetadata");
+        if (grounding == null) {
+            return;
+        }
+        for (final JsonObject support : Json.objects(grounding, "groundingSupports")) {
+            final JsonObject segment = Json.object(support, "segment");
+            if (segment != null) {
+                slots.addString(segment, "text");
+            }
+        }
+        for (final String queries : new String[]{"webSearchQueries", "retrievalQueries"}) {
+            if (grounding.get(queries) instanceof JsonArray list) {
+                slots.addAllStrings(list);
+            }
+        }
+        final JsonObject entryPoint = Json.object(grounding, "searchEntryPoint");
+        if (entryPoint != null) {
+            slots.addString(entryPoint, "renderedContent");
+        }
+        for (final JsonObject chunk : Json.objects(grounding, "groundingChunks")) {
+            for (final String source : new String[]{"web", "retrievedContext"}) {
+                final JsonObject value = Json.object(chunk, source);
+                if (value != null) {
+                    slots.addString(value, "title");
+                    slots.addString(value, "text");
+                }
+            }
+        }
     }
 
     /** Removes each candidate's {@code logprobsResult}, whose tokens spell out the unredacted text. */
@@ -328,6 +366,11 @@ public final class GeminiDialect implements ProviderDialect {
                     } else {
                         content.add("parts", keptParts);
                     }
+                }
+                if (Json.present(candidate, "groundingMetadata")) {
+                    final TextSlots slots = new TextSlots();
+                    addGrounding(slots, candidate);
+                    scanner.scanWhole(slots);
                 }
                 if (Json.present(candidate, "finishReason")) {
                     scanner.finish(group);

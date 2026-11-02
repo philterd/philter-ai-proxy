@@ -9,7 +9,7 @@ The proxy redacts the text-bearing fields of each request before forwarding it. 
 | Provider | Request | Fields redacted |
 |---|---|---|
 | OpenAI family | Chat completions | Each message's `content` (a string, or the `text` or `refusal` of each content part), `refusal`, `reasoning_content` and `reasoning` (OpenAI-compatible servers), `tool_calls[].function.arguments`, and `function_call.arguments`; `prediction.content` |
-| OpenAI family | Responses (`/responses`) | `instructions`; `prompt.variables` (strings and `input_text` values); `input` as a string, or each item: message content (a string or `input_text` and `output_text` parts), `function_call.arguments`, `function_call_output.output` (a string or `input_text` parts), `mcp_call` arguments, output, and error, shell call output, and reasoning summaries and text |
+| OpenAI family | Responses (`/responses`) | `instructions`; `prompt.variables` (strings and `input_text` values); `input` as a string, or each item: message content (a string or `input_text` and `output_text` parts), `function_call.arguments`, `function_call_output.output` (a string or `input_text` parts), custom tool call `input` and output, `mcp_call` arguments, output, and error, shell call output (including `stdout` and `stderr`), and reasoning summaries and text |
 | OpenAI family | Embeddings, moderations, speech (`/audio/speech`) | `input` (a string or an array of strings; token-ID arrays are left alone) |
 | OpenAI family | Image generation, legacy completions | `prompt` (a string or an array of strings); `suffix` (legacy completions) |
 | Anthropic | Messages (`/v1/messages`, `/v1/messages/count_tokens`), and each request's `params` in a message batch (`/v1/messages/batches`) | `system` (a string or text blocks); each message's content (a string, or `text` blocks, `tool_use` input, `search_result` titles and text, and `tool_result` content as a string, text blocks, or search results) |
@@ -38,7 +38,7 @@ Only text is redacted. The proxy does not inspect images, audio, video, or files
 
 | Provider | Parts refused, or forwarded unredacted under `media: forward` |
 |----------|--------------|
-| OpenAI / OpenAI-compatible / Azure OpenAI | Chat completions: every content part other than `text` and `refusal`, such as `image_url`, `input_audio`, `file`, or an OpenAI-compatible server's `video_url`. Responses API: `input_image`, `input_file`, `input_audio`, and `computer_screenshot`, in messages, tool outputs, and `prompt.variables`. Moderations: image inputs |
+| OpenAI / OpenAI-compatible / Azure OpenAI | Chat completions: every content part other than `text`, `input_text`, `output_text`, and `refusal`, such as `image_url`, `input_audio`, `file`, or an OpenAI-compatible server's `video_url`. Responses API: `input_image`, `input_file`, `input_audio`, and `computer_screenshot`, in messages, tool outputs, and `prompt.variables`. Moderations: image inputs |
 | Anthropic | `image`, `document`, and `container_upload` content blocks, including those in tool results and message batches |
 | Gemini / Vertex AI | `inlineData` and `fileData` parts, including those in function responses, a wrapped `generateContentRequest`, and embedding requests |
 | Bedrock Converse | `image`, `document`, and `video` content blocks, including those in tool results, and images in `guardContent` (system or message) |
@@ -81,7 +81,7 @@ A request with a body to an endpoint not listed as redacted is refused with `uns
 | OpenAI, Azure OpenAI, OpenAI-compatible | Chat completions, Responses, legacy completions, embeddings, moderations, image generation, speech | Creating batches, file uploads, Assistants and threads, vector stores, fine-tuning, updating a stored chat completion, audio transcription and translation, image edits and variations. The Realtime API (WebSocket) is not proxied |
 | Anthropic | Messages, token counting, creating a message batch | Files API uploads |
 | Gemini, Vertex AI | `:generateContent`, `:streamGenerateContent`, `:countTokens`; on Gemini, also `:embedContent` and `:batchEmbedContents` | Vertex AI embeddings (`:predict`, `:embedContent`) and other `:predict` calls, cached contents, file uploads. The Live API (WebSocket) is not proxied |
-| Amazon Bedrock | Converse and ConverseStream for any model. InvokeModel for Anthropic Claude, Amazon Titan embedding, and Cohere Embed models, and InvokeModelWithResponseStream for Claude, by model ID or cross-region inference profile ID (such as `us.anthropic.claude-...`) | InvokeModel for other model families, such as Meta Llama, Mistral, and Amazon Nova; ApplyGuardrail; asynchronous invocation. A model given as an ARN is refused as `path_not_canonical` under either setting, since its `/` is sent encoded as `%2F` |
+| Amazon Bedrock | Converse and ConverseStream for any model. InvokeModel for Anthropic Claude, Amazon Titan embedding, and Cohere Embed models, and InvokeModelWithResponseStream for Claude, by model ID or cross-region inference profile ID (such as `us.anthropic.claude-...`) | InvokeModel for other model families, such as Meta Llama, Mistral, and Amazon Nova; ApplyGuardrail; asynchronous invocation. A model given as an ARN is refused with `400` under either setting, since its `/` is sent encoded as `%2F`, which is not accepted in a path |
 | Ollama | `/api/generate`, `/api/chat`, `/api/embed`, `/api/embeddings`; `/api/show` is forwarded unchanged | `/api/create`, `/api/copy`, `/api/pull`, `/api/push`, `/api/delete`. Pull and delete can be forwarded with routes; see [Model management](usage.md#model-management) |
 
 ## Response Scanning (Outbound)
@@ -90,12 +90,12 @@ By default, provider responses are returned unchanged. When a route turns on out
 
 | Provider | Response fields scanned |
 |----------|------------------------|
-| OpenAI family, chat | Each choice's message content (a string or text parts), `refusal`, and tool-call and function-call arguments |
-| OpenAI family, Responses | Each output item: message text and refusals, function-call arguments, and reasoning summaries |
+| OpenAI family, chat | Each choice's message content (a string or text parts), `refusal`, `reasoning_content` and `reasoning`, and tool-call and function-call arguments |
+| OpenAI family, Responses | Each output item, read as the request's `input` items are: message text and refusals, function and custom tool call arguments and input, tool and MCP call output, and reasoning summaries and text |
 | OpenAI family, legacy completions | Each choice's `text` |
 | OpenAI family, image generation | Each image's `revised_prompt` |
-| Anthropic | `text` blocks, `tool_use` input, and `thinking` text |
-| Gemini, Vertex AI | Each candidate's text parts (including thought summaries) and function-call arguments |
+| Anthropic | `text` blocks and their citations (the quoted `cited_text` and the source's title), `tool_use` and `server_tool_use` input, and `thinking` text |
+| Gemini, Vertex AI | Each candidate's text parts (including thought summaries), function-call arguments, and executable code and its output; and its grounding metadata: the answer passages citations quote, the search and retrieval queries, the rendered search suggestions, and the titles and text of grounding sources (including documents retrieved from Vertex AI Search). Citation offsets into the answer are not adjusted, so once the answer is redacted they are approximate |
 | Ollama | `response` and `thinking`, or the message's `content`, `thinking`, and tool-call arguments |
 | Bedrock, Converse | `output.message.content`: text, `toolUse.input`, and reasoning text |
 | Bedrock, InvokeModel (Claude) | As for Anthropic, and a legacy model's `completion` |
@@ -116,7 +116,7 @@ Under `redact` and `block`, data that spells out the original text and cannot be
 
 In JSON such as tool-call arguments, strings are redacted, and so are integers of five or more digits, since an SSN, phone number, or account number can be sent as a number. A number the policy changes is replaced by its redacted text, as a string. Shorter integers, decimals, and object keys are not redacted.
 
-A response that cannot be scanned is refused rather than returned unscanned: one that arrives compressed (the proxy asks for an uncompressed response), one that is not JSON, a stream from an endpoint the proxy cannot scan (for example embeddings), a binary response (`audio/`, `image/`, `video/`, `application/octet-stream`) from any endpoint but speech, a redirect or other 1xx or 3xx status, a stream event whose name is not a plain identifier, and a Bedrock stream that carries an exception message get `502` `provider_error` / `response_unscannable`. A response larger than `proxy.limits.max-response-body-bytes`, or a stream with a line, event, or held text over 16 Mi characters, gets `response_too_large`. A provider's error responses (status 400 and above) are returned unchanged and unscanned. In a scanned stream, keep-alive comments are forwarded as bare `:` comments, and `id:` and `retry:` lines without data are dropped, since their text is not scanned. A stream the provider cuts short is ended with an error event and recorded in the audit log as `stream_interrupted`.
+A response that cannot be scanned is refused rather than returned unscanned: one that arrives compressed (the proxy asks for an uncompressed response), one that is not JSON, a stream from an endpoint the proxy cannot scan (for example embeddings), a binary response (`audio/`, `image/`, `video/`, `application/octet-stream`) from any endpoint but speech, a redirect or other 1xx or 3xx status, a stream event whose name is not a plain identifier, and a Bedrock stream that carries an exception message get `502` `provider_error` / `response_unscannable`. A response larger than `proxy.limits.max-response-body-bytes`, or a stream with a line, event, or held text over 16 Mi characters, gets `response_too_large`. A provider's error responses (status 400 and above) are returned unchanged and unscanned. In a scanned stream, an event without data (a keep-alive comment, or only `id:` or `retry:` lines) is forwarded as a bare `:` comment, and `id:` and `retry:` lines are dropped from events with data, since their text is not scanned. A stream the provider cuts short is ended with an error event and recorded in the audit log as `stream_interrupted`.
 
 ### Streamed responses
 
@@ -127,7 +127,7 @@ The proxy scans a stream as it arrives instead of forwarding each fragment at on
 - Tool-call arguments are held whole until their part finishes, then scanned and sent in one fragment. The fragment that opens a tool call (its ID and name) is sent at once.
 - Keep-alive comments and pings are forwarded at once.
 - Released text is sent in events shaped like the provider's own. In the Responses API, a released delta repeats the `sequence_number` of the delta it was copied from.
-- Under `block`, the stream has already started with `200`, so a detection ends it with an error event in the stream's own format, such as `data: {"error": {"type": "pii_blocked", "code": "outbound_blocked", ...}}`. A Bedrock stream is ended with an AWS event stream error message (`:message-type error`, with the code in `:error-code`), which AWS SDKs raise. A stream holding data that is not a valid event is ended the same way, with `response_unscannable`, except under `flag`.
+- Under `block`, the stream has already started with `200`, so a detection ends it with an error event in the stream's own format, such as `data: {"error": {"type": "pii_blocked", "code": "outbound_blocked", ...}}`. A Bedrock stream is ended with an AWS event stream error message (`:message-type error`, with the code in `:error-code`), which AWS SDKs raise. A stream holding data that is not a valid event is ended the same way, with `response_unscannable`, except under `flag`. A stream is also ended this way with `response_too_large`, or with `redaction_failed` when scanning fails.
 
 Holding text back delays each fragment by up to two holdbacks of text. A smaller holdback releases text sooner and catches only shorter values split across fragments.
 
@@ -143,8 +143,8 @@ Every response carries an `X-Request-Id` header, which the audit log records. An
 
 | Status | `type` | `code` | Meaning |
 |---|---|---|---|
-| 400 | `invalid_request` | `path_not_canonical` | The path is not in canonical form once decoded (`..`, empty segments), or has an escape that is malformed, invalid UTF-8, a control character, or one of `/`, `\`, `%`, `?`, `#` |
-| 400 | `invalid_request` | `ambiguous_field` | An OpenAI-family or Ollama request names a field the proxy reads (a redacted field, `model`, or `name`) in another case, such as `Messages` or `Model`, or with a character Go folds to `s` or `k` (`ſ`, `K`), which a server that ignores case would read in place of the field the proxy checked |
+| 400 | `invalid_request` | `path_not_canonical` | The path is not in canonical form once decoded (`..`, empty segments), or has an escape that decodes to invalid UTF-8, a control character, or one of `%`, `?`, `#`. A malformed escape or an encoded `/` or `\` (`%2F`, `%5C`) is refused with a plain `400` from the web server, without this body |
+| 400 | `invalid_request` | `ambiguous_field` | An OpenAI-family or Ollama request names a field the proxy reads (such as a redacted field, `model`, or `name`) in another case, such as `Messages` or `Model`, or with `ſ` or `K` (Kelvin sign), which Go's `encoding/json` folds to `s` and `k`. A server that ignores case would read it in place of the field the proxy checked. Keys inside tool definitions, schemas, `metadata`, and tool arguments are not checked |
 | 400 | `invalid_request` | `unsupported_endpoint` | The endpoint is not one the proxy can redact, or, with response scanning on, scan; and `unsupported-endpoints` is `reject`. See [Supported request types](#supported-request-types) |
 | 400 | `invalid_request` | `unsupported_content_type` | The body is `multipart/form-data` |
 | 400 | `invalid_request` | `bad_json` | The body is not a JSON object |
@@ -159,6 +159,7 @@ Every response carries an `X-Request-Id` header, which the audit log records. An
 | 502 | `provider_error` | `response_too_large` | Response scanning is on and the response is larger than the proxy will scan. See [Response Scanning](#response-scanning-outbound) |
 | 500 | `configuration_error` | `policy_not_found`, `policy_invalid` | The route's policy does not exist, or cannot be used (for example, it names a model that is not installed) |
 | 500 | `redaction_error` | `redaction_failed` | Redaction failed; the request was not forwarded |
+| 500 | `internal_error` | `internal_error` | An unexpected failure in the proxy; the log has the details under the request ID |
 | 502 | `provider_error` | `unreachable` | The provider could not be reached |
 | 502 | `provider_error` | `<provider>_auth_failed` | The proxy could not get its own credentials for Bedrock, Vertex AI, or Azure (Entra ID) |
 | 502 | `provider_error` | `response_unscannable` | Response scanning could not read the response |
@@ -177,7 +178,9 @@ The admin API manages policies and API keys. Every call needs a key with the `ad
 {"message": "The policy changed since it was read. Read it again and retry.", "reason": "policy_changed"}
 ```
 
-`reason` is stable; `field` names the invalid parameter or field when there is one. Reasons: `invalid_request` (400), `invalid_credentials` (401), `missing_scope` (403, the key lacks the `admin` role), `not_found` (404), `policy_exists`, `policy_changed`, `policy_default`, and `self_action_refused` (409), and `internal_error` (500). Every response carries an `X-Request-Id` header, recorded with the audit events the call causes.
+`reason` is stable; `field` names the invalid parameter, field, or header (`If-Match`) when there is one. Reasons: `invalid_request` (400), `invalid_credentials` (401), `missing_scope` (403, the key lacks the `admin` role), `not_found` (404), `policy_exists`, `policy_changed`, `policy_default`, and `self_action_refused` (409), and `internal_error` (500). Every response carries an `X-Request-Id` header, recorded with the audit events the call causes.
+
+A request with a body needs `Content-Type: application/json`. A request under `/admin`, or to `/livez`, `/readyz`, or `/health`, that no endpoint accepts (an unknown path, or the wrong method or content type) is answered `404` `not_found` and never forwarded to a provider.
 
 ### Policies
 
@@ -188,7 +191,7 @@ The policy endpoints have the paths and bodies of [Philter's policy API](https:/
 | `GET /admin/api/policies?offset=0&limit=25` | Lists policies by name: `{"policies": [{"name", "revision", "description", "createdAt", "updatedAt"}], "total"}`. `limit` is 1 to 500. |
 | `POST /admin/api/policies?name=<name>` | Creates a policy. `201`, with an `ETag`. `409` `policy_exists` when the name is taken. |
 | `GET /admin/api/policies/<name>` | The policy JSON, with an `ETag`. |
-| `PUT /admin/api/policies/<name>` | Replaces the policy and increments its revision. With `If-Match: <ETag>`, the write happens only if the policy has not changed since that read, else `409` `policy_changed`. |
+| `PUT /admin/api/policies/<name>` | Replaces the policy and increments its revision. `200`, with the new `ETag`; `404` when the policy does not exist. With `If-Match: <ETag>`, the write happens only if the policy has not changed since that read, else `409` `policy_changed`. Without `If-Match`, or with `*`, the write is unconditional. |
 | `DELETE /admin/api/policies/<name>` | Deletes the policy. `204`. The `default` policy cannot be deleted (`409` `policy_default`). |
 
 A policy is checked when it is saved and again before it is used, and refused with `400` and the reason when it is not valid or names something the deployment does not allow. A name cannot contain `/`, `\`, `;`, `%`, or control characters, cannot be `.` or `..`, and is at most 256 characters.
@@ -197,9 +200,9 @@ A policy is checked when it is saved and again before it is used, and refused wi
 
 | Method and path | Does |
 |---|---|
-| `POST /admin/api/keys` | Creates a key. `201`, with the key in `key`, shown only this once. |
-| `GET /admin/api/keys` | Lists keys, without their secrets: `{"keys": [...], "total"}`. |
-| `DELETE /admin/api/keys/<id>` | Deletes a key. `204`. A key cannot delete itself (`409` `self_action_refused`). |
+| `POST /admin/api/keys` | Creates a key. `201`, with the key's fields and the key itself in `key`, shown only this once. |
+| `GET /admin/api/keys` | Lists keys, without their secrets: `{"keys": [{"id", "name", "createdAt", "roles", "providers", "models", "paths", "policy"}], "total"}`. `policy` is present only when one is bound. |
+| `DELETE /admin/api/keys/<id>` | Deletes a key. `204`; `404` when there is no such key. A key cannot delete itself (`409` `self_action_refused`). |
 
 The create body:
 

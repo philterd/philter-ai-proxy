@@ -23,7 +23,7 @@ Streaming and non-streaming requests are supported for all of them. See [Usage](
 
 ### Do I need a Philter instance?
 
-No. Version 2.0 redacts in-process with Phileas, the library under Philter, and needs no other service. Earlier versions (0.x) sent each text to a Philter instance. Policies are the same format in both, so a Philter policy works in the proxy.
+No. Version 2.0 redacts in-process with Phileas, the library under Philter, and needs no other service. Earlier versions (0.x) sent each text to a Philter instance. Policies are the same format in both, so a Philter policy works in the proxy, except that the proxy refuses a policy that names a PhEye endpoint, generators, or files and environment variables the deployment has not allowed. See [Policies](policies.md).
 
 ### Does it support streaming?
 
@@ -77,11 +77,11 @@ Yes, with the Helm chart or the plain manifests in the repository. See [Kubernet
 
 ### What endpoints should I use for Kubernetes probes?
 
-`/livez` for liveness and `/readyz` for readiness. `/readyz` answers once the configured policies and their models are loaded. See [Health endpoints](monitoring.md#health-endpoints).
+`/livez` for liveness and `/readyz` for readiness. `/readyz` answers once the proxy has finished loading the configured policies and their models; a policy that cannot be loaded is logged rather than holding readiness back. See [Health endpoints](monitoring.md#health-endpoints).
 
 ### Does the proxy support OpenTelemetry tracing?
 
-Yes. It is off by default; turn it on and set an OTLP endpoint. Each sampled request's trace ID is recorded in its audit entry. See [Distributed Tracing](monitoring.md#distributed-tracing).
+Yes. Traces are exported over OTLP once you set an endpoint; nothing is exported by default. Each sampled request's trace ID is recorded in its audit entry either way. See [Distributed Tracing](monitoring.md#distributed-tracing).
 
 ### Where can I see throughput and latency numbers?
 

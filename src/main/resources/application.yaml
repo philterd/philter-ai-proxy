@@ -31,11 +31,10 @@ management:
     # Metrics are plain HTTP for Prometheus, whatever the main port serves. Keep the port off the internet.
     ssl:
       enabled: false
-  # OpenTelemetry tracing is off by default. To turn it on, set management.tracing.enabled: true and
-  # management.opentelemetry.tracing.export.otlp.endpoint (such as http://collector:4318/v1/traces).
-  # Each request's trace ID is then recorded in the audit log.
+  # Nothing is exported until management.opentelemetry.tracing.export.otlp.endpoint is set (such as
+  # http://collector:4318/v1/traces); management.tracing.export.enabled: false stops export. Each sampled
+  # request's trace ID is recorded in the audit log either way.
   tracing:
-    enabled: false
     sampling:
       probability: 1.0
   # Metrics are served for Prometheus at /metrics, not pushed over OTLP.

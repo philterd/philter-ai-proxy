@@ -18,13 +18,13 @@ Keys are created and deleted through the [admin API](api.md#api-keys). Each key 
 - **Scopes** (optional) on the providers, models, and paths the key may use. A request outside them is refused with `403`.
 - **A bound policy** (optional), applied to every request with the key. A key with a bound policy also skips routes that match on a header, so its client cannot choose a route that forwards media or turns off response scanning. See [Routes](configuration.md#routes).
 
-Keys are 32 random bytes, prefixed `pap_`, and stored only as SHA-256 hashes. A key is shown once, when it is created. A deleted key stops working at once.
+Keys created through the admin API are 32 random bytes, prefixed `pap_`. Every key, including the bootstrap key, is stored only as a SHA-256 hash. A key is shown once, when it is created. A deleted key stops working at once.
 
 The admin API takes its key as `Authorization: Bearer <key>`, as Philter's clients send it, and needs the `admin` role.
 
 ### The first key
 
-On first start, while no key exists, the proxy creates an `admin` key from `proxy.security.bootstrap-api-key` (`PHILTER_AI_PROXY_BOOTSTRAP_API_KEY`, at least 32 characters). Use it to create the keys your applications use. It is created only while the database holds no key.
+On first start, while no key exists, the proxy creates an `admin` key from `proxy.security.bootstrap-api-key` (`PHILTER_AI_PROXY_BOOTSTRAP_API_KEY`, at least 32 characters). The key's secret is the configured value itself, and the key is named `bootstrap`. Use it to create the keys your applications use. It is created only while the database holds no key. A shorter value stops the proxy at startup; with no value, the proxy starts without a key and logs a warning.
 
 ### Unauthenticated endpoints
 
@@ -39,7 +39,7 @@ On first start, while no key exists, the proxy creates an `admin` key from `prox
 | Vertex AI | The proxy's Google application default credentials, replacing any `Authorization` the client sends |
 | Amazon Bedrock | The proxy's AWS credentials (SigV4, optionally assuming `role-arn`). No client credentials are forwarded; of the client's headers, only `X-Amzn-Bedrock-*` settings are |
 
-When client headers are forwarded, the proxy removes the proxy key header, every header starting with `x-philter-`, hop-by-hop headers, and `X-Forwarded-*`.
+When client headers are forwarded, the proxy removes the proxy key header, every header starting with `x-philter-`, hop-by-hop headers, `Accept-Encoding` (so the response can be scanned), `X-Request-Id`, `X-Forwarded-For`, `X-Forwarded-Host`, `X-Forwarded-Proto`, and `Forwarded`.
 
 ### Passed-through credentials
 

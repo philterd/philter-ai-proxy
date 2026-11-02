@@ -68,7 +68,6 @@ class OperationsTest {
         registry.add("proxy.security.trusted-proxies", () -> "127.0.0.1,::1");
         registry.add("proxy.limits.max-concurrent-requests", () -> "7");
         registry.add("proxy.defaults.policy", () -> "patterns");
-        registry.add("management.tracing.enabled", () -> "true");
         registry.add("management.server.port", () -> "0");
         for (final String p : new String[]{"openai", "anthropic", "gemini", "ollama"}) {
             registry.add("proxy.providers." + p + ".target", STUB::url);

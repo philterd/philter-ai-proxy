@@ -114,7 +114,7 @@ curl -k "https://localhost:8080/v1/projects/my-project/locations/us-central1/pub
   -d '{"contents": [{"role": "user", "parts": [{"text": "Whose social security number is 123-45-6789?"}]}]}'
 ```
 
-`:countTokens` is redacted as on Gemini. Vertex AI embeddings (`:predict`, `:embedContent`) are refused. Every `/projects/` path must name the configured project and location.
+`:countTokens` is redacted as on Gemini. Vertex AI embeddings (`:predict`, `:embedContent`) are not redacted, so they are refused by default; see [Supported request types](api.md#supported-request-types). Every `/projects/` path must name the configured project, and the configured location when one is set; any other is refused with `403` `vertex_project_denied`.
 
 ## Ollama
 
@@ -125,7 +125,7 @@ curl -k https://localhost:8080/api/chat \
   -d '{"model": "llama3.2", "messages": [{"role": "user", "content": "Whose social security number is 123-45-6789?"}]}'
 ```
 
-`/api/generate` redacts `prompt` and `system`, and `/api/embed` redacts `input`. `/api/show`, which front ends such as Open WebUI call for a model's capabilities, is forwarded unchanged. Ollama streams by default, as newline-delimited JSON; send `"stream": false` for one response.
+`/api/generate` redacts `prompt` and `system`, `/api/embed` redacts `input`, and `/api/embeddings` redacts `prompt`. `/api/show`, which front ends such as Open WebUI call for a model's capabilities, is forwarded unchanged. Ollama streams by default, as newline-delimited JSON; send `"stream": false` for one response.
 
 ### Model management
 

@@ -139,3 +139,14 @@ def test_an_unscannable_stream_ends_with_an_error_the_sdk_raises(client, recorde
         for event in response["body"]:
             assert_redacted(json.dumps(event, default=str))
     assert e.value.response["Error"]["Code"] == "response_unscannable", e.value.response
+
+
+def test_converse_with_a_literal_colon_in_the_model_id(proxy_key, recorded):
+    # As the curl example in the docs sends it: the model ID's ":" unencoded. The simulator re-checks the signature.
+    import requests
+    response = requests.post(f"{PROXY}/model/{MODEL}/converse", headers={"x-philter-proxy-key": proxy_key},
+                             json={"messages": message()}, verify=False, timeout=30)
+    assert response.status_code == 200, response.text
+    sent = recorded.last("bedrock")
+    assert sent["path"] == f"/model/{MODEL}/converse"
+    assert_redacted(json.dumps(sent["body"]))

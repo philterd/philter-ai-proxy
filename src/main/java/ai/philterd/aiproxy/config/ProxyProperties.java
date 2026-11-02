@@ -22,7 +22,7 @@ import java.util.Locale;
 
 /**
  * The proxy's configuration, bound from {@code proxy.*} in {@code application.yaml} or the matching
- * environment variables ({@code PROXY_STORAGE_SQLITE_PATH} and so on).
+ * environment variables ({@code PROXY_STORAGE_SQLITEPATH} and so on).
  */
 @ConfigurationProperties(prefix = "proxy")
 public record ProxyProperties(

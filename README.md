@@ -2,7 +2,7 @@
 
 A self-hosted proxy for OpenAI, Azure OpenAI, Anthropic (Claude), Google Gemini, Vertex AI, Ollama, Amazon Bedrock, and OpenAI-compatible providers that removes PII, PHI, and other sensitive information from LLM requests before they leave your network, and can scan the responses on the way back.
 
-Redaction runs inside the proxy with [Phileas](https://github.com/philterd/phileas), the library under [Philter](https://philterd.ai/philter/). Policies are standard Phileas policies, managed through an admin API with the same paths as Philter's. The Docker image includes a PhEye model for finding person names, which runs in-process, so the proxy needs no other service.
+Redaction runs inside the proxy with [Phileas](https://github.com/philterd/phileas), the library under [Philter](https://philterd.ai/philter/). Policies are standard Phileas policies, managed through an admin API that has the paths and bodies of Philter's policy API, under `/admin`. The Docker image includes a PhEye model for finding person names, which runs in-process, so the proxy needs no other service.
 
 For example, the request text `How old is George Washington?` reaches the provider as `How old is {{{REDACTED-name}}}?`. Responses can be scanned per route: redact what is found, block the response, or pass it through and record what was found. Streamed responses are scanned as they arrive. Each request produces an audit entry with its metadata, never the text.
 
@@ -12,7 +12,7 @@ View the [documentation](https://philterd.github.io/philter-ai-proxy).
 
 ## Scope
 
-The proxy does redaction and the audit trail that goes with it. Three boundaries are deliberate:
+The proxy does redaction and the audit trail that goes with it. Four boundaries are deliberate:
 
 - **It is not an AI gateway.** Routing, failover, token quotas, and per-tenant billing belong to a gateway such as LiteLLM, Portkey, or Kong AI Gateway. The proxy is designed to run alongside one, redacting on the last hop before traffic leaves your network. See [Using with an AI Gateway](https://philterd.github.io/philter-ai-proxy/ai-gateway/).
 - **It handles text conversations only.** The proxy accepts JSON request bodies and does not parse `multipart/form-data`, so file uploads, audio, and image edits are rejected with `400 invalid_request` / `unsupported_content_type` and should be routed directly to the provider. Audio support is tracked in [#40](https://github.com/philterd/philter-ai-proxy/issues/40); image edits and file uploads are not planned.

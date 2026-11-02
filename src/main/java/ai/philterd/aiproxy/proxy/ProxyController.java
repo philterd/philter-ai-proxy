@@ -15,6 +15,7 @@
  */
 package ai.philterd.aiproxy.proxy;
 
+import ai.philterd.aiproxy.admin.AdminSupport;
 import ai.philterd.aiproxy.config.ProxyProperties;
 import ai.philterd.aiproxy.config.ProxyProperties.Action;
 import ai.philterd.aiproxy.providers.ProviderDialect;
@@ -99,6 +100,16 @@ public class ProxyController {
     /** Every path no other controller serves is provider traffic. */
     @RequestMapping("/**")
     public void proxy(final HttpServletRequest request, final HttpServletResponse response) throws IOException {
+        if (isReserved(request.getRequestURI())) {
+            // A request to the admin API or a health endpoint that no handler there accepts (an unknown path, the
+            // wrong method or content type) lands here; it is not provider traffic and is never forwarded.
+            response.setHeader("X-Request-Id", requestId(request));
+            response.setStatus(404);
+            response.setContentType("application/json");
+            response.getOutputStream().write(AdminSupport.error("No endpoint accepts this method, path, and content type.",
+                    "not_found", null).getBytes(StandardCharsets.UTF_8));
+            return;
+        }
         final Exchange exchange = new Exchange(requestId(request), clientAddress.of(request));
         exchange.traceId = traceId();
         response.setHeader("X-Request-Id", exchange.requestId);
@@ -224,6 +235,22 @@ public class ProxyController {
         return decoded;
     }
 
+    /** Whether the path belongs to the admin API or the health endpoints, however it is cased or encoded. */
+    static boolean isReserved(final String raw) {
+        String path;
+        try {
+            path = decodePath(raw);
+        } catch (final ProxyError e) {
+            path = raw == null ? "" : raw;
+        }
+        path = path.toLowerCase(Locale.ROOT);
+        while (path.length() > 1 && path.endsWith("/")) {
+            path = path.substring(0, path.length() - 1);
+        }
+        return path.equals("/admin") || path.startsWith("/admin/")
+                || path.equals("/livez") || path.equals("/readyz") || path.equals("/health");
+    }
+
     /**
      * Refuses a path that is not already in canonical form, so a path scope cannot be bypassed with
      * {@code ..}, empty segments, or encoded dots and slashes that a provider would normalize.
@@ -300,7 +327,9 @@ public class ProxyController {
         exchange.policy = key.scopes().policy() != null ? key.scopes().policy() : resolved.policy();
         exchange.context = resolved.context();
 
-        final Redactor.Session session = session(exchange);
+        // Only a request that is redacted, or whose response is scanned, needs the policy, so a bodyless request
+        // that is neither still works while its route's policy cannot be used.
+        final Redactor.Session session = body != null || (resolved.outbound().enabled() && supported) ? session(exchange) : null;
         byte[] forward = raw;
         if (body != null) {
             final TextSlots slots = dialect.requestText(path, body);

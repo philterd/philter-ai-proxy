@@ -127,7 +127,7 @@ philter-ai-proxy 2.0.0
 
 ### Validating the configuration
 
-`--validate-config` checks the settings (providers, the encryption key, trusted proxies, policy file directories) and exits without serving requests. It does not open the database, so it can run beside a running proxy. It exits non-zero when the configuration is invalid.
+`--validate-config` checks the settings (providers, the encryption key, trusted proxies) and exits without serving requests. It does not open the database, so it can run beside a running proxy. It exits non-zero when the configuration is invalid.
 
 ```bash
 docker run --rm -e PHILTER_AI_PROXY_ENCRYPTION_KEY="$ENCRYPTION_KEY" philterd/philter-ai-proxy:2.0.0 --validate-config

@@ -110,7 +110,14 @@ public final class AnthropicDialect implements ProviderDialect {
             return;
         }
         switch (type) {
-            case "text" -> slots.addString(block, "text");
+            case "text" -> {
+                slots.addString(block, "text");
+                if (response) {
+                    for (final JsonObject citation : Json.objects(block, "citations")) {
+                        addCitation(slots, citation);
+                    }
+                }
+            }
             case "tool_use", "server_tool_use" -> {
                 if (block.get("input") instanceof JsonObject input) {
                     slots.addAllStrings(input);
@@ -134,6 +141,13 @@ public final class AnthropicDialect implements ProviderDialect {
             }
             default -> { }
         }
+    }
+
+    /** The passage a citation quotes and the title of its source. Its location and URL are left alone. */
+    private static void addCitation(final TextSlots slots, final JsonObject citation) {
+        slots.addString(citation, "cited_text");
+        slots.addString(citation, "document_title");
+        slots.addString(citation, "title");
     }
 
     /** A search result's title and the text of its content blocks. Its source URL is left alone. */
@@ -206,7 +220,7 @@ public final class AnthropicDialect implements ProviderDialect {
                     final TextSlots slots = new TextSlots();
                     final JsonObject citation = Json.object(delta, "citation");
                     if (citation != null) {
-                        slots.addString(citation, "cited_text");
+                        addCitation(slots, citation);
                     }
                     scanner.scanWhole(slots);
                 }

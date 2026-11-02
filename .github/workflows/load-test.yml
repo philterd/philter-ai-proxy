@@ -2,7 +2,7 @@ name: Load test
 
 # Runs the k6 scenarios against the local docker-compose stack.
 #   - workflow_dispatch: triggered manually from the GitHub UI.
-#   - schedule: nightly baseline so the team gets a regression signal.
+#   - schedule: weekly baseline so the team gets a regression signal.
 #
 # The job uploads per-scenario summary JSONs as artifacts. It does NOT yet
 # fail PRs on regression - the AC for #116 is "publishes a small baseline

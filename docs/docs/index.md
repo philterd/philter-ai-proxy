@@ -2,16 +2,16 @@
 
 Philter AI Proxy is a self-hosted proxy for OpenAI, Azure OpenAI, Anthropic (Claude), Google Gemini (public API and Vertex AI), Ollama, Amazon Bedrock, and OpenAI-compatible providers. It removes PII, PHI, and other sensitive information from LLM requests before they leave your network, and can scan the responses on the way back. Streaming and non-streaming requests are supported.
 
-Redaction runs inside the proxy with [Phileas](https://github.com/philterd/phileas), the library under [Philter](https://philterd.ai/philter/). Policies are standard Phileas policies, so a policy works the same in the proxy and in Philter. The proxy needs no other service: person names are detected with a PhEye model that ships in the Docker image and runs in-process.
+Redaction runs inside the proxy with [Phileas](https://github.com/philterd/phileas), the library under [Philter](https://philterd.ai/philter/). Policies are standard Phileas policies, so a policy works the same in the proxy and in Philter, except that the proxy refuses policies that name a PhEye service, generators, or files and environment variables the deployment has not allowed; see [What a policy may not do](policies.md#what-a-policy-may-not-do). The proxy needs no other service: person names are detected with a PhEye model that ships in the Docker image and runs in-process.
 
 ## How it Works
 
-The proxy receives the request an application would send to the provider, redacts the text in it according to a policy, and forwards the redacted request with the application's own provider credentials. For example, the request text `How old is George Washington?` reaches the provider as `How old is {{{REDACTED-name}}}?`.
+The proxy receives the request an application would send to the provider, redacts the text in it according to a policy, and forwards the redacted request with the application's own provider credentials (for Vertex AI, Amazon Bedrock, and Azure OpenAI with Entra ID, the proxy authenticates with its own). For example, the request text `How old is George Washington?` reaches the provider as `How old is {{{REDACTED-name}}}?`.
 
 - **Inbound redaction** covers the text of every message, including system prompts, content parts, refusals, and tool-call arguments and results. See [Redacted Fields](api.md#redacted-fields).
 - **Outbound scanning**, turned on per route, scans the provider's response before it reaches the application: redact what it finds, block the response, or pass it through and record what was found. Streamed responses are scanned as they arrive. See [Response Scanning](api.md#response-scanning-outbound).
-- **Policies** are managed through an admin API with the same paths as Philter's policy API. See [Policies](policies.md).
-- **Consistent replacement**: a context keeps the replacement chosen for a value, so the same value is replaced the same way across requests. See [Contexts](policies.md#contexts).
+- **Policies** are managed through an admin API with the paths of Philter's policy API, under `/admin`. See [Policies](policies.md).
+- **Consistent pseudonymization**: a context keeps the replacement chosen for a value, so the same value is replaced the same way across requests. See [Contexts](policies.md#contexts).
 - **An audit log** records each request's metadata (provider, model, policy, how many values of each type were found), never the text of a prompt or response. See [Monitoring](monitoring.md#audit-log).
 
 Detection is probabilistic: the proxy reduces how much sensitive data reaches a provider, and it does not catch every instance. Validate its output against your own data and policies.

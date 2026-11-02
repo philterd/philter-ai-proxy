@@ -102,9 +102,9 @@ proxy:
 |---|---|---|
 | `server.port` | `8080` | Provider traffic and the admin API. |
 | `management.server.port` | `9090` | Prometheus metrics at `/metrics`, always plain HTTP. |
-| `proxy.tls.dev-self-signed-cert` | `true` in the image, `false` otherwise | Serve HTTPS with a self-signed certificate generated at startup. A configured certificate takes precedence. |
+| `proxy.tls.dev-self-signed-cert` | `true` in the image, `false` otherwise | Serve HTTPS with a self-signed certificate generated at startup. Configured key material (`server.ssl.certificate`, `server.ssl.key-store`, or `server.ssl.bundle`) takes precedence. |
 | `server.ssl.certificate`, `server.ssl.certificate-private-key` | | Your certificate and key in PEM form, to serve HTTPS. |
-| `server.ssl.enabled-protocols` | | Limit the TLS versions, such as `TLSv1.3,TLSv1.2`. Setting it turns TLS on. |
+| `server.ssl.enabled-protocols` | | Limit the TLS versions, such as `TLSv1.3,TLSv1.2`. Any `server.ssl` setting turns TLS on, so set it together with a certificate and key. |
 | `server.ssl.trust-certificate`, `server.ssl.client-auth` | | For mutual TLS: the PEM file of the CA that signs client certificates, and `need`. |
 | `server.tomcat.connection-timeout` | `10s` | How long the proxy waits for a request to start, and between reads of it. Not a deadline for the whole request; see [Kubernetes](kubernetes.md#tls). |
 | `server.max-http-request-header-size` | `1MB` | Larger request headers are refused. |
@@ -161,7 +161,7 @@ proxy:
       location: us-central1
 ```
 
-Requests go to `https://<location>-aiplatform.googleapis.com` unless `target` is set. A request whose path names another project, or another location when `location` is set, is refused with `403` `vertex_project_denied`, since the proxy's credential is used for it. The proxy authenticates with Google application default credentials (a service account key named in `GOOGLE_APPLICATION_CREDENTIALS`, workload identity, or the metadata server), replacing any `Authorization` the client sends.
+Requests go to `https://<location>-aiplatform.googleapis.com` unless `target` is set; with neither `location` nor `target`, the proxy does not start. A request whose path names another project, or another location when `location` is set, is refused with `403` `vertex_project_denied`, since the proxy's credential is used for it. The proxy authenticates with Google application default credentials (a service account key named in `GOOGLE_APPLICATION_CREDENTIALS`, workload identity, or the metadata server), replacing any `Authorization` the client sends.
 
 ### Amazon Bedrock
 

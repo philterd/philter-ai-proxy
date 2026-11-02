@@ -25,7 +25,7 @@ kubectl create secret generic philter-ai-proxy-secrets \
 helm install philter-ai-proxy deploy/helm/philter-ai-proxy --set secrets.existingSecret=philter-ai-proxy-secrets
 ```
 
-The pod is ready once the PhEye model is loaded. Then create a key for your applications:
+The pod is ready once the configured policies, and the PhEye models they use, are loaded. Then create a key for your applications:
 
 ```bash
 kubectl port-forward svc/philter-ai-proxy 8080:8080 &
@@ -50,9 +50,9 @@ In the cluster, applications reach the proxy at `https://philter-ai-proxy.<names
 | `extraEnv` | `[]` | Extra environment variables, such as credentials for Bedrock or Vertex AI from a Secret. |
 | `persistence.enabled`, `.size`, `.storageClass`, `.existingClaim` | on, 1Gi | The database volume. The claim is kept when the release is uninstalled. |
 | `tls.mode` | `selfSigned` | `selfSigned`, `existingSecret`, `certManager`, or `none`. See [TLS](#tls). |
-| `mtls.enabled`, `mtls.caSecretName` | off | Require client certificates signed by the CA in the Secret's `ca.crt`. The kubelet cannot present a client certificate, so with mTLS on the probes become TCP checks, and readiness no longer waits for the model to load. |
-| `ingress.*` | off | An Ingress for port 8080. |
-| `serviceMonitor.enabled` | off | A Prometheus Operator ServiceMonitor for `/metrics` on port 9090. |
+| `mtls.enabled`, `mtls.caSecretName` | off | Require client certificates signed by the CA in the Secret's `ca.crt`. Needs `tls.mode` `existingSecret` or `certManager`. The kubelet cannot present a client certificate, so with mTLS on the probes become TCP checks, and readiness no longer waits for the model to load. |
+| `ingress.*` | off | An Ingress for port 8080. Unless `tls.mode` is `none`, the proxy serves HTTPS, so configure the ingress controller to connect to it over HTTPS (for ingress-nginx, the `nginx.ingress.kubernetes.io/backend-protocol: HTTPS` annotation). |
+| `serviceMonitor.enabled` | off | A Prometheus Operator ServiceMonitor for `/metrics` on port 9090. Needs `service.metrics.enabled` (on by default). |
 | `networkPolicy.enabled`, `.proxyFrom`, `.metricsFrom` | off | A NetworkPolicy allowing port 8080 from `proxyFrom` (any peer when empty) and port 9090 only from `metricsFrom` (no peer when empty). Egress is not restricted. |
 | `serviceAccount.automountToken` | `false` | Mount the service account token. The proxy does not call the Kubernetes API, and workload identity for Bedrock or Vertex AI does not need it. |
 | `resources` | 500m CPU and 1.5 GiB requested, 2 GiB limit | The model is loaded into memory at startup. |
@@ -80,7 +80,7 @@ config:
 |---|---|
 | `selfSigned` | HTTPS with a certificate generated at startup, which no client trusts. For evaluation. |
 | `existingSecret` | HTTPS with `tls.crt` and `tls.key` from the Secret named in `tls.existingSecret`. |
-| `certManager` | HTTPS with a certificate cert-manager issues (`tls.certManager.issuerRef`, `tls.certManager.dnsNames`). |
+| `certManager` | HTTPS with a certificate cert-manager issues (`tls.certManager.issuerRef`, `tls.certManager.dnsNames`) into `tls.certManager.secretName`, by default `philter-ai-proxy-tls` for a release named `philter-ai-proxy`. |
 | `none` | Plain HTTP, for an ingress or service mesh that terminates TLS in front of the proxy. |
 
 The probes follow the mode. The metrics port always serves plain HTTP.

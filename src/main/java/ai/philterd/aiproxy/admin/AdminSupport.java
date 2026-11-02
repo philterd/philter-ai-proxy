@@ -57,7 +57,7 @@ public class AdminSupport {
         return key;
     }
 
-    static String error(final String message, final String reason, final String field) {
+    public static String error(final String message, final String reason, final String field) {
         final JsonObject json = new JsonObject();
         json.addProperty("message", message);
         json.addProperty("reason", reason);

@@ -119,6 +119,13 @@ class ProvidersIntegrationTest {
         registry.add("proxy.routes[4].unsupported-endpoints", () -> "forward");
         registry.add("proxy.routes[4].outbound.enabled", () -> "true");
         registry.add("proxy.routes[4].outbound.action", () -> "block");
+        registry.add("proxy.routes[5].match.header", () -> "x-out");
+        registry.add("proxy.routes[5].match.value", () -> "flag");
+        registry.add("proxy.routes[5].outbound.enabled", () -> "true");
+        registry.add("proxy.routes[5].outbound.action", () -> "flag");
+        registry.add("proxy.routes[6].match.header", () -> "x-policy");
+        registry.add("proxy.routes[6].match.value", () -> "missing");
+        registry.add("proxy.routes[6].policy", () -> "no-such-policy");
     }
 
     @TestConfiguration
@@ -264,6 +271,56 @@ class ProvidersIntegrationTest {
         assertNoOriginals(text(response));
         assertTrue(text(response).contains("SSN " + R_SSN));
         assertEquals(403, post("/v1/messages", "{\"model\":\"m\",\"max_tokens\":1,\"messages\":[]}", "x-out", "block").statusCode());
+    }
+
+    @Test
+    void anthropicCitationsAreScanned() throws Exception {
+        STUB.reply("application/json", """
+                {"id":"m","type":"message","content":[{"type":"text","text":"See the file.","citations":[
+                 {"type":"char_location","cited_text":"SSN %1$s","document_index":0,"document_title":"Record for %2$s",
+                  "start_char_index":0,"end_char_index":15},
+                 {"type":"web_search_result_location","cited_text":"mail %2$s","url":"https://example.com/a",
+                  "title":"Page about %2$s","encrypted_index":"e"}]}]}""".formatted(SSN, EMAIL));
+        final HttpResponse<byte[]> response = post("/v1/messages", "{\"model\":\"m\",\"max_tokens\":1,\"messages\":[]}", "x-out", "redact");
+        assertEquals(200, response.statusCode());
+        assertNoOriginals(text(response));
+        final JsonObject citation = json(text(response)).getAsJsonArray("content").get(0).getAsJsonObject()
+                .getAsJsonArray("citations").get(0).getAsJsonObject();
+        assertEquals("SSN " + R_SSN, citation.get("cited_text").getAsString());
+        assertEquals(0, citation.get("start_char_index").getAsInt());
+        assertTrue(text(response).contains("https://example.com/a"));
+        assertEquals(403, post("/v1/messages", "{\"model\":\"m\",\"max_tokens\":1,\"messages\":[]}", "x-out", "block").statusCode());
+    }
+
+    @Test
+    void aBodylessRequestDoesNotNeedThePolicy() throws Exception {
+        STUB.reply("application/json", "{\"object\":\"list\",\"data\":[]}");
+        final HttpResponse<byte[]> listed = send("GET", "/v1/models", null, "x-policy", "missing");
+        assertEquals(200, listed.statusCode(), text(listed));
+        assertEquals(1, STUB.requests);
+
+        STUB.reset();
+        final HttpResponse<byte[]> chat = post("/v1/chat/completions", "{\"model\":\"m\",\"messages\":[]}", "x-policy", "missing");
+        assertEquals(500, chat.statusCode());
+        assertTrue(text(chat).contains("policy_not_found"), text(chat));
+        assertEquals(0, STUB.requests);
+    }
+
+    @Test
+    void adminAndHealthPathsAreNeverProviderTraffic() throws Exception {
+        for (final String[] request : new String[][]{{"GET", "/admin/api/nothing"}, {"PATCH", "/admin/api/keys"},
+                {"GET", "/ADMIN/api/keys"}, {"GET", "/%61dmin/api/nothing"}, {"POST", "/readyz"}, {"POST", "/health/"},
+                {"DELETE", "/admin"}}) {
+            final HttpResponse<byte[]> response = send(request[0], request[1], null, "Authorization", "Bearer sk-test");
+            assertEquals(404, response.statusCode(), request[0] + " " + request[1] + ": " + text(response));
+            assertEquals("not_found", json(text(response)).get("reason").getAsString());
+        }
+        // A wrong content type on a real admin endpoint.
+        final HttpResponse<byte[]> plain = http.send(HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/admin/api/keys"))
+                .header("x-philter-proxy-key", key).header("Content-Type", "text/plain")
+                .POST(HttpRequest.BodyPublishers.ofString("{\"model\":\"m\"}")).build(), HttpResponse.BodyHandlers.ofByteArray());
+        assertEquals(404, plain.statusCode(), text(plain));
+        assertEquals(0, STUB.requests);
     }
 
     @Test
@@ -767,6 +824,72 @@ class ProvidersIntegrationTest {
         assertEquals(400, response.statusCode());
         assertTrue(text(response).contains("unsupported_endpoint"), text(response));
         assertEquals(0, STUB.requests);
+    }
+
+    static final String GROUNDING = """
+            "groundingMetadata":{"webSearchQueries":["records for %1$s"],"retrievalQueries":["mail %2$s"],
+             "searchEntryPoint":{"renderedContent":"<div>records for %1$s</div>"},
+             "groundingChunks":[{"web":{"uri":"https://example.com/a","title":"Page about %2$s"}},
+               {"retrievedContext":{"uri":"gs://bucket/doc.txt","title":"Customer file","text":"SSN %1$s on file"}}],
+             "groundingSupports":[{"segment":{"startIndex":0,"endIndex":22,"text":"Your SSN is %1$s"},"groundingChunkIndices":[0,1]}]}"""
+            .formatted(SSN, EMAIL);
+
+    @Test
+    void geminiGroundingMetadataIsScanned() throws Exception {
+        STUB.reply("application/json", "{\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"Your SSN is " + SSN
+                + "\"}]},\"finishReason\":\"STOP\",\"index\":0," + GROUNDING + "}]}");
+        final String redacted = text(post("/v1beta/models/g:generateContent", "{\"contents\":[]}", "x-out", "redact"));
+        assertNoOriginals(redacted);
+        final JsonObject grounding = json(redacted).getAsJsonArray("candidates").get(0).getAsJsonObject().getAsJsonObject("groundingMetadata");
+        assertEquals("Your SSN is " + R_SSN, grounding.getAsJsonArray("groundingSupports").get(0).getAsJsonObject()
+                .getAsJsonObject("segment").get("text").getAsString());
+        // The citations and their sources are kept.
+        assertEquals("https://example.com/a", grounding.getAsJsonArray("groundingChunks").get(0).getAsJsonObject()
+                .getAsJsonObject("web").get("uri").getAsString());
+        assertEquals(403, post("/v1beta/models/g:generateContent", "{\"contents\":[]}", "x-out", "block").statusCode());
+
+        // Streamed: the metadata arrives with the last chunk.
+        STUB.replyChunks("text/event-stream", sse(
+                "data: {\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"Your SSN is 12\"}]},\"index\":0}]}",
+                "data: {\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"3-45-6789\"}]},\"finishReason\":\"STOP\",\"index\":0,"
+                        + GROUNDING.replace("\n", "") + "}]}"));
+        final String stream = text(post("/v1beta/models/g:streamGenerateContent?alt=sse", "{\"contents\":[]}", "x-out", "redact"));
+        assertNoOriginals(stream);
+        assertTrue(stream.contains("groundingMetadata") && stream.contains("https://example.com/a"), stream);
+    }
+
+    @Test
+    void bedrockInvokeStreamUnderFlagForwardsWhatItCannotRead() throws Exception {
+        final EventStreamFraming framing = new EventStreamFraming();
+        final java.util.function.Function<String, byte[]> chunk = inner -> framing.encode(new StreamEvent("chunk",
+                json("{\"bytes\":\"" + java.util.Base64.getEncoder().encodeToString(inner.getBytes(StandardCharsets.UTF_8)) + "\"}")));
+        STUB.reply("application/vnd.amazon.eventstream", List.of(
+                chunk.apply("{\"type\":\"message_start\",\"message\":{\"id\":\"msg_1\",\"role\":\"assistant\",\"content\":[]}}"),
+                framing.encode(new StreamEvent("chunk", json("{\"bytes\":\"not base64!\"}"))),
+                chunk.apply("{\"type\":\"message_stop\"}")));
+        final HttpResponse<byte[]> response = post("/model/anthropic.claude-3-haiku-20240307-v1%3A0/invoke-with-response-stream",
+                "{\"anthropic_version\":\"bedrock-2023-05-31\",\"max_tokens\":5,\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}",
+                "x-out", "flag");
+        assertEquals(200, response.statusCode());
+        final List<String> bytes = new ArrayList<>();
+        framing.read(new ByteArrayInputStream(response.body()), new ai.philterd.aiproxy.stream.Framing.Handler() {
+            @Override
+            public void onEvent(final StreamEvent event) {
+                bytes.add(event.json().get("bytes").getAsString());
+            }
+
+            @Override
+            public void onPassThrough(final byte[] raw, final boolean end) {
+            }
+
+            @Override
+            public void onUnreadable(final byte[] raw) {
+                throw new AssertionError("the proxy ended the stream with an error under flag");
+            }
+        });
+        // All three chunks arrive, the undecodable one unchanged, and the stream is not cut short.
+        assertEquals(3, bytes.size(), bytes.toString());
+        assertEquals("not base64!", bytes.get(1));
     }
 
     // ---- Azure OpenAI and OpenAI-compatible providers

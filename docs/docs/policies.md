@@ -1,6 +1,6 @@
 # Policies
 
-A policy says what to find and what to replace it with. Policies are native [Phileas policies](https://philterd.github.io/phileas/filter_policies/filter_policies/), the same JSON Philter uses, so a policy written for one works in the other. See [Filters](https://philterd.github.io/phileas/filter_policies/filters/) and [Filter Strategies](https://philterd.github.io/phileas/filter_policies/filter_strategies/) in the Phileas documentation for everything a policy can contain.
+A policy says what to find and what to replace it with. Policies are native [Phileas policies](https://philterd.github.io/phileas/filter_policies/filter_policies/), the same JSON Philter uses, so a policy written for one works in the other within the restrictions in [What a policy may not do](#what-a-policy-may-not-do). See [Filters](https://philterd.github.io/phileas/filter_policies/filters/) and [Filter Strategies](https://philterd.github.io/phileas/filter_policies/filter_strategies/) in the Phileas documentation for everything a policy can contain.
 
 Policies are stored in the proxy's database, encrypted with the encryption key, and managed with the [admin API](api.md#policies).
 
@@ -76,7 +76,7 @@ A change applies to the next request. The [Policy Editor](https://policies.philt
 
 The response is scanned with the same policy as the request.
 
-A request whose policy does not exist, or cannot be used, is refused with `500` `policy_not_found` or `policy_invalid`, and not forwarded. The proxy loads the default and route policies when it starts and logs any it cannot use.
+A request whose policy does not exist, or cannot be used, is refused with `500` `policy_not_found` or `policy_invalid`, and not forwarded. A request without a body whose response is not scanned, such as `GET /v1/models`, does not use the policy and is forwarded. The proxy loads the default and route policies when it starts and logs any it cannot use.
 
 ## Models
 
